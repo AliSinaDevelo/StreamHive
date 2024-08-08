@@ -32,3 +32,13 @@ func (t *TCPTransport) ListenAndAccept() {
 		go t.handleConn(conn)
 	}
 }
+
+func (t *TCPTranspot) acceptLoop() {
+	for {
+		conn, err := t.Listener.Accept()
+		if err != nil {
+			panic(err)
+		}
+		go t.handleConn(conn)
+	}
+}
