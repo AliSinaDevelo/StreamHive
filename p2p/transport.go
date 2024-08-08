@@ -6,4 +6,5 @@ type Peer interface {
 
 // TODO: handles communications between the nodes
 type Transport interface {
+	listenAndAccept() error
 }
