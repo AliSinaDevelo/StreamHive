@@ -14,4 +14,5 @@ func TestTCPTransport(t *testing.T) {
 
 	// server
 
+	tr.ListenAndAccept()
 }
