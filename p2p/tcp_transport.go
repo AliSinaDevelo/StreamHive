@@ -17,3 +17,18 @@ func NewTCPTansport(listenAddr string) *TCPTransport {
 		ListenAddress: listenAddr,
 	}
 }
+
+func (t *TCPTransport) ListenAndAccept() {
+	ln, err := net.Listen("tcp", t.ListenAddress)
+	if err != nil {
+		panic(err)
+	}
+	t.Listener = ln
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			panic(err)
+		}
+		go t.handleConn(conn)
+	}
+}
