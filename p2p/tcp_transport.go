@@ -16,6 +16,13 @@ type TCPPeer struct {
 	outbound bool
 }
 
+func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
+	return &TCPPeer{
+		conn:     conn,
+		outbound: outbound,
+	}
+}
+
 type TCPTransport struct {
 	ListenAddress string
 	Listener      net.Listener
