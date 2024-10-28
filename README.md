@@ -8,3 +8,13 @@ StreamHive is a distributed, content-addressed file storage experiment in Go. Th
 
 - Go 1.22 or newer
 - Optional: [golangci-lint](https://golangci-lint.run/) for local linting
+
+## Quickstart
+
+```bash
+go test ./...
+make run              # builds bin/fs and starts a listener on 127.0.0.1:0
+./bin/fs -listen :7070 -dial 127.0.0.1:8080   # example: listen and dial another node
+```
+
+See the [Makefile](Makefile) for `test-race`, `vet`, `cover`, and `lint` targets.
