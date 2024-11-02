@@ -18,3 +18,17 @@ make run              # builds bin/fs and starts a listener on 127.0.0.1:0
 ```
 
 See the [Makefile](Makefile) for `test-race`, `vet`, `cover`, and `lint` targets.
+
+## Architecture (current)
+
+```mermaid
+flowchart LR
+  subgraph node [Node]
+    T[TCPTransport]
+    P[Peer connections]
+    T --> P
+  end
+  P <-->|TCP| P2[Remote node]
+```
+
+Planned: chunk store, Merkle-style addressing, and replication on top of this transport.
