@@ -15,6 +15,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `go test -race -count=1 ./...` on Go 1.22.x and 1.23.x
 - `golangci-lint` with `.golangci.yml`
 - `govulncheck ./...`
+- Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 
 Dependabot opens weekly update PRs for Go modules and GitHub Actions.
 
