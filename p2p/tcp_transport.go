@@ -10,6 +10,9 @@ import (
 // ErrAddrRequired is returned when ListenAddress is empty.
 var ErrAddrRequired = errors.New("p2p: listen address is required")
 
+// ErrAlreadyListening is returned when ListenAndAccept is called more than once.
+var ErrAlreadyListening = errors.New("p2p: already listening")
+
 // TCPPeer is a TCP-backed Peer.
 type TCPPeer struct {
 	conn     net.Conn
@@ -66,6 +69,12 @@ func (t *TCPTransport) ListenAndAccept() error {
 	if t.ListenAddress == "" {
 		return ErrAddrRequired
 	}
+	t.mu.Lock()
+	if t.Listener != nil {
+		t.mu.Unlock()
+		return ErrAlreadyListening
+	}
+	t.mu.Unlock()
 	ln, err := net.Listen("tcp", t.ListenAddress)
 	if err != nil {
 		return err
