@@ -31,6 +31,14 @@ func TestListenAndAccept_invalidAddress(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestListenAndAccept_twice(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, tr.ListenAndAccept())
+	defer func() { _ = tr.Close() }()
+	assert.ErrorIs(t, tr.ListenAndAccept(), ErrAlreadyListening)
+}
+
 func TestListenAndAccept_setsAddr(t *testing.T) {
 	tr := NewTCPTransport("127.0.0.1:0")
 	tr.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
