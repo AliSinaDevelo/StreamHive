@@ -34,3 +34,7 @@ flowchart LR
 ```
 
 Planned: chunk store, Merkle-style addressing, and replication on top of this transport.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
