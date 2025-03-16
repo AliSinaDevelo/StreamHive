@@ -38,3 +38,7 @@ Planned: chunk store, Merkle-style addressing, and replication on top of this tr
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security: [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
