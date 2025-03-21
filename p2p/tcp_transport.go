@@ -69,19 +69,28 @@ func (t *TCPTransport) ListenAndAccept() error {
 	if t.ListenAddress == "" {
 		return ErrAddrRequired
 	}
+
 	t.mu.Lock()
 	if t.Listener != nil {
 		t.mu.Unlock()
 		return ErrAlreadyListening
 	}
 	t.mu.Unlock()
+
 	ln, err := net.Listen("tcp", t.ListenAddress)
 	if err != nil {
 		return err
 	}
+
 	t.mu.Lock()
+	if t.Listener != nil {
+		t.mu.Unlock()
+		_ = ln.Close()
+		return ErrAlreadyListening
+	}
 	t.Listener = ln
 	t.mu.Unlock()
+
 	go t.acceptLoop()
 	return nil
 }
