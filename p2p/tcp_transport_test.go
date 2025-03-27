@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -29,6 +30,37 @@ func TestListenAndAccept_invalidAddress(t *testing.T) {
 	tr := NewTCPTransport("not-a-host:999999")
 	err := tr.ListenAndAccept()
 	require.Error(t, err)
+}
+
+func TestListenAndAccept_concurrent(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- tr.ListenAndAccept()
+		}()
+	}
+	wg.Wait()
+	defer func() { _ = tr.Close() }()
+	var ok, dup int
+	for range n {
+		err := <-errs
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, ErrAlreadyListening):
+			dup++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	assert.Equal(t, 1, ok)
+	assert.Equal(t, n-1, dup)
 }
 
 func TestListenAndAccept_twice(t *testing.T) {
