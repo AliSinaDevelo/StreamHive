@@ -11,3 +11,7 @@ This project is experimental research code. It is not hardened for hostile netwo
 ## Dependency scanning
 
 CI runs `govulncheck ./...` on each push and pull request to `main`.
+
+## SBOM
+
+The `sbom` CI job emits a CycloneDX JSON bill of materials (`sbom.cdx.json`) as a workflow artifact for supply-chain review.
