@@ -50,7 +50,7 @@ Inspect connected peers:
 curl -s http://127.0.0.1:8080/peers
 ```
 
-Look for `replication_blobs_stored`, `replication_bytes_stored`, duplicate counters, and transport frame counters. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, and connection age.
+Look for `replication_blobs_stored`, `replication_bytes_stored`, duplicate/skipped counters, and transport frame counters. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, and connection age.
 
 Or run the whole flow:
 

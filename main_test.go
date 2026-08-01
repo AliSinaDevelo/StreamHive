@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -33,6 +34,20 @@ type testPeer struct{}
 func (testPeer) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7070} }
 func (testPeer) Close() error         { return nil }
 func (testPeer) IsOutbound() bool     { return false }
+
+type capturePeer struct {
+	testPeer
+	err      error
+	payloads [][]byte
+}
+
+func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
+	if p.err != nil {
+		return p.err
+	}
+	p.payloads = append(p.payloads, append([]byte(nil), payload...))
+	return nil
+}
 
 func (s *safeBuffer) Write(p []byte) (int, error) {
 	s.mu.Lock()
@@ -604,6 +619,64 @@ func TestVerifyContentKeyIfSHA256(t *testing.T) {
 	assert.NoError(t, verifyContentKeyIfSHA256([]byte("manual"), data))
 	assert.NoError(t, verifyContentKeyIfSHA256(storage.SHA256Key(data), data))
 	assert.ErrorIs(t, verifyContentKeyIfSHA256(storage.SHA256Key(data), []byte("tampered")), storage.ErrSHA256Mismatch)
+}
+
+func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(ctx, []byte("too-large"), []byte("oversized")))
+	require.NoError(t, store.Put(ctx, []byte("ok"), []byte("yo")))
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	err := sendRequestedBlobs(
+		ctx,
+		peer,
+		store,
+		[][]byte{[]byte("too-large"), []byte("ok")},
+		replication.Limits{MaxDataBytes: 4},
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	require.NoError(t, err)
+	require.Len(t, peer.payloads, 1)
+	msg, err := replication.Decode(peer.payloads[0], replication.Limits{MaxDataBytes: 4})
+	require.NoError(t, err)
+	assert.Equal(t, replication.MessageTypeBlobPut, msg.Type)
+	assert.Equal(t, []byte("ok"), msg.Key)
+	assert.Equal(t, []byte("yo"), msg.Data)
+	assert.Equal(t, uint64(1), metrics.BlobsSent.Load())
+	assert.Equal(t, uint64(1), metrics.BlobsSkipped.Load())
+	assert.Equal(t, uint64(1), metrics.SendErrors.Load())
+}
+
+func TestSendRequestedBlobsStopsOnFrameWriteError(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(ctx, []byte("a"), []byte("first")))
+	require.NoError(t, store.Put(ctx, []byte("b"), []byte("second")))
+	metrics := &replicationMetrics{}
+	writeErr := errors.New("write failed")
+	peer := &capturePeer{err: writeErr}
+
+	err := sendRequestedBlobs(
+		ctx,
+		peer,
+		store,
+		[][]byte{[]byte("a"), []byte("b")},
+		replication.Limits{},
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	assert.ErrorIs(t, err, writeErr)
+	assert.Empty(t, peer.payloads)
+	assert.Equal(t, uint64(0), metrics.BlobsSent.Load())
+	assert.Equal(t, uint64(0), metrics.BlobsSkipped.Load())
+	assert.Equal(t, uint64(1), metrics.SendErrors.Load())
 }
 
 func TestWritePrometheusMetrics(t *testing.T) {

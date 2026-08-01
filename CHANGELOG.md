@@ -9,10 +9,12 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **`p2p`**: `PeerSnapshots` exposes connected peer metadata for operational tooling.
 - **Docs**: protocol reference for SHV1 frames, replication messages, limits, and repair behavior.
 - **Docs**: TLS/mTLS peer identity guidance and remaining application-level auth gaps.
+- **Metrics**: `replication_blobs_skipped` counts requested blobs that could not be sent without aborting the peer loop.
 
 ### Changed
 
 - **Ops**: `/peers` now includes local address, connection timestamp, and connection age.
+- **Replication**: requested blob sends now skip unreadable or oversized individual blobs and continue sending remaining requested keys.
 
 ## [0.6.0] — 2026-07-02
 

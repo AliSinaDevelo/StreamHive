@@ -76,8 +76,15 @@ skipped and duplicate counters are incremented.
 
 ## Failure Behavior
 
-Frame decode errors, message validation errors, storage errors, and peer write errors
-stop the current peer loop. The transport unregisters the peer and updates metrics.
+Frame decode errors, message validation errors, and peer write errors stop the current
+peer loop. The transport unregisters the peer and updates metrics.
+
+When answering `blob.missing` or `blob.get`, StreamHive treats each requested key as an
+independent send unit until bytes are written to the peer. If one key is unreadable or
+cannot be encoded under the configured limits, that key is skipped, `replication_send_errors`
+and `replication_blobs_skipped` are incremented, and later requested keys are still sent.
+If writing a frame to the TCP stream fails, the peer loop stops instead of retrying the
+same frame on a potentially partial stream.
 
 There is no per-key acknowledgement protocol yet. Repair is driven by startup inventory,
 periodic inventory with `-sync-interval`, and reconnect behavior for static `-peers`

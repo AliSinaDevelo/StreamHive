@@ -457,11 +457,17 @@ func sendRequestedBlobs(
 			continue
 		}
 		if err != nil {
-			return err
+			metrics.SendErrors.Add(1)
+			metrics.BlobsSkipped.Add(1)
+			log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
+			continue
 		}
 		payload, err := replication.EncodeBlobPut(key, data, limits)
 		if err != nil {
-			return err
+			metrics.SendErrors.Add(1)
+			metrics.BlobsSkipped.Add(1)
+			log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
+			continue
 		}
 		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
 			metrics.SendErrors.Add(1)
@@ -496,12 +502,16 @@ func verifyContentKeyIfSHA256(key, data []byte) error {
 	return storage.VerifySHA256Key(key, data)
 }
 
+type frameWriter interface {
+	WriteFrame(payload []byte, maxPayload int) error
+}
+
 func writePeerFrame(peer p2p.Peer, payload []byte, maxFrameBytes int) error {
-	tcpPeer, ok := peer.(*p2p.TCPPeer)
+	writer, ok := peer.(frameWriter)
 	if !ok {
-		return errors.New("peer is not TCP-backed")
+		return errors.New("peer cannot write frames")
 	}
-	return tcpPeer.WriteFrame(payload, maxFrameBytes)
+	return writer.WriteFrame(payload, maxFrameBytes)
 }
 
 func missingKeys(remoteKeys, localKeys [][]byte) [][]byte {
@@ -676,6 +686,7 @@ type replicationMetrics struct {
 	ApplyErrors    atomic.Uint64
 	BlobsSent      atomic.Uint64
 	BytesSent      atomic.Uint64
+	BlobsSkipped   atomic.Uint64
 	SendErrors     atomic.Uint64
 }
 
@@ -691,6 +702,7 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_apply_errors":    int64(m.ApplyErrors.Load()),
 		"replication_blobs_sent":      int64(m.BlobsSent.Load()),
 		"replication_bytes_sent":      int64(m.BytesSent.Load()),
+		"replication_blobs_skipped":   int64(m.BlobsSkipped.Load()),
 		"replication_send_errors":     int64(m.SendErrors.Load()),
 	}
 }
