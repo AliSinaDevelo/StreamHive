@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.6.0`, the first release with peer visibility endpoints, a Compose cluster status inspector, and a CI-verified reconnect/failure demo.
+Use this checklist for StreamHive releases. The current target is `v0.7.0`, the first release with richer peer metadata, protocol/security documentation, and partial-sync send resilience.
 
 ## Preflight
 
@@ -21,25 +21,26 @@ go run . -version
 3. Commit the version bump:
 
 ```bash
-git add internal/version/version.go CHANGELOG.md
-git commit -m "chore: release v0.6.0"
+git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
+git commit -m "chore: release v0.7.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.6.0 -m "v0.6.0"
+git tag -a v0.7.0 -m "v0.7.0"
 git push origin main
-git push origin v0.6.0
+git push origin v0.7.0
 ```
 
 ## Release Notes
 
 Highlight:
 
-- `/peers` JSON endpoint for connected peer visibility.
-- `make demo-status` cluster inspector for peers, metrics, and durable keys.
-- `make demo-failure` reconnect/failure demo for node restart plus anti-entropy repair.
-- CI coverage for restart rehydration, corruption repair, and reconnect/failure demos.
+- `p2p.PeerSnapshots` and richer `/peers` metadata.
+- Protocol reference for SHV1 frames, replication messages, limits, and repair behavior.
+- TLS/mTLS identity guidance and explicit application-level auth gaps.
+- Partial-sync resilience: unreadable or oversized requested blobs are skipped while later keys still send.
+- `replication_blobs_skipped` metric.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.

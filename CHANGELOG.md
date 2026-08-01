@@ -4,6 +4,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-02
+
 ### Added
 
 - **`p2p`**: `PeerSnapshots` exposes connected peer metadata for operational tooling.
