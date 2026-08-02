@@ -19,6 +19,8 @@ services:
       - 2s
       - -sync-interval
       - 1s
+      - -peer-auth-token
+      - "${STREAMHIVE_PEER_TOKEN:-}"
     ports:
       - "18081:8080"
     volumes:
@@ -43,6 +45,8 @@ services:
       - 2s
       - -sync-interval
       - 1s
+      - -peer-auth-token
+      - "${STREAMHIVE_PEER_TOKEN:-}"
     ports:
       - "18082:8080"
     volumes:
@@ -67,6 +71,8 @@ services:
       - 2s
       - -sync-interval
       - 1s
+      - -peer-auth-token
+      - "${STREAMHIVE_PEER_TOKEN:-}"
     ports:
       - "18083:8080"
     volumes:
@@ -82,6 +88,8 @@ services:
       - -put-content-key
       - -put-data
       - hello from compose
+      - -peer-auth-token
+      - "${STREAMHIVE_PEER_TOKEN:-}"
       - -exit-after-put
     profiles:
       - tools

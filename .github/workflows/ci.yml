@@ -87,6 +87,17 @@ jobs:
       - name: Docker Compose rehydration demo
         run: make demo-compose
 
+  auth-demo:
+    runs-on: ubuntu-latest
+    env:
+      STREAMHIVE_PEER_TOKEN: streamhive-ci-demo-token
+    steps:
+      # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Docker Compose authenticated peer demo
+        run: make demo-auth
+
   repair-demo:
     runs-on: ubuntu-latest
     steps:
