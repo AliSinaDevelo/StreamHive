@@ -21,9 +21,18 @@ Library users can configure `p2p.TCPTransport.TLSServerConfig` and
 `ClientCAs`, and client certificates when you need mTLS.
 
 TLS protects the TCP channel and, when configured with CA verification, authenticates the
-certificate presented by the peer. StreamHive does not yet have application-level peer
-identity, authorization, ACLs, or signed replication messages. Do not expose the P2P
-port to untrusted networks without a deployment-level trust boundary.
+certificate presented by the peer.
+
+StreamHive also has optional shared-token peer admission:
+
+- `-peer-auth-token` requires peers to send a matching token before registration.
+- `-peer-auth-timeout` bounds how long a connection can sit in the auth handshake.
+- Library users can set `p2p.TCPTransport.PeerAuthToken` and `PeerAuthTimeout`.
+
+Shared-token auth is not per-peer identity, authorization, ACLs, or signed replication.
+Use it with TLS/mTLS when the token crosses a network boundary, and rotate the token if
+it appears in logs, shell history, or process metadata. Do not expose the P2P port to
+untrusted networks without a deployment-level trust boundary.
 
 ## Dependency scanning
 

@@ -124,6 +124,112 @@ func TestDial_registersOutboundPeer(t *testing.T) {
 	})
 }
 
+func TestPeerAuthAcceptsMatchingToken(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.Peers()) == 1 && len(client.Peers()) == 1
+	})
+	assert.Equal(t, uint64(1), server.Metrics().PeerAuthSuccess.Load())
+	assert.Equal(t, uint64(1), client.Metrics().PeerAuthSuccess.Load())
+	assert.Equal(t, uint64(0), server.Metrics().PeerAuthFailures.Load())
+	assert.Equal(t, uint64(0), client.Metrics().PeerAuthFailures.Load())
+}
+
+func TestPeerAuthRejectsWrongToken(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "wrong-secret"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	err := client.Dial(ctx, server.Addr().String())
+	require.ErrorIs(t, err, ErrPeerAuthRejected)
+	waitFor(t, func() bool {
+		return server.Metrics().PeerAuthFailures.Load() == 1 && client.Metrics().PeerAuthFailures.Load() == 1
+	})
+	assert.Empty(t, server.Peers())
+	assert.Empty(t, client.Peers())
+}
+
+func TestPeerAuthRejectsFirstFrameBeforeApplicationHandler(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthTimeout = 200 * time.Millisecond
+	var handled atomic.Int32
+	server.FrameHandler = func(_ context.Context, _ Peer, _ []byte) error {
+		handled.Add(1)
+		return nil
+	}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	conn, err := net.Dial("tcp", server.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, WriteFrame(conn, []byte("not-auth"), DefaultMaxFrameBytes))
+
+	waitFor(t, func() bool { return server.Metrics().PeerAuthFailures.Load() == 1 })
+	assert.Equal(t, int32(0), handled.Load())
+	assert.Equal(t, int64(0), server.Metrics().ActivePeers.Load())
+	assert.Equal(t, uint64(0), server.Metrics().FramesHandled.Load())
+}
+
+func TestPeerAuthPreservesBufferedApplicationFrame(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	var got atomic.Value
+	server.FrameHandler = func(_ context.Context, _ Peer, payload []byte) error {
+		got.Store(append([]byte(nil), payload...))
+		return nil
+	}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	sendErr := make(chan error, 1)
+	client.OnPeer = func(p Peer) {
+		tcpPeer, ok := p.(*TCPPeer)
+		if !ok {
+			sendErr <- errors.New("peer is not TCPPeer")
+			return
+		}
+		sendErr <- tcpPeer.WriteFrame([]byte("ping"), DefaultMaxFrameBytes)
+	}
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	require.NoError(t, <-sendErr)
+	waitFor(t, func() bool { return got.Load() != nil })
+	assert.Equal(t, []byte("ping"), got.Load().([]byte))
+}
+
 func TestPeersReturnsSnapshot(t *testing.T) {
 	ctx := context.Background()
 	server := NewTCPTransport("127.0.0.1:0")

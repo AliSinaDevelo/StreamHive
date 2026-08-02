@@ -17,7 +17,7 @@ flowchart TD
 
 ## Layers
 
-1. **Transport (`p2p`)** — `TCPTransport` with `context.Context` on `ListenAndAccept` / `Dial`, accept-loop shutdown coordinated with `Close`, optional TLS, optional framed reads via `FrameHandler`, metrics, peer snapshots, and peer disconnect hooks.
+1. **Transport (`p2p`)** — `TCPTransport` with `context.Context` on `ListenAndAccept` / `Dial`, accept-loop shutdown coordinated with `Close`, optional TLS, optional shared-token peer auth, optional framed reads via `FrameHandler`, metrics, peer snapshots, and peer disconnect hooks.
 2. **Framing (`p2p`)** — `SHV1` length-prefixed payloads (`ReadFrame` / `WriteFrame`) with a configurable maximum size (DoS bound). Application-level handshake string: `HandshakeVersionV1`.
 3. **Replication (`replication`)** — typed JSON messages carried inside frames. `blob.put` writes one key/value blob to a receiving `BlobStore`; `blob.has`, `blob.get`, and `blob.missing` provide the inventory/request vocabulary for anti-entropy sync.
 4. **Storage (`storage`)** — `BlobStore` interface with `BlobKeyLister` inventory support, `MemoryStore` for tests/demos, and `FileStore` for durable local blobs; SHA-256 helpers provide stable content-addressed keys.
@@ -86,6 +86,7 @@ classDiagram
 - CLI replication installs a `FrameHandler` that decodes `blob.put` messages and writes to `MemoryStore` by default, or `FileStore` when `-store-dir` is set. Outbound `-put-key` / `-put-data` sends one manually keyed frame after `-dial` or `-peers` connects; `-put-content-key` derives the key from `SHA-256(-put-data)`. `-list-keys` inspects durable stores by printing known keys as hex.
 - Receivers treat 32-byte keys as SHA-256 content addresses and verify payload integrity before storage. Exact duplicate key/data writes are skipped and counted separately; opaque keys with different data still replace existing values.
 - `-peer-reconnect` manages only static `-peers` targets. It retries failed dials with exponential backoff and schedules another retry when an outbound configured peer disconnects.
+- `-peer-auth-token` requires a shared-token auth frame before a peer is registered or allowed to exchange replication frames. The default is unauthenticated for local demos.
 - Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, and owners send the requested blobs with `blob.put`.
 
 ### Peer lifecycle
@@ -94,10 +95,13 @@ classDiagram
 stateDiagram-v2
   [*] --> Dialing: outbound (-dial / -peers)
   [*] --> Accepting: inbound
-  Dialing --> Connected: TCP + optional TLS handshake
+  Dialing --> Auth: TCP + optional TLS handshake
+  Auth --> Connected: optional peer auth accepted
+  Auth --> Rejected: peer auth failed
   Dialing --> Backoff: dial failed (-peer-reconnect)
   Backoff --> Dialing: backoff elapsed
-  Accepting --> Connected: under max-peers
+  Accepting --> Auth: accepted TCP socket
+  Auth --> Connected: under max-peers
   Accepting --> Rejected: max-peers reached
   Connected --> Framed: FrameHandler installed
   Framed --> Framed: read + apply frame
@@ -112,7 +116,8 @@ stateDiagram-v2
 
 - **Dial** respects context cancellation and optional `DialTimeout`.
 - **Max peers** rejects new inbound connections when the cap is reached (`PeersRejected` metric).
-- **TLS** failures surface from `HandshakeContext` on outbound dials. **mTLS** is supported by configuring `tls.Config` yourself (`ClientAuth`, `ClientCAs` on `TLSServerConfig`; client certs on `TLSClientConfig`). TLS can authenticate certificates, but StreamHive still has no application-level peer identity, authorization, ACLs, or signed replication messages.
+- **TLS** failures surface from `HandshakeContext` on outbound dials. **mTLS** is supported by configuring `tls.Config` yourself (`ClientAuth`, `ClientCAs` on `TLSServerConfig`; client certs on `TLSClientConfig`). TLS can authenticate certificates.
+- **Peer auth** failures happen before peer registration when `PeerAuthToken` / `-peer-auth-token` is configured. This is shared-token admission control, not per-peer identity, authorization, ACLs, or signed replication messages.
 - **Replication decode/apply** rejects unknown message types, empty keys, oversized keys, and oversized payloads before writing to storage.
 
 ## Replication v0.3 scope
@@ -144,9 +149,9 @@ Implemented:
 
 Not implemented yet:
 
-- Retries for partial sync failures or conflict resolution.
+- Conflict resolution.
 - Automated peer discovery beyond static dial targets.
-- Authenticated application-level identity beyond optional TLS/mTLS configuration.
+- Per-peer application identity, ACLs, or signed replication messages beyond optional TLS/mTLS and shared-token peer auth.
 
 ## Storage choices
 
@@ -160,4 +165,4 @@ Use `storage.SHA256Key` or `storage.SHA256KeyHex` when the key should be derived
 
 - Hash-linked chunk references on top of `BlobStore`
 - Automated discovery beyond static peers
-- Authenticated application protocol on top of `FrameHandler`
+- Per-peer authenticated application identity on top of `FrameHandler`

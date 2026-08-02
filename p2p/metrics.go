@@ -13,6 +13,8 @@ type TransportMetrics struct {
 	ActivePeers      atomic.Int64
 	FramesHandled    atomic.Uint64
 	FrameHandlerErrs atomic.Uint64
+	PeerAuthSuccess  atomic.Uint64
+	PeerAuthFailures atomic.Uint64
 }
 
 // NewTransportMetrics returns a zeroed metrics struct.
@@ -35,5 +37,7 @@ func (m *TransportMetrics) Snapshot() map[string]int64 {
 		"active_peers":         m.ActivePeers.Load(),
 		"frames_handled":       int64(m.FramesHandled.Load()),
 		"frame_handler_errors": int64(m.FrameHandlerErrs.Load()),
+		"peer_auth_success":    int64(m.PeerAuthSuccess.Load()),
+		"peer_auth_failures":   int64(m.PeerAuthFailures.Load()),
 	}
 }

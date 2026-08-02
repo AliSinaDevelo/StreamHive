@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml/badge.svg)](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml)
 
-StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`).
+StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`).
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.7.0**, pre-1.0).
 
@@ -50,7 +50,7 @@ Inspect connected peers:
 curl -s http://127.0.0.1:8080/peers
 ```
 
-Look for `replication_blobs_stored`, `replication_bytes_stored`, duplicate/skipped counters, and transport frame counters. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, and connection age.
+Look for `replication_blobs_stored`, `replication_bytes_stored`, duplicate/skipped counters, auth counters, and transport frame counters. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, and connection age.
 
 Or run the whole flow:
 
@@ -98,6 +98,15 @@ For long-running nodes, add periodic inventory sync:
 go run . -listen 127.0.0.1:7071 -replicate -store-dir ./streamhive-data -peers 127.0.0.1:7070 -peer-reconnect -sync-interval 30s
 ```
 
+For a private local cluster, require a shared peer auth token on every node:
+
+```bash
+go run . -listen 127.0.0.1:7070 -replicate -peer-auth-token "$STREAMHIVE_PEER_TOKEN"
+go run . -listen 127.0.0.1:7071 -replicate -dial 127.0.0.1:7070 -peer-auth-token "$STREAMHIVE_PEER_TOKEN"
+```
+
+Peers that cannot complete the auth handshake are rejected before replication frames reach the application handler. Use TLS or mTLS as well when the token crosses a network you do not fully control.
+
 To persist replicated blobs on the receiver, add `-store-dir`:
 
 ```bash
@@ -108,7 +117,7 @@ go run . -listen 127.0.0.1:7070 -replicate -store-dir ./streamhive-data
 
 | Import | Purpose |
 |--------|---------|
-| `github.com/AliSinaDevelo/StreamHive/p2p` | `TCPTransport`, framing (`ReadFrame` / `WriteFrame`), peer snapshots, metrics |
+| `github.com/AliSinaDevelo/StreamHive/p2p` | `TCPTransport`, framing (`ReadFrame` / `WriteFrame`), optional peer auth, peer snapshots, metrics |
 | `github.com/AliSinaDevelo/StreamHive/replication` | Blob replication messages (`blob.put`, `blob.has`, `blob.get`, `blob.missing`) and store apply helper |
 | `github.com/AliSinaDevelo/StreamHive/storage` | `BlobStore`, `BlobKeyLister`, `MemoryStore`, `FileStore`, SHA-256 content key helpers |
 
@@ -126,6 +135,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-sync-interval` | Periodically advertise local blob keys to connected peers (0 = startup only) |
 | `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics` |
 | `-max-peers` | Cap simultaneous peers (0 = unlimited) |
+| `-peer-auth-token` / `-peer-auth-timeout` | Optional shared-token peer auth before peer registration |
 | `-dial-timeout` | Outbound dial timeout |
 | `-read-idle-timeout` | Peer read deadline refresh |
 | `-tls-cert` / `-tls-key` | Server TLS |

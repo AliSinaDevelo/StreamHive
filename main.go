@@ -52,6 +52,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	syncInterval := fs.Duration("sync-interval", 0, "periodically advertise local blob keys to connected peers (0 = startup only)")
 	health := fs.String("health", "", "optional HTTP listen addr for /livez /readyz /peers /metrics (e.g. :8080)")
 	maxPeers := fs.Int("max-peers", 0, "max simultaneous peers (0 = unlimited)")
+	peerAuthToken := fs.String("peer-auth-token", "", "optional shared token required before peer registration")
+	peerAuthTimeout := fs.Duration("peer-auth-timeout", p2p.DefaultPeerAuthTimeout, "timeout for optional peer auth handshake")
 	dialTimeout := fs.Duration("dial-timeout", 0, "default dial timeout (0 = use context only)")
 	readIdle := fs.Duration("read-idle-timeout", 0, "TCP read deadline refresh for peer loops (0 = none for discard mode)")
 	showVer := fs.Bool("version", false, "print version and exit")
@@ -129,6 +131,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *syncInterval < 0 {
 		return fmt.Errorf("replication: -sync-interval must be zero or greater")
 	}
+	if *peerAuthTimeout < 0 {
+		return fmt.Errorf("peers: -peer-auth-timeout must be zero or greater")
+	}
 
 	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes}
 	var blobStore storage.BlobStore
@@ -166,6 +171,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr := p2p.NewTCPTransport(*listen)
 	tr.Logger = log
 	tr.MaxPeers = *maxPeers
+	tr.PeerAuthToken = *peerAuthToken
+	tr.PeerAuthTimeout = *peerAuthTimeout
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle
 	tr.OnPeer = func(peer p2p.Peer) {

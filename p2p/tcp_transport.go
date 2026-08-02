@@ -25,13 +25,14 @@ var ErrTransportClosed = errors.New("p2p: transport closed")
 // TCPPeer is a TCP-backed Peer.
 type TCPPeer struct {
 	conn        net.Conn
+	reader      *bufio.Reader
 	outbound    bool
 	connectedAt time.Time
 }
 
 // NewTCPPeer wraps a connection as a Peer.
 func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
-	return &TCPPeer{conn: conn, outbound: outbound, connectedAt: time.Now().UTC()}
+	return &TCPPeer{conn: conn, reader: bufio.NewReader(conn), outbound: outbound, connectedAt: time.Now().UTC()}
 }
 
 // RemoteAddr returns the remote network address.
@@ -85,6 +86,10 @@ type TCPTransport struct {
 	ReadIdleTimeout time.Duration
 	// MaxFrameBytes caps ReadFrame payload size when using FrameHandler (0 = DefaultMaxFrameBytes).
 	MaxFrameBytes int
+	// PeerAuthToken, when set, requires a shared-token auth handshake before peer registration.
+	PeerAuthToken string
+	// PeerAuthTimeout bounds the optional auth handshake (0 = DefaultPeerAuthTimeout).
+	PeerAuthTimeout time.Duration
 
 	TLSServerConfig *tls.Config
 	TLSClientConfig *tls.Config
@@ -241,8 +246,19 @@ func (t *TCPTransport) acceptLoop() {
 			_ = tc.SetKeepAlive(true)
 		}
 
-		go t.handlePeer(NewTCPPeer(conn, false))
+		go t.handleAcceptedConn(conn)
 	}
+}
+
+func (t *TCPTransport) handleAcceptedConn(conn net.Conn) {
+	tp := NewTCPPeer(conn, false)
+	if err := t.authenticateInbound(t.shutdownCtx, tp); err != nil {
+		t.metrics.PeerAuthFailures.Add(1)
+		t.logger().Warn("peer auth rejected", "remote", tp.RemoteAddr().String(), "err", err)
+		_ = tp.Close()
+		return
+	}
+	t.handlePeer(tp)
 }
 
 func (t *TCPTransport) handlePeer(tp *TCPPeer) {
@@ -296,7 +312,6 @@ func (t *TCPTransport) peerServe(tp *TCPPeer) {
 
 	conn := tp.Conn()
 	if t.FrameHandler != nil {
-		br := bufio.NewReader(conn)
 		max := t.maxFrame()
 		for {
 			select {
@@ -307,7 +322,7 @@ func (t *TCPTransport) peerServe(tp *TCPPeer) {
 			if t.ReadIdleTimeout > 0 {
 				_ = conn.SetReadDeadline(time.Now().Add(t.ReadIdleTimeout))
 			}
-			payload, err := ReadFrame(br, max)
+			payload, err := ReadFrame(tp.reader, max)
 			if err != nil {
 				return
 			}
@@ -371,8 +386,95 @@ func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
 		conn = tlsConn
 	}
 
+	tp := NewTCPPeer(conn, true)
+	if err := t.authenticateOutbound(dialCtx, tp); err != nil {
+		_ = tp.Close()
+		t.metrics.PeerAuthFailures.Add(1)
+		t.metrics.DialErrors.Add(1)
+		return err
+	}
+
 	t.metrics.DialSuccess.Add(1)
-	go t.handlePeer(NewTCPPeer(conn, true))
+	go t.handlePeer(tp)
+	return nil
+}
+
+func (t *TCPTransport) peerAuthEnabled() bool {
+	return t.PeerAuthToken != ""
+}
+
+func (t *TCPTransport) peerAuthDeadline(ctx context.Context) time.Time {
+	timeout := t.PeerAuthTimeout
+	if timeout <= 0 {
+		timeout = DefaultPeerAuthTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	return deadline
+}
+
+func (t *TCPTransport) withPeerAuthDeadline(ctx context.Context, conn net.Conn) func() {
+	if !t.peerAuthEnabled() {
+		return func() {}
+	}
+	_ = conn.SetDeadline(t.peerAuthDeadline(ctx))
+	return func() {
+		_ = conn.SetDeadline(time.Time{})
+	}
+}
+
+func (t *TCPTransport) authenticateInbound(ctx context.Context, tp *TCPPeer) error {
+	if !t.peerAuthEnabled() {
+		return nil
+	}
+	clearDeadline := t.withPeerAuthDeadline(ctx, tp.Conn())
+	defer clearDeadline()
+
+	payload, err := ReadFrame(tp.reader, t.maxFrame())
+	if err != nil {
+		return errors.Join(ErrPeerAuthFailed, err)
+	}
+	if err := validatePeerAuthPayload(payload, t.PeerAuthToken); err != nil {
+		if rejectPayload, encErr := encodePeerAuthReject(); encErr == nil {
+			_ = WriteFrame(tp.Conn(), rejectPayload, t.maxFrame())
+		}
+		return err
+	}
+	ackPayload, err := encodePeerAuthOK()
+	if err != nil {
+		return err
+	}
+	if err := WriteFrame(tp.Conn(), ackPayload, t.maxFrame()); err != nil {
+		return errors.Join(ErrPeerAuthFailed, err)
+	}
+	t.metrics.PeerAuthSuccess.Add(1)
+	return nil
+}
+
+func (t *TCPTransport) authenticateOutbound(ctx context.Context, tp *TCPPeer) error {
+	if !t.peerAuthEnabled() {
+		return nil
+	}
+	clearDeadline := t.withPeerAuthDeadline(ctx, tp.Conn())
+	defer clearDeadline()
+
+	payload, err := encodePeerAuth(t.PeerAuthToken)
+	if err != nil {
+		return err
+	}
+	if err := WriteFrame(tp.Conn(), payload, t.maxFrame()); err != nil {
+		return errors.Join(ErrPeerAuthFailed, err)
+	}
+	ackPayload, err := ReadFrame(tp.reader, t.maxFrame())
+	if err != nil {
+		return errors.Join(ErrPeerAuthFailed, err)
+	}
+	if err := validatePeerAuthAck(ackPayload); err != nil {
+		return err
+	}
+	t.metrics.PeerAuthSuccess.Add(1)
 	return nil
 }
 

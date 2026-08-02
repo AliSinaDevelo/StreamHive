@@ -18,6 +18,39 @@ Each frame has an 8-byte header followed by an opaque payload:
 whose declared payload length exceeds the configured maximum fails with
 `p2p.ErrFrameTooLarge`.
 
+## Peer Auth Handshake
+
+By default, StreamHive keeps the application protocol open for local demos and tests. When
+`p2p.TCPTransport.PeerAuthToken` or the CLI `-peer-auth-token` flag is set, a peer must
+complete a shared-token auth handshake before it is registered or allowed to exchange
+replication frames.
+
+The dialer sends the first `SHV1` frame:
+
+```json
+{
+  "type": "peer.auth",
+  "version": "streamhive/1",
+  "token": "shared-token"
+}
+```
+
+The listener validates the token and replies:
+
+```json
+{
+  "type": "peer.auth.ok",
+  "version": "streamhive/1"
+}
+```
+
+If validation fails, the listener may reply with `peer.auth.reject` and closes the
+connection. Dialers treat rejected or malformed auth replies as dial failures. Auth
+successes and failures are exposed as `peer_auth_success` and `peer_auth_failures`.
+
+This handshake is admission control, not durable identity. Use TLS or mTLS whenever the
+token crosses a network boundary where passive capture or active interception is possible.
+
 ## Replication Payloads
 
 Replication payloads are JSON values decoded into `replication.Message`:
@@ -76,8 +109,9 @@ skipped and duplicate counters are incremented.
 
 ## Failure Behavior
 
-Frame decode errors, message validation errors, and peer write errors stop the current
-peer loop. The transport unregisters the peer and updates metrics.
+Peer auth failures, frame decode errors, message validation errors, and peer write errors
+stop the current peer loop. Auth failures happen before peer registration; later frame
+failures unregister the peer and update metrics.
 
 When answering `blob.missing` or `blob.get`, StreamHive treats each requested key as an
 independent send unit until bytes are written to the peer. If one key is unreadable or
@@ -94,5 +128,6 @@ or reconnect can request the missing key again.
 ## Observability
 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
-`/peers` for connected peer metadata. `/peers` includes remote address, local address,
-direction, connection timestamp, and connection age in milliseconds.
+`/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
+replication counters. `/peers` includes remote address, local address, direction,
+connection timestamp, and connection age in milliseconds.
