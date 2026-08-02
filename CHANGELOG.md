@@ -10,6 +10,7 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **`replication`**: `blob.ack` messages acknowledge accepted `blob.put` keys.
 - **Metrics**: `peer_auth_success` and `peer_auth_failures` counters for authenticated peer admission.
 - **Metrics**: `replication_blob_acks_sent` and `replication_blob_acks_received` counters.
+- **Demo**: authenticated Docker Compose acceptance path proving matching-token replication and wrong-token rejection.
 
 ## [0.7.0] — 2026-08-02
 

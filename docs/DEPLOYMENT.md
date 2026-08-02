@@ -32,6 +32,16 @@ make demo-compose
 
 The demo builds `streamhive:local`, starts node1, seeds one blob, starts node2 and node3, verifies node3 receives the blob, wipes node3's local demo data, restarts node3, and verifies startup anti-entropy rehydrates the blob again.
 
+Run the token-protected Compose acceptance demo:
+
+```bash
+STREAMHIVE_PEER_TOKEN="replace-with-a-local-demo-token" make demo-auth
+```
+
+The same optional token is passed to every Compose node and the seed tool. The demo also
+attempts a write with a different token and verifies that the peer is rejected and the
+unauthorized key is absent from node1's durable store.
+
 Inspect a running Compose cluster:
 
 ```bash

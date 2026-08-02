@@ -64,6 +64,13 @@ For a 3-node Docker Compose demo with durable stores and node restart rehydratio
 make demo-compose
 ```
 
+For the authenticated Compose variant, set one shared token. The demo proves matching
+tokens replicate and a wrong token is rejected before the blob reaches durable storage:
+
+```bash
+STREAMHIVE_PEER_TOKEN="replace-with-a-local-demo-token" make demo-auth
+```
+
 To inspect a running Compose cluster:
 
 ```bash
