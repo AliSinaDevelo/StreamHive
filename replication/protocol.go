@@ -18,6 +18,8 @@ const (
 	MessageTypeBlobGet = "blob.get"
 	// MessageTypeBlobMissing reports keys missing from the sending peer.
 	MessageTypeBlobMissing = "blob.missing"
+	// MessageTypeBlobAck acknowledges that a blob key was accepted by a peer.
+	MessageTypeBlobAck = "blob.ack"
 
 	// DefaultMaxKeyBytes bounds encoded blob keys.
 	DefaultMaxKeyBytes = 512
@@ -96,6 +98,18 @@ func EncodeBlobMissing(keys [][]byte, limits Limits) ([]byte, error) {
 	return encodeKeyListMessage(MessageTypeBlobMissing, keys, limits)
 }
 
+// EncodeBlobAck returns a frame payload that acknowledges one accepted blob key.
+func EncodeBlobAck(key []byte, limits Limits) ([]byte, error) {
+	msg := Message{
+		Type: MessageTypeBlobAck,
+		Key:  append([]byte(nil), key...),
+	}
+	if err := validateKey(msg.Key, normalizeLimits(limits)); err != nil {
+		return nil, err
+	}
+	return json.Marshal(msg)
+}
+
 // Decode parses a replication payload and validates its declared message type.
 func Decode(payload []byte, limits Limits) (Message, error) {
 	var msg Message
@@ -109,7 +123,7 @@ func Decode(payload []byte, limits Limits) (Message, error) {
 		if err := validateBlobPut(msg, normalized); err != nil {
 			return Message{}, err
 		}
-	case MessageTypeBlobGet:
+	case MessageTypeBlobGet, MessageTypeBlobAck:
 		if err := validateKey(msg.Key, normalized); err != nil {
 			return Message{}, err
 		}

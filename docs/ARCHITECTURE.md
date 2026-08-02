@@ -8,7 +8,7 @@ sections after it go deep.
 flowchart TD
   cli["CLI / library user"] --> tr["Transport (p2p)<br/>TCPTransport · TLS · context"]
   tr --> fr["Framing (p2p)<br/>SHV1 length-prefixed frames"]
-  fr --> rep["Replication (replication)<br/>blob.put / has / get / missing"]
+  fr --> rep["Replication (replication)<br/>blob.put / has / get / missing / ack"]
   rep --> st["Storage (storage)<br/>BlobStore"]
   st --> mem["MemoryStore"]
   st --> file["FileStore (durable)"]
@@ -19,7 +19,7 @@ flowchart TD
 
 1. **Transport (`p2p`)** — `TCPTransport` with `context.Context` on `ListenAndAccept` / `Dial`, accept-loop shutdown coordinated with `Close`, optional TLS, optional shared-token peer auth, optional framed reads via `FrameHandler`, metrics, peer snapshots, and peer disconnect hooks.
 2. **Framing (`p2p`)** — `SHV1` length-prefixed payloads (`ReadFrame` / `WriteFrame`) with a configurable maximum size (DoS bound). Application-level handshake string: `HandshakeVersionV1`.
-3. **Replication (`replication`)** — typed JSON messages carried inside frames. `blob.put` writes one key/value blob to a receiving `BlobStore`; `blob.has`, `blob.get`, and `blob.missing` provide the inventory/request vocabulary for anti-entropy sync.
+3. **Replication (`replication`)** — typed JSON messages carried inside frames. `blob.put` writes one key/value blob to a receiving `BlobStore`; `blob.has`, `blob.get`, and `blob.missing` provide the inventory/request vocabulary for anti-entropy sync; `blob.ack` records accepted puts.
 4. **Storage (`storage`)** — `BlobStore` interface with `BlobKeyLister` inventory support, `MemoryStore` for tests/demos, and `FileStore` for durable local blobs; SHA-256 helpers provide stable content-addressed keys.
 
 ## Package map
@@ -87,7 +87,7 @@ classDiagram
 - Receivers treat 32-byte keys as SHA-256 content addresses and verify payload integrity before storage. Exact duplicate key/data writes are skipped and counted separately; opaque keys with different data still replace existing values.
 - `-peer-reconnect` manages only static `-peers` targets. It retries failed dials with exponential backoff and schedules another retry when an outbound configured peer disconnects.
 - `-peer-auth-token` requires a shared-token auth frame before a peer is registered or allowed to exchange replication frames. The default is unauthenticated for local demos.
-- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, and owners send the requested blobs with `blob.put`.
+- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`.
 
 ### Peer lifecycle
 
@@ -142,10 +142,11 @@ Implemented:
 - Static peer replication over `-dial` and comma-separated `-peers`.
 - Optional reconnect/backoff for `-peers`.
 - Message types: `blob.put`, `blob.has`, `blob.get`, and `blob.missing`.
+- Per-key `blob.ack` observability after stored or duplicate `blob.put` messages.
 - Startup anti-entropy for connected `-replicate` peers.
 - Receiver-side storage via `storage.MemoryStore` or durable `storage.FileStore` with `-store-dir`.
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, and connection age.
-- JSON `/metrics` counters for stored/sent blobs, bytes, duplicates, and replication errors.
+- JSON `/metrics` counters for stored/sent blobs, ACKs, bytes, duplicates, and replication errors.
 
 Not implemented yet:
 

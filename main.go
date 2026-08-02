@@ -361,7 +361,7 @@ func handleReplicationMessage(
 			metrics.DuplicateBlobs.Add(1)
 			metrics.DuplicateBytes.Add(uint64(len(msg.Data)))
 			log.Info("replicated blob duplicate", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(msg.Key), "bytes", len(msg.Data))
-			return nil
+			return sendBlobAck(peer, msg.Key, limits, maxFrameBytes, metrics, log)
 		}
 		if err := store.Put(ctx, msg.Key, msg.Data); err != nil {
 			return err
@@ -373,7 +373,7 @@ func handleReplicationMessage(
 			attrs = append(attrs, "blobs", memoryStore.Len())
 		}
 		log.Info("replicated blob stored", attrs...)
-		return nil
+		return sendBlobAck(peer, msg.Key, limits, maxFrameBytes, metrics, log)
 	case replication.MessageTypeBlobHas:
 		if lister == nil {
 			return nil
@@ -400,9 +400,35 @@ func handleReplicationMessage(
 		return sendRequestedBlobs(ctx, peer, store, msg.Keys, limits, maxFrameBytes, metrics, log)
 	case replication.MessageTypeBlobGet:
 		return sendRequestedBlobs(ctx, peer, store, [][]byte{msg.Key}, limits, maxFrameBytes, metrics, log)
+	case replication.MessageTypeBlobAck:
+		metrics.BlobAcksReceived.Add(1)
+		log.Info("replication ack received", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(msg.Key))
+		return nil
 	default:
 		return replication.ErrUnknownMessageType
 	}
+}
+
+func sendBlobAck(
+	peer p2p.Peer,
+	key []byte,
+	limits replication.Limits,
+	maxFrameBytes int,
+	metrics *replicationMetrics,
+	log *slog.Logger,
+) error {
+	payload, err := replication.EncodeBlobAck(key, limits)
+	if err != nil {
+		metrics.SendErrors.Add(1)
+		return err
+	}
+	if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
+		metrics.SendErrors.Add(1)
+		return err
+	}
+	metrics.BlobAcksSent.Add(1)
+	log.Info("replication ack sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key))
+	return nil
 }
 
 func sendBlobHas(ctx context.Context, peer p2p.Peer, lister storage.BlobKeyLister, limits replication.Limits, maxFrameBytes int) error {
@@ -686,15 +712,17 @@ func validateReconnectBackoff(minBackoff, maxBackoff time.Duration) error {
 }
 
 type replicationMetrics struct {
-	BlobsStored    atomic.Uint64
-	BytesStored    atomic.Uint64
-	DuplicateBlobs atomic.Uint64
-	DuplicateBytes atomic.Uint64
-	ApplyErrors    atomic.Uint64
-	BlobsSent      atomic.Uint64
-	BytesSent      atomic.Uint64
-	BlobsSkipped   atomic.Uint64
-	SendErrors     atomic.Uint64
+	BlobsStored      atomic.Uint64
+	BytesStored      atomic.Uint64
+	DuplicateBlobs   atomic.Uint64
+	DuplicateBytes   atomic.Uint64
+	ApplyErrors      atomic.Uint64
+	BlobsSent        atomic.Uint64
+	BytesSent        atomic.Uint64
+	BlobsSkipped     atomic.Uint64
+	BlobAcksSent     atomic.Uint64
+	BlobAcksReceived atomic.Uint64
+	SendErrors       atomic.Uint64
 }
 
 func (m *replicationMetrics) Snapshot() map[string]int64 {
@@ -702,15 +730,17 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		return map[string]int64{}
 	}
 	return map[string]int64{
-		"replication_blobs_stored":    int64(m.BlobsStored.Load()),
-		"replication_bytes_stored":    int64(m.BytesStored.Load()),
-		"replication_duplicate_blobs": int64(m.DuplicateBlobs.Load()),
-		"replication_duplicate_bytes": int64(m.DuplicateBytes.Load()),
-		"replication_apply_errors":    int64(m.ApplyErrors.Load()),
-		"replication_blobs_sent":      int64(m.BlobsSent.Load()),
-		"replication_bytes_sent":      int64(m.BytesSent.Load()),
-		"replication_blobs_skipped":   int64(m.BlobsSkipped.Load()),
-		"replication_send_errors":     int64(m.SendErrors.Load()),
+		"replication_blobs_stored":       int64(m.BlobsStored.Load()),
+		"replication_bytes_stored":       int64(m.BytesStored.Load()),
+		"replication_duplicate_blobs":    int64(m.DuplicateBlobs.Load()),
+		"replication_duplicate_bytes":    int64(m.DuplicateBytes.Load()),
+		"replication_apply_errors":       int64(m.ApplyErrors.Load()),
+		"replication_blobs_sent":         int64(m.BlobsSent.Load()),
+		"replication_bytes_sent":         int64(m.BytesSent.Load()),
+		"replication_blobs_skipped":      int64(m.BlobsSkipped.Load()),
+		"replication_blob_acks_sent":     int64(m.BlobAcksSent.Load()),
+		"replication_blob_acks_received": int64(m.BlobAcksReceived.Load()),
+		"replication_send_errors":        int64(m.SendErrors.Load()),
 	}
 }
 

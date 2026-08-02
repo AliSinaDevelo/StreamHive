@@ -7,7 +7,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 ### Added
 
 - **`p2p` / CLI**: optional shared-token peer auth handshake via `TCPTransport.PeerAuthToken` and `-peer-auth-token`.
+- **`replication`**: `blob.ack` messages acknowledge accepted `blob.put` keys.
 - **Metrics**: `peer_auth_success` and `peer_auth_failures` counters for authenticated peer admission.
+- **Metrics**: `replication_blob_acks_sent` and `replication_blob_acks_received` counters.
 
 ## [0.7.0] — 2026-08-02
 

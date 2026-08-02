@@ -66,6 +66,16 @@ func TestEncodeDecodeBlobMissing(t *testing.T) {
 	assert.Equal(t, [][]byte{[]byte("alpha"), []byte("beta")}, msg.Keys)
 }
 
+func TestEncodeDecodeBlobAck(t *testing.T) {
+	payload, err := EncodeBlobAck([]byte("alpha"), Limits{})
+	require.NoError(t, err)
+
+	msg, err := Decode(payload, Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, MessageTypeBlobAck, msg.Type)
+	assert.Equal(t, []byte("alpha"), msg.Key)
+}
+
 func TestApplyRejectsNilStore(t *testing.T) {
 	payload, err := EncodeBlobPut([]byte("k1"), []byte("value"), Limits{})
 	require.NoError(t, err)

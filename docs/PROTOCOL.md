@@ -74,6 +74,7 @@ to `key`, `keys`, and `data` fields on the wire.
 | `blob.has` | `keys` | Advertise keys available on the sender. |
 | `blob.missing` | `keys` | Ask the peer to send keys missing locally. |
 | `blob.get` | `key` | Ask the peer to send one key. |
+| `blob.ack` | `key` | Acknowledge that one `blob.put` key was accepted. |
 
 The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 
@@ -81,6 +82,7 @@ The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 2. When `-sync-interval` is set, a peer advertises local keys periodically.
 3. A receiver computes which advertised keys it lacks and sends `blob.missing`.
 4. The owner answers with `blob.put` for keys it can still read.
+5. The receiver answers accepted `blob.put` messages with `blob.ack`.
 
 ## Limits
 
@@ -120,10 +122,14 @@ and `replication_blobs_skipped` are incremented, and later requested keys are st
 If writing a frame to the TCP stream fails, the peer loop stops instead of retrying the
 same frame on a potentially partial stream.
 
-There is no per-key acknowledgement protocol yet. Repair is driven by startup inventory,
-periodic inventory with `-sync-interval`, and reconnect behavior for static `-peers`
-when `-peer-reconnect` is enabled. If a blob send fails mid-sync, a later inventory pass
-or reconnect can request the missing key again.
+StreamHive sends `blob.ack` after a `blob.put` is stored or recognized as an exact
+duplicate. ACKs are currently observability signals: they increment
+`replication_blob_acks_sent` and `replication_blob_acks_received`, but they do not yet
+drive retransmission state or commit indexes.
+
+Repair is driven by startup inventory, periodic inventory with `-sync-interval`, and
+reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a blob send
+fails mid-sync, a later inventory pass or reconnect can request the missing key again.
 
 ## Observability
 

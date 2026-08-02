@@ -547,6 +547,7 @@ func TestHandleReplicationMessageSkipsExactDuplicateBlobPut(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
 	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
 	data := []byte("same")
 	key := storage.SHA256Key(data)
 	msg := replication.Message{
@@ -555,15 +556,50 @@ func TestHandleReplicationMessageSkipsExactDuplicateBlobPut(t *testing.T) {
 		Data: data,
 	}
 
-	require.NoError(t, handleReplicationMessage(ctx, testPeer{}, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
-	require.NoError(t, handleReplicationMessage(ctx, testPeer{}, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
 
 	assert.Equal(t, uint64(1), metrics.BlobsStored.Load())
 	assert.Equal(t, uint64(1), metrics.DuplicateBlobs.Load())
 	assert.Equal(t, uint64(len(data)), metrics.DuplicateBytes.Load())
+	assert.Equal(t, uint64(2), metrics.BlobAcksSent.Load())
 	got, err := store.Get(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, data, got)
+}
+
+func TestHandleReplicationMessageSendsAckAfterBlobPut(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	msg := replication.Message{
+		Type: replication.MessageTypeBlobPut,
+		Key:  []byte("manual"),
+		Data: []byte("value"),
+	}
+
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
+
+	require.Len(t, peer.payloads, 1)
+	ack, err := replication.Decode(peer.payloads[0], replication.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, replication.MessageTypeBlobAck, ack.Type)
+	assert.Equal(t, []byte("manual"), ack.Key)
+	assert.Equal(t, uint64(1), metrics.BlobsStored.Load())
+	assert.Equal(t, uint64(1), metrics.BlobAcksSent.Load())
+}
+
+func TestHandleReplicationMessageCountsBlobAck(t *testing.T) {
+	metrics := &replicationMetrics{}
+	msg := replication.Message{
+		Type: replication.MessageTypeBlobAck,
+		Key:  []byte("manual"),
+	}
+
+	require.NoError(t, handleReplicationMessage(context.Background(), testPeer{}, storage.NewMemoryStore(), nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+
+	assert.Equal(t, uint64(1), metrics.BlobAcksReceived.Load())
 }
 
 func TestHandleReplicationMessageRejectsSHA256Mismatch(t *testing.T) {
@@ -585,14 +621,16 @@ func TestHandleReplicationMessageAllowsOpaqueKeyReplace(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
 	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
 
 	first := replication.Message{Type: replication.MessageTypeBlobPut, Key: []byte("manual"), Data: []byte("first")}
 	second := replication.Message{Type: replication.MessageTypeBlobPut, Key: []byte("manual"), Data: []byte("second")}
-	require.NoError(t, handleReplicationMessage(ctx, testPeer{}, store, nil, first, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
-	require.NoError(t, handleReplicationMessage(ctx, testPeer{}, store, nil, second, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, nil, first, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, nil, second, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
 
 	assert.Equal(t, uint64(2), metrics.BlobsStored.Load())
 	assert.Equal(t, uint64(0), metrics.DuplicateBlobs.Load())
+	assert.Equal(t, uint64(2), metrics.BlobAcksSent.Load())
 	got, err := store.Get(ctx, []byte("manual"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("second"), got)
