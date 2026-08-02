@@ -760,11 +760,6 @@ func TestValidateReconnectBackoff(t *testing.T) {
 }
 
 func TestPeerReconnector_dialsWhenPeerAppears(t *testing.T) {
-	reserved, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := reserved.Addr().String()
-	require.NoError(t, reserved.Close())
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -773,6 +768,11 @@ func TestPeerReconnector_dialsWhenPeerAppears(t *testing.T) {
 	client.DialTimeout = 20 * time.Millisecond
 	require.NoError(t, client.ListenAndAccept(ctx))
 	defer func() { _ = client.Close() }()
+
+	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := reserved.Addr().String()
+	require.NoError(t, reserved.Close())
 
 	reconnector := newPeerReconnector(
 		ctx,
