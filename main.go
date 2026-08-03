@@ -40,6 +40,13 @@ const (
 
 var errBlobAckTimeout = errors.New("replication: timed out waiting for blob acknowledgment")
 
+const (
+	blobOutcomeAccepted   = "accepted"
+	blobOutcomeAckTimeout = "ack-timeout"
+	blobOutcomeWriteError = "write-error"
+	blobOutcomeCanceled   = "canceled"
+)
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -220,9 +227,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 					log,
 				)
 				if err != nil {
-					log.Error("replication send", "remote", peer.RemoteAddr().String(), "key", putKeyLabel, "err", err)
-				} else {
-					log.Info("replicated blob accepted", "remote", peer.RemoteAddr().String(), "key", putKeyLabel, "bytes", len(*putData))
+					outcome := "failed"
+					attempts := 0
+					var deliveryErr *blobDeliveryError
+					if errors.As(err, &deliveryErr) {
+						outcome = deliveryErr.kind
+						attempts = deliveryErr.attempts
+					}
+					attrs := []any{"remote", peer.RemoteAddr().String(), "key", putKeyLabel, "err", err, "outcome", outcome}
+					if attempts > 0 {
+						attrs = append(attrs, "attempts", attempts)
+					}
+					log.Error("replication send", attrs...)
 				}
 				reportPutResult(putResult, err)
 			}()
@@ -393,6 +409,18 @@ type putAckID struct {
 	key    string
 }
 
+type blobDeliveryError struct {
+	kind     string
+	attempts int
+	err      error
+}
+
+func (e *blobDeliveryError) Error() string {
+	return fmt.Sprintf("replication: blob delivery %s after %d attempt(s): %v", e.kind, e.attempts, e.err)
+}
+
+func (e *blobDeliveryError) Unwrap() error { return e.err }
+
 type putAckTracker struct {
 	mu      sync.Mutex
 	pending map[putAckID]chan struct{}
@@ -470,7 +498,16 @@ func sendBlobWithAck(
 		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
 			tracker.remove(peer, key)
 			metrics.SendErrors.Add(1)
-			return fmt.Errorf("replication: write blob: %w", err)
+			metrics.BlobWriteErrors.Add(1)
+			metrics.BlobPutFailures.Add(1)
+			_ = peer.Close()
+			deliveryErr := &blobDeliveryError{
+				kind:     blobOutcomeWriteError,
+				attempts: attempt + 1,
+				err:      fmt.Errorf("replication: write blob: %w", err),
+			}
+			log.Error("replication blob delivery", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "outcome", deliveryErr.kind, "attempts", deliveryErr.attempts, "err", deliveryErr.err)
+			return deliveryErr
 		}
 		metrics.BlobsSent.Add(1)
 		metrics.BytesSent.Add(uint64(blobBytes))
@@ -480,28 +517,43 @@ func sendBlobWithAck(
 		select {
 		case <-ack:
 			timer.Stop()
+			metrics.BlobPutsAccepted.Add(1)
+			log.Info("replication blob delivery", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "outcome", blobOutcomeAccepted, "attempts", attempt+1)
 			return nil
 		case <-ctx.Done():
 			timer.Stop()
-			tracker.remove(peer, key)
-			return ctx.Err()
+			if !tracker.remove(peer, key) {
+				metrics.BlobPutsAccepted.Add(1)
+				return nil
+			}
+			metrics.BlobPutFailures.Add(1)
+			deliveryErr := &blobDeliveryError{kind: blobOutcomeCanceled, attempts: attempt + 1, err: ctx.Err()}
+			log.Warn("replication blob delivery", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "outcome", deliveryErr.kind, "attempts", deliveryErr.attempts, "err", deliveryErr.err)
+			return deliveryErr
 		case <-timer.C:
 			if !tracker.remove(peer, key) {
+				metrics.BlobPutsAccepted.Add(1)
 				return nil
 			}
 			metrics.BlobAckTimeouts.Add(1)
 			if attempt == retries {
-				return errBlobAckTimeout
+				metrics.BlobPutFailures.Add(1)
+				deliveryErr := &blobDeliveryError{kind: blobOutcomeAckTimeout, attempts: attempt + 1, err: errBlobAckTimeout}
+				log.Error("replication blob delivery", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "outcome", deliveryErr.kind, "attempts", deliveryErr.attempts, "err", deliveryErr.err)
+				return deliveryErr
 			}
 			metrics.BlobRetries.Add(1)
 			delay := retryDelayForAttempt(retryDelay, attempt)
 			log.Warn("replication blob ack timeout", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "retry", attempt+1, "delay", delay)
 			if !sleepContext(ctx, delay) {
-				return ctx.Err()
+				metrics.BlobPutFailures.Add(1)
+				deliveryErr := &blobDeliveryError{kind: blobOutcomeCanceled, attempts: attempt + 1, err: ctx.Err()}
+				log.Warn("replication blob delivery", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "outcome", deliveryErr.kind, "attempts", deliveryErr.attempts, "err", deliveryErr.err)
+				return deliveryErr
 			}
 		}
 	}
-	return errBlobAckTimeout
+	return &blobDeliveryError{kind: blobOutcomeAckTimeout, attempts: retries + 1, err: errBlobAckTimeout}
 }
 
 func retryDelayForAttempt(base time.Duration, attempt int) time.Duration {
@@ -936,6 +988,9 @@ type replicationMetrics struct {
 	BlobAcksPending  atomic.Int64
 	BlobAckTimeouts  atomic.Uint64
 	BlobRetries      atomic.Uint64
+	BlobPutsAccepted atomic.Uint64
+	BlobPutFailures  atomic.Uint64
+	BlobWriteErrors  atomic.Uint64
 	SendErrors       atomic.Uint64
 	ackTracker       *putAckTracker
 }
@@ -959,6 +1014,9 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_blob_acks_pending":  m.BlobAcksPending.Load(),
 		"replication_blob_ack_timeouts":  int64(m.BlobAckTimeouts.Load()),
 		"replication_blob_retries":       int64(m.BlobRetries.Load()),
+		"replication_blob_puts_accepted": int64(m.BlobPutsAccepted.Load()),
+		"replication_blob_put_failures":  int64(m.BlobPutFailures.Load()),
+		"replication_blob_write_errors":  int64(m.BlobWriteErrors.Load()),
 		"replication_send_errors":        int64(m.SendErrors.Load()),
 	}
 }

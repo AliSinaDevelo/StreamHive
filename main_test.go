@@ -61,6 +61,18 @@ func (p *retryPeer) WriteFrame(_ []byte, _ int) error {
 	return nil
 }
 
+type writeFailurePeer struct {
+	testPeer
+	err    error
+	closes atomic.Int32
+}
+
+func (p *writeFailurePeer) WriteFrame([]byte, int) error { return p.err }
+func (p *writeFailurePeer) Close() error {
+	p.closes.Add(1)
+	return nil
+}
+
 func (s *safeBuffer) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,6 +151,9 @@ func TestRun_healthEndpoints(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&metrics))
 	assert.Contains(t, metrics, "active_peers")
 	assert.Contains(t, metrics, "replication_blobs_stored")
+	assert.Contains(t, metrics, "replication_blob_puts_accepted")
+	assert.Contains(t, metrics, "replication_blob_put_failures")
+	assert.Contains(t, metrics, "replication_blob_write_errors")
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
 	require.NoError(t, err)
@@ -148,6 +163,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "streamhive_active_peers")
 	assert.Contains(t, string(body), "streamhive_replication_blobs_stored")
+	assert.Contains(t, string(body), "streamhive_replication_blob_puts_accepted")
 
 	resp5, err := client.Get(base + "/peers")
 	require.NoError(t, err)
@@ -656,6 +672,8 @@ func TestSendBlobWithAckRetriesUntilAcknowledged(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.BlobRetries.Load())
 	assert.Equal(t, uint64(1), metrics.BlobAckTimeouts.Load())
 	assert.Equal(t, uint64(1), metrics.BlobAcksMatched.Load())
+	assert.Equal(t, uint64(1), metrics.BlobPutsAccepted.Load())
+	assert.Equal(t, uint64(0), metrics.BlobPutFailures.Load())
 	assert.Equal(t, int64(0), metrics.BlobAcksPending.Load())
 }
 
@@ -683,6 +701,41 @@ func TestSendBlobWithAckStopsAfterBoundedRetries(t *testing.T) {
 	assert.Equal(t, int32(3), peer.writes.Load())
 	assert.Equal(t, uint64(2), metrics.BlobRetries.Load())
 	assert.Equal(t, uint64(3), metrics.BlobAckTimeouts.Load())
+	assert.Equal(t, uint64(0), metrics.BlobPutsAccepted.Load())
+	assert.Equal(t, uint64(1), metrics.BlobPutFailures.Load())
+	assert.Equal(t, int64(0), metrics.BlobAcksPending.Load())
+}
+
+func TestSendBlobWithAckClosesPeerOnWriteFailure(t *testing.T) {
+	metrics := &replicationMetrics{}
+	tracker := newPutAckTracker(metrics)
+	writeErr := errors.New("broken stream")
+	peer := &writeFailurePeer{err: writeErr}
+
+	err := sendBlobWithAck(
+		context.Background(),
+		peer,
+		[]byte("blob frame"),
+		[]byte("manual"),
+		0,
+		0,
+		tracker,
+		5*time.Millisecond,
+		0,
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	assert.ErrorIs(t, err, writeErr)
+	var deliveryErr *blobDeliveryError
+	require.ErrorAs(t, err, &deliveryErr)
+	assert.Equal(t, "write-error", deliveryErr.kind)
+	assert.Equal(t, 1, deliveryErr.attempts)
+	assert.Equal(t, int32(1), peer.closes.Load())
+	assert.Equal(t, uint64(1), metrics.BlobWriteErrors.Load())
+	assert.Equal(t, uint64(1), metrics.BlobPutFailures.Load())
+	assert.Equal(t, uint64(0), metrics.BlobPutsAccepted.Load())
 	assert.Equal(t, int64(0), metrics.BlobAcksPending.Load())
 }
 
