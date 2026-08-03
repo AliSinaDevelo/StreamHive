@@ -72,6 +72,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	maxPeers := fs.Int("max-peers", 0, "max simultaneous peers (0 = unlimited)")
 	peerAuthToken := fs.String("peer-auth-token", "", "optional shared token required before peer registration")
 	peerAuthTimeout := fs.Duration("peer-auth-timeout", p2p.DefaultPeerAuthTimeout, "timeout for optional peer auth handshake")
+	peerID := fs.String("peer-id", "", "optional application identity sent during shared-token auth")
 	dialTimeout := fs.Duration("dial-timeout", 0, "default dial timeout (0 = use context only)")
 	readIdle := fs.Duration("read-idle-timeout", 0, "TCP read deadline refresh for peer loops (0 = none for discard mode)")
 	showVer := fs.Bool("version", false, "print version and exit")
@@ -155,6 +156,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *peerAuthTimeout < 0 {
 		return fmt.Errorf("peers: -peer-auth-timeout must be zero or greater")
 	}
+	if *peerID != "" && *peerAuthToken == "" {
+		return fmt.Errorf("peers: -peer-id requires -peer-auth-token")
+	}
 	if *putAckTimeout <= 0 {
 		return fmt.Errorf("replication: -put-ack-timeout must be greater than zero")
 	}
@@ -206,10 +210,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.MaxPeers = *maxPeers
 	tr.PeerAuthToken = *peerAuthToken
 	tr.PeerAuthTimeout = *peerAuthTimeout
+	tr.PeerAuthIdentity = *peerID
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle
 	tr.OnPeer = func(peer p2p.Peer) {
-		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound(), "auth_method", authMethodForPeer(peer))
+		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound(), "auth_method", authMethodForPeer(peer), "auth_identity", authIdentityForPeer(peer))
 		if putPayload != nil && peer.IsOutbound() {
 			go func() {
 				err := sendBlobWithAck(
@@ -397,11 +402,22 @@ type peerAuthMethodProvider interface {
 	AuthMethod() string
 }
 
+type peerAuthIdentityProvider interface {
+	AuthIdentity() string
+}
+
 func authMethodForPeer(peer p2p.Peer) string {
 	if provider, ok := peer.(peerAuthMethodProvider); ok {
 		return provider.AuthMethod()
 	}
 	return p2p.PeerAuthMethodNone
+}
+
+func authIdentityForPeer(peer p2p.Peer) string {
+	if provider, ok := peer.(peerAuthIdentityProvider); ok {
+		return provider.AuthIdentity()
+	}
+	return ""
 }
 
 type putAckID struct {
@@ -1028,6 +1044,7 @@ type peerStatus struct {
 	ConnectedAt    string `json:"connected_at,omitempty"`
 	ConnectedForMS int64  `json:"connected_for_ms"`
 	AuthMethod     string `json:"auth_method"`
+	AuthIdentity   string `json:"auth_identity,omitempty"`
 }
 
 type peersResponse struct {
@@ -1053,6 +1070,7 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 			ConnectedAt:    connectedAt,
 			ConnectedForMS: connectedForMS,
 			AuthMethod:     peer.AuthMethod,
+			AuthIdentity:   peer.AuthIdentity,
 		})
 	}
 	sort.Slice(statuses, func(i, j int) bool {

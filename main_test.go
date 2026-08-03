@@ -244,6 +244,13 @@ func TestRun_peerReconnectRejectsOneShotPut(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot be combined with -put-key")
 }
 
+func TestRun_peerIDRequiresAuthToken(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-peer-id", "node-a"}, &out, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-peer-id requires -peer-auth-token")
+}
+
 func TestRun_syncIntervalRejectsNegative(t *testing.T) {
 	var out bytes.Buffer
 	err := run(context.Background(), []string{"-sync-interval", "-1s"}, &out, io.Discard)
@@ -291,6 +298,46 @@ func TestRun_replicatesBlobPutToDialPeer(t *testing.T) {
 
 	serverCancel()
 	require.NoError(t, <-clientErrCh)
+	require.NoError(t, <-serverErrCh)
+}
+
+func TestRun_peerIdentityAppearsInConnectionLogs(t *testing.T) {
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	var serverOut, serverErr safeBuffer
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- run(serverCtx, []string{
+			"-listen", "127.0.0.1:0",
+			"-replicate",
+			"-peer-auth-token", "shared-secret",
+			"-peer-id", "node-a",
+		}, &serverOut, &serverErr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(serverOut.String(), "listening on")
+	}, 3*time.Second, 20*time.Millisecond)
+	re := regexp.MustCompile(`listening on ([^\n]+)`)
+	m := re.FindStringSubmatch(serverOut.String())
+	require.Len(t, m, 2, "stdout=%q", serverOut.String())
+
+	var clientOut, clientErr safeBuffer
+	err := run(context.Background(), []string{
+		"-listen", "127.0.0.1:0",
+		"-dial", m[1],
+		"-replicate",
+		"-peer-auth-token", "shared-secret",
+		"-peer-id", "node-b",
+		"-put-key", "identity-key",
+		"-put-data", "identity-value",
+		"-exit-after-put",
+	}, &clientOut, &clientErr)
+	require.NoError(t, err, "client logs=%q", clientErr.String())
+	assert.Contains(t, serverErr.String(), "auth_identity=node-b")
+	assert.Contains(t, clientErr.String(), "auth_identity=node-a")
+
+	serverCancel()
 	require.NoError(t, <-serverErrCh)
 }
 
@@ -965,6 +1012,15 @@ func TestSnapshotPeersIncludesAuthMethod(t *testing.T) {
 
 	require.Len(t, resp.Peers, 1)
 	assert.Equal(t, p2p.PeerAuthMethodSharedToken, resp.Peers[0].AuthMethod)
+}
+
+func TestSnapshotPeersIncludesAuthIdentity(t *testing.T) {
+	resp := snapshotPeers([]p2p.PeerSnapshot{
+		{RemoteAddr: "127.0.0.1:9001", AuthIdentity: "node-a"},
+	}, time.Now().UTC())
+
+	require.Len(t, resp.Peers, 1)
+	assert.Equal(t, "node-a", resp.Peers[0].AuthIdentity)
 }
 
 func TestValidateReconnectBackoff(t *testing.T) {
