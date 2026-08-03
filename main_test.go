@@ -154,6 +154,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_blob_puts_accepted")
 	assert.Contains(t, metrics, "replication_blob_put_failures")
 	assert.Contains(t, metrics, "replication_blob_write_errors")
+	assert.Contains(t, metrics, "peer_auth_identity_rejections")
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
 	require.NoError(t, err)
@@ -164,6 +165,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_active_peers")
 	assert.Contains(t, string(body), "streamhive_replication_blobs_stored")
 	assert.Contains(t, string(body), "streamhive_replication_blob_puts_accepted")
+	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
 
 	resp5, err := client.Get(base + "/peers")
 	require.NoError(t, err)
@@ -386,6 +388,72 @@ func TestRun_peerAllowIDsRejectsUnknownIdentity(t *testing.T) {
 	assert.Contains(t, err.Error(), "peer auth rejected")
 
 	serverCancel()
+	require.NoError(t, <-serverErrCh)
+}
+
+func TestRun_healthExposesPeerIdentityAndAuthMetrics(t *testing.T) {
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	var serverOut, serverErr safeBuffer
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- run(serverCtx, []string{
+			"-listen", "127.0.0.1:0",
+			"-replicate",
+			"-health", "127.0.0.1:0",
+			"-peer-auth-token", "shared-secret",
+			"-peer-id", "node-a",
+			"-peer-allow-ids", "node-b",
+		}, &serverOut, &serverErr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(serverOut.String(), "listening on") && strings.Contains(serverErr.String(), "msg=health")
+	}, 3*time.Second, 20*time.Millisecond)
+	listenRe := regexp.MustCompile(`listening on ([^\n]+)`)
+	listenMatch := listenRe.FindStringSubmatch(serverOut.String())
+	require.Len(t, listenMatch, 2, "stdout=%q", serverOut.String())
+	healthRe := regexp.MustCompile(`msg=health addr=([0-9a-fA-F.:]+)`)
+	healthMatch := healthRe.FindStringSubmatch(serverErr.String())
+	require.Len(t, healthMatch, 2, "stderr=%q", serverErr.String())
+
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	var clientOut, clientErr safeBuffer
+	clientErrCh := make(chan error, 1)
+	go func() {
+		clientErrCh <- run(clientCtx, []string{
+			"-listen", "127.0.0.1:0",
+			"-dial", listenMatch[1],
+			"-replicate",
+			"-peer-auth-token", "shared-secret",
+			"-peer-id", "node-b",
+		}, &clientOut, &clientErr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(serverErr.String(), "auth_identity=node-b")
+	}, 3*time.Second, 20*time.Millisecond, "server logs=%q client logs=%q", serverErr.String(), clientErr.String())
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	base := "http://" + healthMatch[1]
+	resp, err := client.Get(base + "/peers")
+	require.NoError(t, err)
+	var peers peersResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&peers))
+	_ = resp.Body.Close()
+	require.Len(t, peers.Peers, 1)
+	assert.Equal(t, "node-b", peers.Peers[0].AuthIdentity)
+
+	resp, err = client.Get(base + "/metrics/prometheus")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections 0")
+
+	clientCancel()
+	serverCancel()
+	require.NoError(t, <-clientErrCh)
 	require.NoError(t, <-serverErrCh)
 }
 
