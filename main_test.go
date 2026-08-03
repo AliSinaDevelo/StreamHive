@@ -154,6 +154,9 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_blob_puts_accepted")
 	assert.Contains(t, metrics, "replication_blob_put_failures")
 	assert.Contains(t, metrics, "replication_blob_write_errors")
+	assert.Contains(t, metrics, "replication_inventory_advertisements")
+	assert.Contains(t, metrics, "replication_missing_keys_requested")
+	assert.Contains(t, metrics, "replication_repair_blobs_sent")
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
@@ -165,6 +168,9 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_active_peers")
 	assert.Contains(t, string(body), "streamhive_replication_blobs_stored")
 	assert.Contains(t, string(body), "streamhive_replication_blob_puts_accepted")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_advertisements")
+	assert.Contains(t, string(body), "streamhive_replication_missing_keys_requested")
+	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_sent")
 	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
 
 	resp5, err := client.Get(base + "/peers")
@@ -1191,6 +1197,42 @@ func TestVerifyContentKeyIfSHA256(t *testing.T) {
 	assert.ErrorIs(t, verifyContentKeyIfSHA256(storage.SHA256Key(data), []byte("tampered")), storage.ErrSHA256Mismatch)
 }
 
+func TestSendBlobHasCountsInventoryAdvertisement(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(ctx, []byte("inventory-key"), []byte("value")))
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	require.NoError(t, sendBlobHas(ctx, peer, store, replication.Limits{}, 0, metrics))
+	require.Len(t, peer.payloads, 1)
+	msg, err := replication.Decode(peer.payloads[0], replication.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, replication.MessageTypeBlobHas, msg.Type)
+	assert.Equal(t, [][]byte{[]byte("inventory-key")}, msg.Keys)
+	assert.Equal(t, uint64(1), metrics.InventoryAdvertisements.Load())
+}
+
+func TestHandleReplicationMessageCountsMissingKeysRequested(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(ctx, []byte("already-local"), []byte("value")))
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	msg := replication.Message{
+		Type: replication.MessageTypeBlobHas,
+		Keys: [][]byte{[]byte("already-local"), []byte("needs-repair")},
+	}
+
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, store, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store))
+	require.Len(t, peer.payloads, 1)
+	missing, err := replication.Decode(peer.payloads[0], replication.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, replication.MessageTypeBlobMissing, missing.Type)
+	assert.Equal(t, [][]byte{[]byte("needs-repair")}, missing.Keys)
+	assert.Equal(t, uint64(1), metrics.MissingKeysRequested.Load())
+}
+
 func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
@@ -1208,6 +1250,7 @@ func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
 		0,
 		metrics,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		true,
 	)
 
 	require.NoError(t, err)
@@ -1220,6 +1263,7 @@ func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.BlobsSent.Load())
 	assert.Equal(t, uint64(1), metrics.BlobsSkipped.Load())
 	assert.Equal(t, uint64(1), metrics.SendErrors.Load())
+	assert.Equal(t, uint64(1), metrics.RepairBlobsSent.Load())
 }
 
 func TestSendRequestedBlobsStopsOnFrameWriteError(t *testing.T) {
@@ -1240,6 +1284,7 @@ func TestSendRequestedBlobsStopsOnFrameWriteError(t *testing.T) {
 		0,
 		metrics,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		false,
 	)
 
 	assert.ErrorIs(t, err, writeErr)

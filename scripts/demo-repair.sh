@@ -27,6 +27,23 @@ wait_ready() {
 	done
 }
 
+wait_metric() {
+	name="$1"
+	url="$2"
+	metric="$3"
+	i=0
+	until curl -fsS "$url/metrics" | grep "\"$metric\": [1-9]" >/dev/null; do
+		i=$((i + 1))
+		if [ "$i" -gt 80 ]; then
+			echo "$name did not report a positive $metric counter" >&2
+			curl -fsS "$url/metrics" >&2 || true
+			$COMPOSE -f "$ROOT_DIR/docker-compose.yml" logs "$name" >&2 || true
+			exit 1
+		fi
+		sleep 0.25
+	done
+}
+
 node_keys() {
 	node="$1"
 	$COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm --no-deps -v "$DATA_DIR/$node:/data" seed -store-dir /data -list-keys
@@ -67,6 +84,7 @@ if [ -f "$DATA_DIR/node3/$EXPECTED_KEY" ]; then
 fi
 
 wait_key_present node3
+wait_metric node1 http://127.0.0.1:18081 replication_repair_blobs_sent
 
 echo "3-node repair demo passed: node3 repaired deleted blob"
 echo "repaired key: $EXPECTED_KEY"

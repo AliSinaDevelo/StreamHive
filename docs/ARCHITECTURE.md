@@ -87,7 +87,7 @@ classDiagram
 - Receivers treat 32-byte keys as SHA-256 content addresses and verify payload integrity before storage. Exact duplicate key/data writes are skipped and counted separately; opaque keys with different data still replace existing values.
 - `-peer-reconnect` manages only static `-peers` targets. It retries failed dials with exponential backoff and schedules another retry when an outbound configured peer disconnects.
 - `-peer-auth-token` requires a shared-token auth frame before a peer is registered or allowed to exchange replication frames. The optional `-peer-id` is exchanged in that frame and retained as `auth_identity` on the remote peer. `-peer-allow-ids` applies an exact inbound identity allowlist; missing or unlisted identities are rejected. The default is unauthenticated for local demos. Connection logs and peer snapshots label the admission mode as `auth_method=none` or `auth_method=shared-token` and include the optional identity.
-- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`. One-shot CLI puts track ACKs per peer/key and retry timed-out writes within a bounded budget; anti-entropy sends remain repairable through later inventory passes. Delivery logs classify accepted, ACK-timeout, write-error, and canceled outcomes, while aggregate counters avoid high-cardinality peer labels.
+- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`. One-shot CLI puts track ACKs per peer/key and retry timed-out writes within a bounded budget; anti-entropy sends remain repairable through later inventory passes. Delivery logs classify accepted, ACK-timeout, write-error, and canceled outcomes, distinguish one-shot and anti-entropy deliveries, and aggregate counters avoid high-cardinality peer labels.
 
 ### Peer lifecycle
 
@@ -151,7 +151,7 @@ Implemented:
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, connection age, and `auth_method`.
 - Optional `auth_identity` values in peer snapshots and structured connection logs.
 - Optional inbound identity allowlists with `peer_auth_identity_rejections` metrics.
-- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, and replication errors.
+- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, anti-entropy inventory/missing/repair outcomes, and replication errors.
 
 Not implemented yet:
 

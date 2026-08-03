@@ -154,12 +154,19 @@ that connection.
 Repair is driven by startup inventory, periodic inventory with `-sync-interval`, and
 reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a blob send
 fails mid-sync, a later inventory pass or reconnect can request the missing key again.
+Aggregate anti-entropy counters make that control loop visible without peer labels:
+`replication_inventory_advertisements` counts successful `blob.has` frames,
+`replication_missing_keys_requested` counts keys in `blob.missing` messages, and
+`replication_repair_blobs_sent` counts successful repair `blob.put` frames. Repair
+delivery logs use `delivery=anti-entropy`; one-shot CLI deliveries use
+`delivery=one-shot`.
 
 ## Observability
 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
 `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
 replication counters, including `peer_auth_identity_rejections` for inbound identity
-allowlist failures. `/peers` includes remote address, local address, direction,
+allowlist failures and the aggregate anti-entropy counters described above. `/peers`
+includes remote address, local address, direction,
 connection timestamp, connection age in milliseconds, `auth_method` (`none` or
 `shared-token`), and optional `auth_identity`.

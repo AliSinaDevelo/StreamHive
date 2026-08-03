@@ -177,8 +177,10 @@ wait_identity node1 http://127.0.0.1:18081 node3
 wait_identity node3 http://127.0.0.1:18083 node1
 wait_identity node3 http://127.0.0.1:18083 node2
 wait_key_present node3
+wait_metric node1 http://127.0.0.1:18081 replication_repair_blobs_sent
+repair_sends="$(metric_value http://127.0.0.1:18081 replication_repair_blobs_sent)"
 
 echo "authenticated 3-node compose demo passed"
 echo "identities: node1<-node2,node3; node2<-node1,node3; node3<-node1,node2"
 echo "rejections: identity=$identity_rejections; wrong-token=$token_rejections"
-echo "repair: node3 restarted and rehydrated key $EXPECTED_KEY"
+echo "repair: node3 restarted and rehydrated key $EXPECTED_KEY; source-repair-sends=$repair_sends"
