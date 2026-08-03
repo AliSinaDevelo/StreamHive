@@ -41,9 +41,10 @@ Run the token-protected Compose acceptance demo:
 STREAMHIVE_PEER_TOKEN="replace-with-a-local-demo-token" make demo-auth
 ```
 
-The same optional token is passed to every Compose node and the seed tool. The demo also
-attempts a write with a different token and verifies that the peer is rejected and the
-unauthorized key is absent from node1's durable store.
+The same optional token is passed to every Compose node and the seed tool. The demo verifies
+the expected remote identities, rejects an unlisted identity and a different token before
+storage, restarts node3 with an empty durable directory, and verifies periodic anti-entropy
+rehydrates the exact content-addressed key. The final output is a compact audit summary.
 
 Inspect a running Compose cluster:
 

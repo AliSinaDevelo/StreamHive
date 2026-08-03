@@ -37,7 +37,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)
 - `make demo-replication` with fixed localhost ports
 - `make demo-compose` to verify 3-node durable rehydration
-- `make demo-auth` to verify shared-token admission and rejection before blob storage
+- `make demo-auth` to verify authenticated peer identities, allowlist and token rejection before blob storage, and restart repair in one acceptance path
 - `make demo-repair` to verify periodic repair after local durable corruption
 - `make demo-failure` to verify peer reconnect plus repair after a node restart
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)

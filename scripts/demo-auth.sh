@@ -63,6 +63,26 @@ wait_stored() {
 	wait_metric "$name" "$url" replication_blobs_stored
 }
 
+wait_key_present() {
+	node="$1"
+	i=0
+	until node_keys "$node" | grep -Fx "$EXPECTED_KEY" >/dev/null; do
+		i=$((i + 1))
+		if [ "$i" -gt 80 ]; then
+			echo "$node store did not contain expected key $EXPECTED_KEY" >&2
+			$COMPOSE -f "$ROOT_DIR/docker-compose.yml" logs "$node" >&2 || true
+			exit 1
+		fi
+		sleep 0.25
+	done
+}
+
+metric_value() {
+	url="$1"
+	metric="$2"
+	curl -fsS "$url/metrics" | awk -F': ' -v metric="\"$metric\"" 'index($1, metric) > 0 {gsub(/,/, "", $2); print $2; exit}'
+}
+
 wait_identity() {
 	name="$1"
 	url="$2"
@@ -100,10 +120,13 @@ wait_metric node1 http://127.0.0.1:18081 peer_auth_success
 wait_identity node1 http://127.0.0.1:18081 node2
 wait_identity node1 http://127.0.0.1:18081 node3
 wait_identity node2 http://127.0.0.1:18082 node1
+wait_identity node2 http://127.0.0.1:18082 node3
 wait_identity node3 http://127.0.0.1:18083 node1
+wait_identity node3 http://127.0.0.1:18083 node2
 
 $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm seed
 wait_stored node3 http://127.0.0.1:18083
+wait_key_present node3
 
 if $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm --no-deps seed \
 	-listen 127.0.0.1:0 \
@@ -140,8 +163,22 @@ if node_keys node1 | grep '^unauthorized-key$' >/dev/null; then
 	exit 1
 fi
 
-echo "authenticated 3-node compose demo passed: identities authorized; unlisted identity and wrong token rejected"
-echo "replicated key: $EXPECTED_KEY"
-curl -fsS http://127.0.0.1:18081/peers
-curl -fsS http://127.0.0.1:18081/metrics
-echo
+identity_rejections="$(metric_value http://127.0.0.1:18081 peer_auth_identity_rejections)"
+token_rejections="$(metric_value http://127.0.0.1:18081 peer_auth_failures)"
+
+$COMPOSE -f "$ROOT_DIR/docker-compose.yml" stop node3
+$COMPOSE -f "$ROOT_DIR/docker-compose.yml" rm -f node3
+rm -rf "$DATA_DIR/node3"
+mkdir -p "$DATA_DIR/node3"
+chmod 0777 "$DATA_DIR/node3"
+$COMPOSE -f "$ROOT_DIR/docker-compose.yml" up -d node3
+wait_ready node3 http://127.0.0.1:18083
+wait_identity node1 http://127.0.0.1:18081 node3
+wait_identity node3 http://127.0.0.1:18083 node1
+wait_identity node3 http://127.0.0.1:18083 node2
+wait_key_present node3
+
+echo "authenticated 3-node compose demo passed"
+echo "identities: node1<-node2,node3; node2<-node1,node3; node3<-node1,node2"
+echo "rejections: identity=$identity_rejections; wrong-token=$token_rejections"
+echo "repair: node3 restarted and rehydrated key $EXPECTED_KEY"

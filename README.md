@@ -65,7 +65,8 @@ make demo-compose
 ```
 
 For the authenticated Compose variant, set one shared token. The demo proves matching
-tokens replicate and a wrong token is rejected before the blob reaches durable storage:
+tokens replicate, expected identities are authorized, unlisted identities and wrong tokens
+are rejected before durable storage, and node3 repairs its exact key after a restart:
 
 ```bash
 STREAMHIVE_PEER_TOKEN="replace-with-a-local-demo-token" make demo-auth
