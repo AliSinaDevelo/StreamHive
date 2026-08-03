@@ -294,6 +294,72 @@ func TestRun_replicatesBlobPutToDialPeer(t *testing.T) {
 	require.NoError(t, <-serverErrCh)
 }
 
+func TestRun_retriesBlobPutAfterLostAck(t *testing.T) {
+	ctx := context.Background()
+	receiver := p2p.NewTCPTransport("127.0.0.1:0")
+	receiver.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := storage.NewMemoryStore()
+	var puts, stored, duplicates, acks atomic.Int32
+	receiver.FrameHandler = func(ctx context.Context, peer p2p.Peer, payload []byte) error {
+		msg, err := replication.Decode(payload, replication.Limits{})
+		if err != nil {
+			return err
+		}
+		if msg.Type != replication.MessageTypeBlobPut {
+			return nil
+		}
+		puts.Add(1)
+		existing, err := store.Get(ctx, msg.Key)
+		switch {
+		case errors.Is(err, storage.ErrNotFound):
+			if err := store.Put(ctx, msg.Key, msg.Data); err != nil {
+				return err
+			}
+			stored.Add(1)
+		case err != nil:
+			return err
+		case bytes.Equal(existing, msg.Data):
+			duplicates.Add(1)
+		default:
+			return errors.New("retry acceptance: blob changed across retry")
+		}
+		if puts.Load() == 1 {
+			return nil
+		}
+		ackPayload, err := replication.EncodeBlobAck(msg.Key, replication.Limits{})
+		if err != nil {
+			return err
+		}
+		acks.Add(1)
+		return writePeerFrame(peer, ackPayload, 0)
+	}
+	require.NoError(t, receiver.ListenAndAccept(ctx))
+	defer func() { _ = receiver.Close() }()
+
+	var out, stderr safeBuffer
+	err := run(context.Background(), []string{
+		"-listen", "127.0.0.1:0",
+		"-dial", receiver.Addr().String(),
+		"-put-key", "retry-key",
+		"-put-data", "retry-value",
+		"-put-ack-timeout", "20ms",
+		"-put-retries", "1",
+		"-put-retry-delay", "0",
+		"-exit-after-put",
+	}, &out, &stderr)
+
+	require.NoError(t, err, "sender logs=%q", stderr.String())
+	assert.Equal(t, int32(2), puts.Load())
+	assert.Equal(t, int32(1), stored.Load())
+	assert.Equal(t, int32(1), duplicates.Load())
+	assert.Equal(t, int32(1), acks.Load())
+	assert.Contains(t, stderr.String(), "outcome=accepted")
+	assert.Contains(t, stderr.String(), "attempts=2")
+	got, err := store.Get(ctx, []byte("retry-key"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("retry-value"), got)
+}
+
 func TestRun_replicatesBlobPutToFileStore(t *testing.T) {
 	storeDir := t.TempDir()
 	serverCtx, serverCancel := context.WithCancel(context.Background())
