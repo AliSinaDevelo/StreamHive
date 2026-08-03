@@ -136,4 +136,5 @@ fails mid-sync, a later inventory pass or reconnect can request the missing key 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
 `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
 replication counters. `/peers` includes remote address, local address, direction,
-connection timestamp, and connection age in milliseconds.
+connection timestamp, connection age in milliseconds, and `auth_method` (`none` or
+`shared-token`).
