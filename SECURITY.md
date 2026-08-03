@@ -27,12 +27,17 @@ StreamHive also has optional shared-token peer admission:
 
 - `-peer-auth-token` requires peers to send a matching token before registration.
 - `-peer-auth-timeout` bounds how long a connection can sit in the auth handshake.
+- `-peer-id` exchanges a bounded printable application identity for peer snapshots and logs.
+- `-peer-allow-ids` applies an exact inbound identity allowlist after token validation.
 - Library users can set `p2p.TCPTransport.PeerAuthToken` and `PeerAuthTimeout`.
+- Library users can set `PeerAuthIdentity` and `PeerAuthAllowedIdentities` for the same identity boundary.
 
-Shared-token auth is not per-peer identity, authorization, ACLs, or signed replication.
-Use it with TLS/mTLS when the token crosses a network boundary, and rotate the token if
-it appears in logs, shell history, or process metadata. Do not expose the P2P port to
-untrusted networks without a deployment-level trust boundary.
+The exchanged identity is an operational label, not a cryptographic proof. The allowlist
+provides exact inbound authorization scoped to the shared token, but it is not a full ACL
+system and replication messages are not signed. Use shared-token auth with TLS/mTLS when
+the token or identity crosses a network boundary, and rotate the token if it appears in
+logs, shell history, or process metadata. Do not expose the P2P port to untrusted networks
+without a deployment-level trust boundary.
 
 ## Dependency scanning
 
