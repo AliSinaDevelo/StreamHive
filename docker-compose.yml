@@ -22,9 +22,9 @@ services:
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
       - -peer-id
-      - node1
+      - "${STREAMHIVE_NODE1_ID:-}"
       - -peer-allow-ids
-      - node2,node3,seed
+      - "${STREAMHIVE_NODE1_ALLOW_IDS:-}"
     ports:
       - "18081:8080"
     volumes:
@@ -52,9 +52,9 @@ services:
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
       - -peer-id
-      - node2
+      - "${STREAMHIVE_NODE2_ID:-}"
       - -peer-allow-ids
-      - node1,node3
+      - "${STREAMHIVE_NODE2_ALLOW_IDS:-}"
     ports:
       - "18082:8080"
     volumes:
@@ -82,9 +82,9 @@ services:
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
       - -peer-id
-      - node3
+      - "${STREAMHIVE_NODE3_ID:-}"
       - -peer-allow-ids
-      - node1,node2
+      - "${STREAMHIVE_NODE3_ALLOW_IDS:-}"
     ports:
       - "18083:8080"
     volumes:
@@ -103,7 +103,7 @@ services:
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
       - -peer-id
-      - seed
+      - "${STREAMHIVE_SEED_ID:-}"
       - -exit-after-put
     profiles:
       - tools

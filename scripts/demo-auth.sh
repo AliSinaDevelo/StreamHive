@@ -12,6 +12,13 @@ if [ "$TOKEN" = "$WRONG_TOKEN" ]; then
 fi
 export STREAMHIVE_DATA_DIR="$DATA_DIR"
 export STREAMHIVE_PEER_TOKEN="$TOKEN"
+export STREAMHIVE_NODE1_ID=node1
+export STREAMHIVE_NODE1_ALLOW_IDS=node2,node3,seed
+export STREAMHIVE_NODE2_ID=node2
+export STREAMHIVE_NODE2_ALLOW_IDS=node1,node3
+export STREAMHIVE_NODE3_ID=node3
+export STREAMHIVE_NODE3_ALLOW_IDS=node1,node2
+export STREAMHIVE_SEED_ID=seed
 
 cleanup() {
 	$COMPOSE -f "$ROOT_DIR/docker-compose.yml" down --remove-orphans >/dev/null 2>&1 || true
