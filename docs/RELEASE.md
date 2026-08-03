@@ -46,5 +46,6 @@ Highlight:
 - `replication_blob_ack_timeouts`, `replication_blob_retries`, and `replication_blob_acks_matched` metrics.
 - Delivery outcome logs classify accepted, ACK-timeout, write-error, and canceled puts.
 - A write failure closes the peer to prevent reuse after a potentially partial frame.
+- Real TCP acceptance coverage drops the first ACK and verifies duplicate-safe retry completion.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.

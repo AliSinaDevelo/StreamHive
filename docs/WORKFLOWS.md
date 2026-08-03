@@ -7,6 +7,15 @@
 3. **Concurrency**: `make test-race`
 4. **Coverage**: `make cover` writes `coverage.out` and prints `go tool cover -func` output.
 
+The focused delivery acceptance test is:
+
+```bash
+go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
+```
+
+It uses a real TCP transport, withholds the first ACK, and verifies that the second
+idempotent put is acknowledged and exits cleanly.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -23,6 +32,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 
 - `go vet ./...`
 - `go test -race -count=1 ./...` on Go 1.22.x and 1.23.x
+- Real TCP lost-ACK acceptance coverage through the main test package
 - `golangci-lint` with `.golangci.yml`
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)
 - `make demo-replication` with fixed localhost ports

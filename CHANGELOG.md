@@ -14,6 +14,7 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Metrics**: `replication_blob_acks_matched`, `replication_blob_acks_pending`, `replication_blob_ack_timeouts`, and `replication_blob_retries` counters.
 - **Metrics**: `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors` counters.
 - **Demo**: authenticated Docker Compose acceptance path proving matching-token replication and wrong-token rejection.
+- **Tests**: real TCP acceptance coverage drops the first blob ACK and verifies duplicate-safe retry completion.
 - **Ops**: peer snapshots and connection logs label admission as `auth_method=none` or `auth_method=shared-token`.
 
 ### Changed
