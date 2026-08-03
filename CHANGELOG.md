@@ -4,6 +4,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-03
+
 ### Added
 
 - **`p2p` / CLI**: optional shared-token peer auth handshake via `TCPTransport.PeerAuthToken` and `-peer-auth-token`.

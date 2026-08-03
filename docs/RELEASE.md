@@ -1,14 +1,16 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.7.0`, the first release with richer peer metadata, protocol/security documentation, and partial-sync send resilience.
+Use this checklist for StreamHive releases. The current target is `v0.8.0`, the first release with authenticated peer admission, ACK-driven one-shot retries, and delivery outcome evidence.
 
 ## Preflight
 
 ```bash
 go test ./...
 go test -bench=. -benchmem -run '^$' ./...
+go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
 P2P_ADDR=127.0.0.1:17070 HEALTH_ADDR=127.0.0.1:18080 make demo-replication
 make demo-compose
+make demo-auth
 make demo-repair
 make demo-failure
 go run . -version
@@ -22,15 +24,15 @@ go run . -version
 
 ```bash
 git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
-git commit -m "chore: release v0.7.0"
+git commit -m "chore: release v0.8.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.7.0 -m "v0.7.0"
+git tag -a v0.8.0 -m "v0.8.0"
 git push origin main
-git push origin v0.7.0
+git push origin v0.8.0
 ```
 
 ## Release Notes
