@@ -4,6 +4,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-03
+
 ### Added
 
 - **`p2p` / CLI**: optional application identity exchange during shared-token auth via `PeerAuthIdentity` and `-peer-id`.

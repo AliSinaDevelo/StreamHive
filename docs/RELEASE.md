@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.8.0`, the first release with authenticated peer admission, ACK-driven one-shot retries, and delivery outcome evidence.
+Use this checklist for StreamHive releases. The current target is `v0.9.0`, the release with exchanged peer identities, exact inbound identity allowlists, and Compose acceptance evidence.
 
 ## Preflight
 
@@ -24,15 +24,15 @@ go run . -version
 
 ```bash
 git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
-git commit -m "chore: release v0.8.0"
+git commit -m "chore: release v0.9.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.8.0 -m "v0.8.0"
+git tag -a v0.9.0 -m "v0.9.0"
 git push origin main
-git push origin v0.8.0
+git push origin v0.9.0
 ```
 
 ## Release Notes
@@ -49,5 +49,8 @@ Highlight:
 - Delivery outcome logs classify accepted, ACK-timeout, write-error, and canceled puts.
 - A write failure closes the peer to prevent reuse after a potentially partial frame.
 - Real TCP acceptance coverage drops the first ACK and verifies duplicate-safe retry completion.
+- Exchanged bounded application identities in the shared-token handshake and exposed them through `TCPPeer`, `/peers`, and connection logs.
+- Exact inbound identity allowlists via `PeerAuthAllowedIdentities` and `-peer-allow-ids`, with `peer_auth_identity_rejections` metrics.
+- Authenticated Compose evidence for healthy identities, unlisted identity rejection, and tokenless demo compatibility.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.
