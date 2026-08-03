@@ -73,6 +73,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	peerAuthToken := fs.String("peer-auth-token", "", "optional shared token required before peer registration")
 	peerAuthTimeout := fs.Duration("peer-auth-timeout", p2p.DefaultPeerAuthTimeout, "timeout for optional peer auth handshake")
 	peerID := fs.String("peer-id", "", "optional application identity sent during shared-token auth")
+	peerAllowIDs := fs.String("peer-allow-ids", "", "comma-separated inbound application identities allowed during shared-token auth")
 	dialTimeout := fs.Duration("dial-timeout", 0, "default dial timeout (0 = use context only)")
 	readIdle := fs.Duration("read-idle-timeout", 0, "TCP read deadline refresh for peer loops (0 = none for discard mode)")
 	showVer := fs.Bool("version", false, "print version and exit")
@@ -106,6 +107,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	dialTarget := strings.TrimSpace(*dial)
 	peerList, err := parsePeerList(*peers)
+	if err != nil {
+		return err
+	}
+	peerAllowedIDs, err := parsePeerIdentityList(*peerAllowIDs)
 	if err != nil {
 		return err
 	}
@@ -159,6 +164,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *peerID != "" && *peerAuthToken == "" {
 		return fmt.Errorf("peers: -peer-id requires -peer-auth-token")
 	}
+	if len(peerAllowedIDs) > 0 && *peerAuthToken == "" {
+		return fmt.Errorf("peers: -peer-allow-ids requires -peer-auth-token")
+	}
 	if *putAckTimeout <= 0 {
 		return fmt.Errorf("replication: -put-ack-timeout must be greater than zero")
 	}
@@ -211,6 +219,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.PeerAuthToken = *peerAuthToken
 	tr.PeerAuthTimeout = *peerAuthTimeout
 	tr.PeerAuthIdentity = *peerID
+	tr.PeerAuthAllowedIdentities = peerAllowedIDs
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle
 	tr.OnPeer = func(peer p2p.Peer) {
@@ -968,6 +977,21 @@ func parsePeerList(peers string) ([]string, error) {
 		targets = append(targets, target)
 	}
 	return targets, nil
+}
+
+func parsePeerIdentityList(identities string) ([]string, error) {
+	if strings.TrimSpace(identities) == "" {
+		return nil, nil
+	}
+	allowed := make([]string, 0, 1)
+	for _, part := range strings.Split(identities, ",") {
+		identity := strings.TrimSpace(part)
+		if identity == "" {
+			return nil, fmt.Errorf("peers: empty peer identity")
+		}
+		allowed = append(allowed, identity)
+	}
+	return allowed, nil
 }
 
 func combinePeerTargets(dial string, peers []string) []string {

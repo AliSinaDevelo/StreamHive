@@ -251,6 +251,13 @@ func TestRun_peerIDRequiresAuthToken(t *testing.T) {
 	assert.Contains(t, err.Error(), "-peer-id requires -peer-auth-token")
 }
 
+func TestRun_peerAllowIDsRequiresAuthToken(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-peer-allow-ids", "node-a"}, &out, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-peer-allow-ids requires -peer-auth-token")
+}
+
 func TestRun_syncIntervalRejectsNegative(t *testing.T) {
 	var out bytes.Buffer
 	err := run(context.Background(), []string{"-sync-interval", "-1s"}, &out, io.Discard)
@@ -312,6 +319,7 @@ func TestRun_peerIdentityAppearsInConnectionLogs(t *testing.T) {
 			"-replicate",
 			"-peer-auth-token", "shared-secret",
 			"-peer-id", "node-a",
+			"-peer-allow-ids", "node-b",
 		}, &serverOut, &serverErr)
 	}()
 
@@ -336,6 +344,46 @@ func TestRun_peerIdentityAppearsInConnectionLogs(t *testing.T) {
 	require.NoError(t, err, "client logs=%q", clientErr.String())
 	assert.Contains(t, serverErr.String(), "auth_identity=node-b")
 	assert.Contains(t, clientErr.String(), "auth_identity=node-a")
+
+	serverCancel()
+	require.NoError(t, <-serverErrCh)
+}
+
+func TestRun_peerAllowIDsRejectsUnknownIdentity(t *testing.T) {
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	var serverOut, serverErr safeBuffer
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- run(serverCtx, []string{
+			"-listen", "127.0.0.1:0",
+			"-replicate",
+			"-peer-auth-token", "shared-secret",
+			"-peer-id", "node-a",
+			"-peer-allow-ids", "node-a",
+		}, &serverOut, &serverErr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(serverOut.String(), "listening on")
+	}, 3*time.Second, 20*time.Millisecond)
+	re := regexp.MustCompile(`listening on ([^\n]+)`)
+	m := re.FindStringSubmatch(serverOut.String())
+	require.Len(t, m, 2, "stdout=%q", serverOut.String())
+
+	var clientOut, clientErr safeBuffer
+	err := run(context.Background(), []string{
+		"-listen", "127.0.0.1:0",
+		"-dial", m[1],
+		"-replicate",
+		"-peer-auth-token", "shared-secret",
+		"-peer-id", "node-b",
+		"-put-key", "unauthorized-key",
+		"-put-data", "unauthorized-value",
+		"-exit-after-put",
+	}, &clientOut, &clientErr)
+	require.Error(t, err, "client logs=%q", clientErr.String())
+	assert.Contains(t, err.Error(), "peer auth rejected")
 
 	serverCancel()
 	require.NoError(t, <-serverErrCh)
@@ -659,6 +707,31 @@ func TestParsePeerTargets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parsePeerTargets(tt.dial, tt.peers)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestParsePeerIdentityList(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    []string
+		wantErr bool
+	}{
+		{name: "empty", want: nil},
+		{name: "trimmed list", input: "node-a, node-b", want: []string{"node-a", "node-b"}},
+		{name: "empty entry", input: "node-a,", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parsePeerIdentityList(tt.input)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
