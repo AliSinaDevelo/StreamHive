@@ -29,6 +29,17 @@ import (
 	"github.com/AliSinaDevelo/StreamHive/storage"
 )
 
+const (
+	defaultPutAckTimeout = time.Second
+	defaultPutRetries    = 2
+	defaultPutRetryDelay = 100 * time.Millisecond
+	maxPutRetries        = 10
+	maxPutRetryDelay     = 500 * time.Millisecond
+	maxDuration          = time.Duration(1<<63 - 1)
+)
+
+var errBlobAckTimeout = errors.New("replication: timed out waiting for blob acknowledgment")
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -64,6 +75,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	putData := fs.String("put-data", "", "send one replicated blob value to -dial peer")
 	putContentKey := fs.Bool("put-content-key", false, "derive the replicated blob key from SHA-256(-put-data)")
 	exitAfterPut := fs.Bool("exit-after-put", false, "exit after sending one blob to outbound peers")
+	putAckTimeout := fs.Duration("put-ack-timeout", defaultPutAckTimeout, "time to wait for each blob acknowledgment")
+	putRetries := fs.Int("put-retries", defaultPutRetries, "additional blob sends after an acknowledgment timeout")
+	putRetryDelay := fs.Duration("put-retry-delay", defaultPutRetryDelay, "delay before retrying a blob after an acknowledgment timeout")
 	maxBlobBytes := fs.Int("max-blob-bytes", replication.DefaultMaxDataBytes, "max replicated blob payload bytes")
 
 	tlsCert := fs.String("tls-cert", "", "path to PEM certificate (enables TLS on listener)")
@@ -134,6 +148,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *peerAuthTimeout < 0 {
 		return fmt.Errorf("peers: -peer-auth-timeout must be zero or greater")
 	}
+	if *putAckTimeout <= 0 {
+		return fmt.Errorf("replication: -put-ack-timeout must be greater than zero")
+	}
+	if *putRetries < 0 || *putRetries > maxPutRetries {
+		return fmt.Errorf("replication: -put-retries must be between 0 and %d", maxPutRetries)
+	}
+	if *putRetryDelay < 0 {
+		return fmt.Errorf("replication: -put-retry-delay must be zero or greater")
+	}
 
 	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes}
 	var blobStore storage.BlobStore
@@ -159,6 +182,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var putKeyBytes []byte
 	var putKeyLabel string
 	var putResult chan error
+	var putTracker *putAckTracker
 	if putRequested {
 		putKeyBytes, putKeyLabel = resolvePutKey(*putKey, []byte(*putData), *putContentKey)
 		putPayload, err = replication.EncodeBlobPut(putKeyBytes, []byte(*putData), replLimits)
@@ -166,6 +190,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		putResult = make(chan error, len(peerTargets))
+		putTracker = newPutAckTracker(replMetrics)
+		replMetrics.ackTracker = putTracker
 	}
 
 	tr := p2p.NewTCPTransport(*listen)
@@ -178,17 +204,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.OnPeer = func(peer p2p.Peer) {
 		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound(), "auth_method", authMethodForPeer(peer))
 		if putPayload != nil && peer.IsOutbound() {
-			if err := writePeerFrame(peer, putPayload, tr.MaxFrameBytes); err != nil {
-				replMetrics.SendErrors.Add(1)
+			go func() {
+				err := sendBlobWithAck(
+					ctx,
+					peer,
+					putPayload,
+					putKeyBytes,
+					len(*putData),
+					tr.MaxFrameBytes,
+					putTracker,
+					*putAckTimeout,
+					*putRetries,
+					*putRetryDelay,
+					replMetrics,
+					log,
+				)
+				if err != nil {
+					log.Error("replication send", "remote", peer.RemoteAddr().String(), "key", putKeyLabel, "err", err)
+				} else {
+					log.Info("replicated blob accepted", "remote", peer.RemoteAddr().String(), "key", putKeyLabel, "bytes", len(*putData))
+				}
 				reportPutResult(putResult, err)
-				log.Error("replication send", "remote", peer.RemoteAddr().String(), "err", err)
-				_ = peer.Close()
-				return
-			}
-			replMetrics.BlobsSent.Add(1)
-			replMetrics.BytesSent.Add(uint64(len(*putData)))
-			reportPutResult(putResult, nil)
-			log.Info("replicated blob sent", "remote", peer.RemoteAddr().String(), "key", putKeyLabel, "bytes", len(*putData))
+			}()
 		}
 		if keyLister != nil {
 			if err := sendBlobHas(ctx, peer, keyLister, replLimits, tr.MaxFrameBytes); err != nil {
@@ -198,12 +235,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
-	if blobStore != nil {
+	if blobStore != nil || putTracker != nil {
 		tr.FrameHandler = func(ctx context.Context, peer p2p.Peer, payload []byte) error {
 			msg, err := replication.Decode(payload, replLimits)
 			if err != nil {
 				replMetrics.ApplyErrors.Add(1)
 				return err
+			}
+			if blobStore == nil && msg.Type != replication.MessageTypeBlobAck {
+				return nil
 			}
 			if err := handleReplicationMessage(ctx, peer, blobStore, keyLister, msg, replLimits, tr.MaxFrameBytes, replMetrics, log, memoryStore); err != nil {
 				replMetrics.ApplyErrors.Add(1)
@@ -287,6 +327,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	if *exitAfterPut && putResult != nil {
+		waitTimeout := putWaitTimeout(*putAckTimeout, *putRetryDelay, *putRetries)
 		for range peerTargets {
 			select {
 			case err := <-putResult:
@@ -298,7 +339,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 					return nil
 				}
 				return ctx.Err()
-			case <-time.After(5 * time.Second):
+			case <-time.After(waitTimeout):
 				return fmt.Errorf("replication: timed out waiting for blob send")
 			}
 		}
@@ -345,6 +386,160 @@ func authMethodForPeer(peer p2p.Peer) string {
 		return provider.AuthMethod()
 	}
 	return p2p.PeerAuthMethodNone
+}
+
+type putAckID struct {
+	remote string
+	key    string
+}
+
+type putAckTracker struct {
+	mu      sync.Mutex
+	pending map[putAckID]chan struct{}
+	metrics *replicationMetrics
+}
+
+func newPutAckTracker(metrics *replicationMetrics) *putAckTracker {
+	return &putAckTracker{
+		pending: make(map[putAckID]chan struct{}),
+		metrics: metrics,
+	}
+}
+
+func (t *putAckTracker) register(peer p2p.Peer, key []byte) <-chan struct{} {
+	ack := make(chan struct{})
+	id := putAckID{remote: peer.RemoteAddr().String(), key: string(key)}
+	t.mu.Lock()
+	t.pending[id] = ack
+	if t.metrics != nil {
+		t.metrics.BlobAcksPending.Add(1)
+	}
+	t.mu.Unlock()
+	return ack
+}
+
+func (t *putAckTracker) ack(peer p2p.Peer, key []byte) bool {
+	id := putAckID{remote: peer.RemoteAddr().String(), key: string(key)}
+	t.mu.Lock()
+	ack, ok := t.pending[id]
+	if ok {
+		delete(t.pending, id)
+		if t.metrics != nil {
+			t.metrics.BlobAcksPending.Add(-1)
+			t.metrics.BlobAcksMatched.Add(1)
+		}
+		close(ack)
+	}
+	t.mu.Unlock()
+	return ok
+}
+
+func (t *putAckTracker) remove(peer p2p.Peer, key []byte) bool {
+	id := putAckID{remote: peer.RemoteAddr().String(), key: string(key)}
+	t.mu.Lock()
+	_, ok := t.pending[id]
+	if ok {
+		delete(t.pending, id)
+		if t.metrics != nil {
+			t.metrics.BlobAcksPending.Add(-1)
+		}
+	}
+	t.mu.Unlock()
+	return ok
+}
+
+func sendBlobWithAck(
+	ctx context.Context,
+	peer p2p.Peer,
+	payload []byte,
+	key []byte,
+	blobBytes int,
+	maxFrameBytes int,
+	tracker *putAckTracker,
+	ackTimeout time.Duration,
+	retries int,
+	retryDelay time.Duration,
+	metrics *replicationMetrics,
+	log *slog.Logger,
+) error {
+	if tracker == nil {
+		return errors.New("replication: blob acknowledgment tracker is required")
+	}
+	for attempt := 0; attempt <= retries; attempt++ {
+		ack := tracker.register(peer, key)
+		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
+			tracker.remove(peer, key)
+			metrics.SendErrors.Add(1)
+			return fmt.Errorf("replication: write blob: %w", err)
+		}
+		metrics.BlobsSent.Add(1)
+		metrics.BytesSent.Add(uint64(blobBytes))
+		log.Info("replicated blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", blobBytes, "attempt", attempt+1)
+
+		timer := time.NewTimer(ackTimeout)
+		select {
+		case <-ack:
+			timer.Stop()
+			return nil
+		case <-ctx.Done():
+			timer.Stop()
+			tracker.remove(peer, key)
+			return ctx.Err()
+		case <-timer.C:
+			if !tracker.remove(peer, key) {
+				return nil
+			}
+			metrics.BlobAckTimeouts.Add(1)
+			if attempt == retries {
+				return errBlobAckTimeout
+			}
+			metrics.BlobRetries.Add(1)
+			delay := retryDelayForAttempt(retryDelay, attempt)
+			log.Warn("replication blob ack timeout", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "retry", attempt+1, "delay", delay)
+			if !sleepContext(ctx, delay) {
+				return ctx.Err()
+			}
+		}
+	}
+	return errBlobAckTimeout
+}
+
+func retryDelayForAttempt(base time.Duration, attempt int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	if base >= maxPutRetryDelay {
+		return maxPutRetryDelay
+	}
+	delay := base
+	for i := 0; i < attempt; i++ {
+		if delay >= maxPutRetryDelay/2 {
+			return maxPutRetryDelay
+		}
+		delay *= 2
+	}
+	if delay > maxPutRetryDelay {
+		return maxPutRetryDelay
+	}
+	return delay
+}
+
+func putWaitTimeout(ackTimeout, retryDelay time.Duration, retries int) time.Duration {
+	total := time.Second
+	for range retries + 1 {
+		total = addDuration(total, ackTimeout)
+	}
+	for attempt := 0; attempt < retries; attempt++ {
+		total = addDuration(total, retryDelayForAttempt(retryDelay, attempt))
+	}
+	return total
+}
+
+func addDuration(left, right time.Duration) time.Duration {
+	if right > 0 && left > maxDuration-right {
+		return maxDuration
+	}
+	return left + right
 }
 
 func handleReplicationMessage(
@@ -413,7 +608,11 @@ func handleReplicationMessage(
 		return sendRequestedBlobs(ctx, peer, store, [][]byte{msg.Key}, limits, maxFrameBytes, metrics, log)
 	case replication.MessageTypeBlobAck:
 		metrics.BlobAcksReceived.Add(1)
-		log.Info("replication ack received", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(msg.Key))
+		matched := false
+		if metrics.ackTracker != nil {
+			matched = metrics.ackTracker.ack(peer, msg.Key)
+		}
+		log.Info("replication ack received", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(msg.Key), "matched", matched)
 		return nil
 	default:
 		return replication.ErrUnknownMessageType
@@ -733,7 +932,12 @@ type replicationMetrics struct {
 	BlobsSkipped     atomic.Uint64
 	BlobAcksSent     atomic.Uint64
 	BlobAcksReceived atomic.Uint64
+	BlobAcksMatched  atomic.Uint64
+	BlobAcksPending  atomic.Int64
+	BlobAckTimeouts  atomic.Uint64
+	BlobRetries      atomic.Uint64
 	SendErrors       atomic.Uint64
+	ackTracker       *putAckTracker
 }
 
 func (m *replicationMetrics) Snapshot() map[string]int64 {
@@ -751,6 +955,10 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_blobs_skipped":      int64(m.BlobsSkipped.Load()),
 		"replication_blob_acks_sent":     int64(m.BlobAcksSent.Load()),
 		"replication_blob_acks_received": int64(m.BlobAcksReceived.Load()),
+		"replication_blob_acks_matched":  int64(m.BlobAcksMatched.Load()),
+		"replication_blob_acks_pending":  m.BlobAcksPending.Load(),
+		"replication_blob_ack_timeouts":  int64(m.BlobAckTimeouts.Load()),
+		"replication_blob_retries":       int64(m.BlobRetries.Load()),
 		"replication_send_errors":        int64(m.SendErrors.Load()),
 	}
 }

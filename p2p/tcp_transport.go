@@ -26,6 +26,7 @@ var ErrTransportClosed = errors.New("p2p: transport closed")
 type TCPPeer struct {
 	conn        net.Conn
 	reader      *bufio.Reader
+	writeMu     sync.Mutex
 	outbound    bool
 	connectedAt time.Time
 	authMethod  string
@@ -65,6 +66,8 @@ func (p *TCPPeer) Conn() net.Conn { return p.conn }
 
 // WriteFrame writes one StreamHive frame to the peer connection.
 func (p *TCPPeer) WriteFrame(payload []byte, maxPayload int) error {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
 	return WriteFrame(p.conn, payload, maxPayload)
 }
 

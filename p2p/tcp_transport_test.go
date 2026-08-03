@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -402,6 +403,63 @@ func TestTCPPeer_Close(t *testing.T) {
 	defer func() { _ = a.Close() }()
 	p := NewTCPPeer(b, true)
 	require.NoError(t, p.Close())
+}
+
+func TestTCPPeerWriteFrameSerializesConcurrentFrames(t *testing.T) {
+	readerConn, writerConn := net.Pipe()
+	defer func() { _ = readerConn.Close() }()
+	defer func() { _ = writerConn.Close() }()
+
+	peer := NewTCPPeer(writerConn, true)
+	const frameCount = 8
+	readErr := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(readerConn)
+		for range frameCount {
+			payload, err := ReadFrame(reader, 1024)
+			if err != nil {
+				readErr <- err
+				return
+			}
+			if string(payload) != "concurrent" {
+				readErr <- errors.New("unexpected concurrent frame payload")
+				return
+			}
+		}
+		readErr <- nil
+	}()
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	writeErrs := make(chan error, frameCount)
+	for range frameCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			writeErrs <- peer.WriteFrame([]byte("concurrent"), 1024)
+		}()
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent frame writes did not finish")
+	}
+	for range frameCount {
+		require.NoError(t, <-writeErrs)
+	}
+	select {
+	case err := <-readErr:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent frames were not readable")
+	}
 }
 
 func TestFrameHandler_receivesFrame(t *testing.T) {

@@ -49,6 +49,18 @@ func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
 	return nil
 }
 
+type retryPeer struct {
+	testPeer
+	writes      atomic.Int32
+	writeEvents chan struct{}
+}
+
+func (p *retryPeer) WriteFrame(_ []byte, _ int) error {
+	p.writes.Add(1)
+	p.writeEvents <- struct{}{}
+	return nil
+}
+
 func (s *safeBuffer) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -592,14 +604,86 @@ func TestHandleReplicationMessageSendsAckAfterBlobPut(t *testing.T) {
 
 func TestHandleReplicationMessageCountsBlobAck(t *testing.T) {
 	metrics := &replicationMetrics{}
+	tracker := newPutAckTracker(metrics)
+	metrics.ackTracker = tracker
+	peer := testPeer{}
 	msg := replication.Message{
 		Type: replication.MessageTypeBlobAck,
 		Key:  []byte("manual"),
 	}
+	ackCh := tracker.register(peer, msg.Key)
 
-	require.NoError(t, handleReplicationMessage(context.Background(), testPeer{}, storage.NewMemoryStore(), nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	require.NoError(t, handleReplicationMessage(context.Background(), peer, storage.NewMemoryStore(), nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 
 	assert.Equal(t, uint64(1), metrics.BlobAcksReceived.Load())
+	assert.Equal(t, uint64(1), metrics.BlobAcksMatched.Load())
+	assert.Equal(t, int64(0), metrics.BlobAcksPending.Load())
+	select {
+	case <-ackCh:
+	default:
+		t.Fatal("blob ACK did not close the pending waiter")
+	}
+}
+
+func TestSendBlobWithAckRetriesUntilAcknowledged(t *testing.T) {
+	metrics := &replicationMetrics{}
+	tracker := newPutAckTracker(metrics)
+	peer := &retryPeer{writeEvents: make(chan struct{}, 4)}
+	key := []byte("manual")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- sendBlobWithAck(
+			context.Background(),
+			peer,
+			[]byte("blob frame"),
+			key,
+			0,
+			0,
+			tracker,
+			5*time.Millisecond,
+			1,
+			time.Millisecond,
+			metrics,
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+		)
+	}()
+
+	<-peer.writeEvents
+	<-peer.writeEvents
+	require.True(t, tracker.ack(peer, key))
+	require.NoError(t, <-errCh)
+	assert.Equal(t, int32(2), peer.writes.Load())
+	assert.Equal(t, uint64(1), metrics.BlobRetries.Load())
+	assert.Equal(t, uint64(1), metrics.BlobAckTimeouts.Load())
+	assert.Equal(t, uint64(1), metrics.BlobAcksMatched.Load())
+	assert.Equal(t, int64(0), metrics.BlobAcksPending.Load())
+}
+
+func TestSendBlobWithAckStopsAfterBoundedRetries(t *testing.T) {
+	metrics := &replicationMetrics{}
+	tracker := newPutAckTracker(metrics)
+	peer := &retryPeer{writeEvents: make(chan struct{}, 4)}
+
+	err := sendBlobWithAck(
+		context.Background(),
+		peer,
+		[]byte("blob frame"),
+		[]byte("manual"),
+		0,
+		0,
+		tracker,
+		1*time.Millisecond,
+		2,
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	assert.ErrorIs(t, err, errBlobAckTimeout)
+	assert.Equal(t, int32(3), peer.writes.Load())
+	assert.Equal(t, uint64(2), metrics.BlobRetries.Load())
+	assert.Equal(t, uint64(3), metrics.BlobAckTimeouts.Load())
+	assert.Equal(t, int64(0), metrics.BlobAcksPending.Load())
 }
 
 func TestHandleReplicationMessageRejectsSHA256Mismatch(t *testing.T) {
