@@ -742,6 +742,7 @@ func TestSnapshotPeersSortsByAddress(t *testing.T) {
 			Outbound:       false,
 			ConnectedAt:    "2026-07-02T01:02:03.000000004Z",
 			ConnectedForMS: 1500,
+			AuthMethod:     "",
 		},
 		{
 			RemoteAddr:     "127.0.0.1:9002",
@@ -749,8 +750,18 @@ func TestSnapshotPeersSortsByAddress(t *testing.T) {
 			Outbound:       true,
 			ConnectedAt:    "2026-07-02T01:02:03.000000004Z",
 			ConnectedForMS: 1500,
+			AuthMethod:     "",
 		},
 	}, resp.Peers)
+}
+
+func TestSnapshotPeersIncludesAuthMethod(t *testing.T) {
+	resp := snapshotPeers([]p2p.PeerSnapshot{
+		{RemoteAddr: "127.0.0.1:9001", AuthMethod: p2p.PeerAuthMethodSharedToken},
+	}, time.Now().UTC())
+
+	require.Len(t, resp.Peers, 1)
+	assert.Equal(t, p2p.PeerAuthMethodSharedToken, resp.Peers[0].AuthMethod)
 }
 
 func TestValidateReconnectBackoff(t *testing.T) {

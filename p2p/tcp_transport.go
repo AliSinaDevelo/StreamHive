@@ -28,11 +28,18 @@ type TCPPeer struct {
 	reader      *bufio.Reader
 	outbound    bool
 	connectedAt time.Time
+	authMethod  string
 }
 
 // NewTCPPeer wraps a connection as a Peer.
 func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
-	return &TCPPeer{conn: conn, reader: bufio.NewReader(conn), outbound: outbound, connectedAt: time.Now().UTC()}
+	return &TCPPeer{
+		conn:        conn,
+		reader:      bufio.NewReader(conn),
+		outbound:    outbound,
+		connectedAt: time.Now().UTC(),
+		authMethod:  PeerAuthMethodNone,
+	}
 }
 
 // RemoteAddr returns the remote network address.
@@ -50,6 +57,9 @@ func (p *TCPPeer) IsOutbound() bool { return p.outbound }
 // ConnectedAt reports when this peer was registered locally.
 func (p *TCPPeer) ConnectedAt() time.Time { return p.connectedAt }
 
+// AuthMethod reports how this peer passed application-level admission.
+func (p *TCPPeer) AuthMethod() string { return p.authMethod }
+
 // Conn returns the underlying connection for protocol codecs.
 func (p *TCPPeer) Conn() net.Conn { return p.conn }
 
@@ -60,12 +70,20 @@ func (p *TCPPeer) WriteFrame(payload []byte, maxPayload int) error {
 
 var _ Peer = (*TCPPeer)(nil)
 
+const (
+	// PeerAuthMethodNone labels peers connected without shared-token admission.
+	PeerAuthMethodNone = "none"
+	// PeerAuthMethodSharedToken labels peers admitted by the shared-token handshake.
+	PeerAuthMethodSharedToken = "shared-token"
+)
+
 // PeerSnapshot is a point-in-time description of a connected peer.
 type PeerSnapshot struct {
 	RemoteAddr  string
 	LocalAddr   string
 	Outbound    bool
 	ConnectedAt time.Time
+	AuthMethod  string
 }
 
 // TCPTransport listens on TCP and tracks connected peers.
@@ -148,6 +166,7 @@ func (t *TCPTransport) PeerSnapshots() []PeerSnapshot {
 		if tcpPeer, ok := peer.(*TCPPeer); ok {
 			snapshot.LocalAddr = tcpPeer.LocalAddr().String()
 			snapshot.ConnectedAt = tcpPeer.ConnectedAt()
+			snapshot.AuthMethod = tcpPeer.AuthMethod()
 		}
 		snapshots = append(snapshots, snapshot)
 	}
@@ -263,6 +282,9 @@ func (t *TCPTransport) handleAcceptedConn(conn net.Conn) {
 
 func (t *TCPTransport) handlePeer(tp *TCPPeer) {
 	key := tp.RemoteAddr().String()
+	if t.peerAuthEnabled() {
+		tp.authMethod = PeerAuthMethodSharedToken
+	}
 
 	t.mu.Lock()
 	if _, dup := t.peers[key]; dup {
@@ -284,7 +306,7 @@ func (t *TCPTransport) handlePeer(tp *TCPPeer) {
 		t.metrics.InboundAccepts.Add(1)
 	}
 
-	t.logger().Info("peer connected", "remote", key, "outbound", tp.outbound)
+	t.logger().Info("peer connected", "remote", key, "outbound", tp.outbound, "auth_method", tp.authMethod)
 
 	if t.OnPeer != nil {
 		t.OnPeer(tp)

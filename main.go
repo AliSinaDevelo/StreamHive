@@ -176,7 +176,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle
 	tr.OnPeer = func(peer p2p.Peer) {
-		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound())
+		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound(), "auth_method", authMethodForPeer(peer))
 		if putPayload != nil && peer.IsOutbound() {
 			if err := writePeerFrame(peer, putPayload, tr.MaxFrameBytes); err != nil {
 				replMetrics.SendErrors.Add(1)
@@ -334,6 +334,17 @@ func reportPutResult(ch chan<- error, err error) {
 	case ch <- err:
 	default:
 	}
+}
+
+type peerAuthMethodProvider interface {
+	AuthMethod() string
+}
+
+func authMethodForPeer(peer p2p.Peer) string {
+	if provider, ok := peer.(peerAuthMethodProvider); ok {
+		return provider.AuthMethod()
+	}
+	return p2p.PeerAuthMethodNone
 }
 
 func handleReplicationMessage(
@@ -750,6 +761,7 @@ type peerStatus struct {
 	Outbound       bool   `json:"outbound"`
 	ConnectedAt    string `json:"connected_at,omitempty"`
 	ConnectedForMS int64  `json:"connected_for_ms"`
+	AuthMethod     string `json:"auth_method"`
 }
 
 type peersResponse struct {
@@ -774,6 +786,7 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 			Outbound:       peer.Outbound,
 			ConnectedAt:    connectedAt,
 			ConnectedForMS: connectedForMS,
+			AuthMethod:     peer.AuthMethod,
 		})
 	}
 	sort.Slice(statuses, func(i, j int) bool {

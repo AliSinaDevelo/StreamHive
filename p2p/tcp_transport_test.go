@@ -281,10 +281,35 @@ func TestPeerSnapshotsIncludesConnectionMetadata(t *testing.T) {
 	assert.NotEmpty(t, serverSnapshot.LocalAddr)
 	assert.NotEmpty(t, clientSnapshot.RemoteAddr)
 	assert.NotEmpty(t, clientSnapshot.LocalAddr)
+	assert.Equal(t, PeerAuthMethodNone, serverSnapshot.AuthMethod)
+	assert.Equal(t, PeerAuthMethodNone, clientSnapshot.AuthMethod)
 	assert.False(t, serverSnapshot.ConnectedAt.Before(before))
 	assert.False(t, clientSnapshot.ConnectedAt.Before(before))
 	assert.False(t, serverSnapshot.ConnectedAt.After(time.Now().UTC()))
 	assert.False(t, clientSnapshot.ConnectedAt.After(time.Now().UTC()))
+}
+
+func TestPeerSnapshotsReportsSharedTokenAuth(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.PeerSnapshots()) == 1 && len(client.PeerSnapshots()) == 1
+	})
+
+	assert.Equal(t, PeerAuthMethodSharedToken, server.PeerSnapshots()[0].AuthMethod)
+	assert.Equal(t, PeerAuthMethodSharedToken, client.PeerSnapshots()[0].AuthMethod)
 }
 
 func TestDial_contextCancelled(t *testing.T) {
