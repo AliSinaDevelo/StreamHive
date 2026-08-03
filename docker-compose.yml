@@ -21,6 +21,10 @@ services:
       - 1s
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
+      - -peer-id
+      - node1
+      - -peer-allow-ids
+      - node2,node3,seed
     ports:
       - "18081:8080"
     volumes:
@@ -47,6 +51,10 @@ services:
       - 1s
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
+      - -peer-id
+      - node2
+      - -peer-allow-ids
+      - node1,node3
     ports:
       - "18082:8080"
     volumes:
@@ -73,6 +81,10 @@ services:
       - 1s
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
+      - -peer-id
+      - node3
+      - -peer-allow-ids
+      - node1,node2
     ports:
       - "18083:8080"
     volumes:
@@ -90,6 +102,8 @@ services:
       - hello from compose
       - -peer-auth-token
       - "${STREAMHIVE_PEER_TOKEN:-}"
+      - -peer-id
+      - seed
       - -exit-after-put
     profiles:
       - tools

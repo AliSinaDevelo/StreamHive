@@ -56,6 +56,23 @@ wait_stored() {
 	wait_metric "$name" "$url" replication_blobs_stored
 }
 
+wait_identity() {
+	name="$1"
+	url="$2"
+	identity="$3"
+	i=0
+	until curl -fsS "$url/peers" | grep "\"auth_identity\": \"$identity\"" >/dev/null; do
+		i=$((i + 1))
+		if [ "$i" -gt 80 ]; then
+			echo "$name did not expose authenticated peer identity $identity" >&2
+			curl -fsS "$url/peers" >&2 || true
+			$COMPOSE -f "$ROOT_DIR/docker-compose.yml" logs "$name" >&2 || true
+			exit 1
+		fi
+		sleep 0.25
+	done
+}
+
 node_keys() {
 	node="$1"
 	$COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm --no-deps \
@@ -73,9 +90,31 @@ wait_ready node1 http://127.0.0.1:18081
 wait_ready node2 http://127.0.0.1:18082
 wait_ready node3 http://127.0.0.1:18083
 wait_metric node1 http://127.0.0.1:18081 peer_auth_success
+wait_identity node1 http://127.0.0.1:18081 node2
+wait_identity node1 http://127.0.0.1:18081 node3
+wait_identity node2 http://127.0.0.1:18082 node1
+wait_identity node3 http://127.0.0.1:18083 node1
 
 $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm seed
 wait_stored node3 http://127.0.0.1:18083
+
+if $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm --no-deps seed \
+	-listen 127.0.0.1:0 \
+	-dial node1:7070 \
+	-peer-auth-token "$TOKEN" \
+	-peer-id rogue \
+	-put-key unauthorized-identity \
+	-put-data "this identity must be rejected" \
+	-exit-after-put; then
+	echo "unlisted identity sender unexpectedly completed" >&2
+	exit 1
+fi
+
+wait_metric node1 http://127.0.0.1:18081 peer_auth_identity_rejections
+if node_keys node1 | grep '^unauthorized-identity$' >/dev/null; then
+	echo "unlisted identity sender stored unauthorized-identity" >&2
+	exit 1
+fi
 
 if $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm --no-deps seed \
 	-listen 127.0.0.1:0 \
@@ -94,7 +133,8 @@ if node_keys node1 | grep '^unauthorized-key$' >/dev/null; then
 	exit 1
 fi
 
-echo "authenticated 3-node compose demo passed: matching token replicated; wrong token rejected"
+echo "authenticated 3-node compose demo passed: identities authorized; unlisted identity and wrong token rejected"
 echo "replicated key: $EXPECTED_KEY"
+curl -fsS http://127.0.0.1:18081/peers
 curl -fsS http://127.0.0.1:18081/metrics
 echo
