@@ -29,6 +29,8 @@ var (
 	ErrPeerAuthRejected = errors.New("p2p: peer auth rejected")
 	// ErrPeerAuthIdentityInvalid is returned when an application identity is malformed.
 	ErrPeerAuthIdentityInvalid = errors.New("p2p: peer auth identity invalid")
+	// ErrPeerAuthIdentityRequiresToken is returned when identity exchange is configured without shared-token auth.
+	ErrPeerAuthIdentityRequiresToken = errors.New("p2p: peer auth identity requires peer auth token")
 )
 
 type peerAuthMessage struct {

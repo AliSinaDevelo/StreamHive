@@ -195,6 +195,24 @@ func TestPeerAuthRejectsInvalidIdentity(t *testing.T) {
 	assert.Empty(t, client.Peers())
 }
 
+func TestPeerAuthIdentityRequiresToken(t *testing.T) {
+	for _, operation := range []string{"listen", "dial"} {
+		t.Run(operation, func(t *testing.T) {
+			tr := NewTCPTransport("127.0.0.1:0")
+			tr.PeerAuthIdentity = "node-a"
+
+			var err error
+			if operation == "listen" {
+				err = tr.ListenAndAccept(context.Background())
+			} else {
+				err = tr.Dial(context.Background(), "127.0.0.1:1")
+			}
+
+			assert.ErrorIs(t, err, ErrPeerAuthIdentityRequiresToken)
+		})
+	}
+}
+
 func TestPeerAuthRejectsWrongToken(t *testing.T) {
 	ctx := context.Background()
 	server := NewTCPTransport("127.0.0.1:0")

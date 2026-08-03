@@ -443,6 +443,9 @@ func (t *TCPTransport) peerAuthEnabled() bool {
 }
 
 func (t *TCPTransport) validatePeerAuthConfig() error {
+	if t.PeerAuthIdentity != "" && !t.peerAuthEnabled() {
+		return ErrPeerAuthIdentityRequiresToken
+	}
 	return validatePeerIdentity(t.PeerAuthIdentity)
 }
 
