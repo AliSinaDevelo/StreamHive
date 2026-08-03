@@ -741,6 +741,147 @@ func TestRun_periodicSyncsBlobAddedAfterConnect(t *testing.T) {
 	require.NoError(t, <-sourceErrCh)
 }
 
+func TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob(t *testing.T) {
+	ctx := context.Background()
+	sharedSecret := "shared-secret"
+	data := []byte("authenticated repair evidence")
+	key := storage.SHA256Key(data)
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	sourceStore, err := storage.NewFileStore(sourceDir)
+	require.NoError(t, err)
+	require.NoError(t, sourceStore.Put(ctx, key, data))
+
+	sourceCtx, sourceCancel := context.WithCancel(context.Background())
+	var sourceOut, sourceErr safeBuffer
+	sourceErrCh := make(chan error, 1)
+	go func() {
+		sourceErrCh <- run(sourceCtx, []string{
+			"-listen", "127.0.0.1:0",
+			"-replicate",
+			"-store-dir", sourceDir,
+			"-sync-interval", "50ms",
+			"-peer-auth-token", sharedSecret,
+			"-peer-id", "source",
+			"-peer-allow-ids", "target",
+		}, &sourceOut, &sourceErr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(sourceOut.String(), "listening on")
+	}, 3*time.Second, 20*time.Millisecond)
+
+	listenRe := regexp.MustCompile(`listening on ([^\n]+)`)
+	sourceListen := listenRe.FindStringSubmatch(sourceOut.String())
+	require.Len(t, sourceListen, 2, "source stdout=%q", sourceOut.String())
+
+	targetArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-health", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", targetDir,
+		"-dial", sourceListen[1],
+		"-sync-interval", "50ms",
+		"-peer-auth-token", sharedSecret,
+		"-peer-id", "target",
+		"-peer-allow-ids", "source,sender",
+	}
+
+	startTarget := func() (context.CancelFunc, *safeBuffer, <-chan error, string, string) {
+		targetCtx, targetCancel := context.WithCancel(context.Background())
+		var targetOut, targetErr safeBuffer
+		targetErrCh := make(chan error, 1)
+		go func() {
+			targetErrCh <- run(targetCtx, targetArgs, &targetOut, &targetErr)
+		}()
+
+		require.Eventually(t, func() bool {
+			return strings.Contains(targetOut.String(), "listening on") &&
+				strings.Contains(targetErr.String(), "msg=health")
+		}, 3*time.Second, 20*time.Millisecond)
+
+		targetListen := listenRe.FindStringSubmatch(targetOut.String())
+		require.Len(t, targetListen, 2, "target stdout=%q", targetOut.String())
+		healthRe := regexp.MustCompile(`msg=health addr=([0-9a-fA-F.:]+)`)
+		health := healthRe.FindStringSubmatch(targetErr.String())
+		require.Len(t, health, 2, "target stderr=%q", targetErr.String())
+		return targetCancel, &targetErr, targetErrCh, targetListen[1], health[1]
+	}
+
+	targetCancel, targetErr, targetErrCh, _, _ := startTarget()
+	require.Eventually(t, func() bool {
+		store, err := storage.NewFileStore(targetDir)
+		if err != nil {
+			return false
+		}
+		got, err := store.Get(ctx, key)
+		return err == nil && bytes.Equal(got, data)
+	}, 3*time.Second, 20*time.Millisecond, "source logs=%q target logs=%q", sourceErr.String(), targetErr.String())
+	require.Eventually(t, func() bool {
+		return strings.Contains(sourceErr.String(), "auth_identity=target") &&
+			strings.Contains(targetErr.String(), "auth_identity=source")
+	}, 3*time.Second, 20*time.Millisecond, "source logs=%q target logs=%q", sourceErr.String(), targetErr.String())
+
+	targetCancel()
+	require.NoError(t, <-targetErrCh)
+
+	targetStore, err := storage.NewFileStore(targetDir)
+	require.NoError(t, err)
+	require.NoError(t, targetStore.Delete(ctx, key))
+	hasKey, err := targetStore.Has(ctx, key)
+	require.NoError(t, err)
+	require.False(t, hasKey)
+
+	targetCancel, targetErr, targetErrCh, targetListen, healthAddr := startTarget()
+	require.Eventually(t, func() bool {
+		store, err := storage.NewFileStore(targetDir)
+		if err != nil {
+			return false
+		}
+		got, err := store.Get(ctx, key)
+		return err == nil && bytes.Equal(got, data)
+	}, 3*time.Second, 20*time.Millisecond, "source logs=%q target logs=%q", sourceErr.String(), targetErr.String())
+
+	var senderErr safeBuffer
+	err = run(ctx, []string{
+		"-listen", "127.0.0.1:0",
+		"-dial", targetListen,
+		"-peer-auth-token", sharedSecret,
+		"-peer-id", "sender",
+		"-put-content-key",
+		"-put-data", string(data),
+		"-exit-after-put",
+	}, io.Discard, &senderErr)
+	require.NoError(t, err, "sender logs=%q", senderErr.String())
+	require.Eventually(t, func() bool {
+		return strings.Contains(targetErr.String(), "auth_identity=sender")
+	}, 3*time.Second, 20*time.Millisecond, "target logs=%q sender logs=%q", targetErr.String(), senderErr.String())
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	require.Eventually(t, func() bool {
+		resp, err := client.Get("http://" + healthAddr + "/metrics")
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var metrics map[string]int64
+		if err := json.NewDecoder(resp.Body).Decode(&metrics); err != nil {
+			return false
+		}
+		return metrics["replication_duplicate_blobs"] >= 1
+	}, 3*time.Second, 20*time.Millisecond, "target logs=%q sender logs=%q", targetErr.String(), senderErr.String())
+
+	got, err := targetStore.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+
+	targetCancel()
+	sourceCancel()
+	require.NoError(t, <-targetErrCh)
+	require.NoError(t, <-sourceErrCh)
+}
+
 func TestParsePeerTargets(t *testing.T) {
 	tests := []struct {
 		name    string

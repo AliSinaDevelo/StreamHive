@@ -16,6 +16,15 @@ go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
 It uses a real TCP transport, withholds the first ACK, and verifies that the second
 idempotent put is acknowledged and exits cleanly.
 
+The authenticated restart and duplicate-safety acceptance test is:
+
+```bash
+go test . -run '^TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob$' -count=1 -v
+```
+
+It authenticates bounded peer identities, repairs a deleted content-addressed blob after
+the target process restarts, and verifies that an exact replay is acknowledged as a duplicate.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
