@@ -31,7 +31,8 @@ The dialer sends the first `SHV1` frame:
 {
   "type": "peer.auth",
   "version": "streamhive/1",
-  "token": "shared-token"
+  "token": "shared-token",
+  "identity": "node-b"
 }
 ```
 
@@ -40,7 +41,8 @@ The listener validates the token and replies:
 ```json
 {
   "type": "peer.auth.ok",
-  "version": "streamhive/1"
+  "version": "streamhive/1",
+  "identity": "node-a"
 }
 ```
 
@@ -48,8 +50,11 @@ If validation fails, the listener may reply with `peer.auth.reject` and closes t
 connection. Dialers treat rejected or malformed auth replies as dial failures. Auth
 successes and failures are exposed as `peer_auth_success` and `peer_auth_failures`.
 
-This handshake is admission control, not durable identity. Use TLS or mTLS whenever the
-token crosses a network boundary where passive capture or active interception is possible.
+The `identity` fields are optional for compatibility with token-only peers. They provide
+an explicit application identity label for snapshots and logs, but this slice does not
+authorize identities or provide signed identity claims. Use TLS or mTLS whenever the
+token or identity crosses a network boundary where passive capture or active interception
+is possible.
 
 ## Replication Payloads
 
@@ -152,5 +157,5 @@ fails mid-sync, a later inventory pass or reconnect can request the missing key 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
 `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
 replication counters. `/peers` includes remote address, local address, direction,
-connection timestamp, connection age in milliseconds, and `auth_method` (`none` or
-`shared-token`).
+connection timestamp, connection age in milliseconds, `auth_method` (`none` or
+`shared-token`), and optional `auth_identity`.
