@@ -44,5 +44,7 @@ Highlight:
 - `replication_blobs_skipped` metric.
 - One-shot blob delivery waits for `blob.ack` and retries within the configured bounded budget.
 - `replication_blob_ack_timeouts`, `replication_blob_retries`, and `replication_blob_acks_matched` metrics.
+- Delivery outcome logs classify accepted, ACK-timeout, write-error, and canceled puts.
+- A write failure closes the peer to prevent reuse after a potentially partial frame.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.

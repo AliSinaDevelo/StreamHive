@@ -87,7 +87,7 @@ classDiagram
 - Receivers treat 32-byte keys as SHA-256 content addresses and verify payload integrity before storage. Exact duplicate key/data writes are skipped and counted separately; opaque keys with different data still replace existing values.
 - `-peer-reconnect` manages only static `-peers` targets. It retries failed dials with exponential backoff and schedules another retry when an outbound configured peer disconnects.
 - `-peer-auth-token` requires a shared-token auth frame before a peer is registered or allowed to exchange replication frames. The default is unauthenticated for local demos. Connection logs and peer snapshots label the admission mode as `auth_method=none` or `auth_method=shared-token`.
-- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`. One-shot CLI puts track ACKs per peer/key and retry timed-out writes within a bounded budget; anti-entropy sends remain repairable through later inventory passes.
+- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`. One-shot CLI puts track ACKs per peer/key and retry timed-out writes within a bounded budget; anti-entropy sends remain repairable through later inventory passes. Delivery logs classify accepted, ACK-timeout, write-error, and canceled outcomes, while aggregate counters avoid high-cardinality peer labels.
 
 ### Peer lifecycle
 
@@ -145,6 +145,7 @@ Implemented:
 - Optional reconnect/backoff for `-peers`.
 - Message types: `blob.put`, `blob.has`, `blob.get`, and `blob.missing`.
 - Per-key `blob.ack` responses plus bounded ACK-driven retries for one-shot CLI puts.
+- Delivery outcome logs and aggregate accepted/failure/write-error counters for one-shot CLI puts.
 - Startup anti-entropy for connected `-replicate` peers.
 - Receiver-side storage via `storage.MemoryStore` or durable `storage.FileStore` with `-store-dir`.
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, connection age, and `auth_method`.

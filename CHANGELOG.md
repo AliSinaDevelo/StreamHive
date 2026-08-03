@@ -12,12 +12,14 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Metrics**: `peer_auth_success` and `peer_auth_failures` counters for authenticated peer admission.
 - **Metrics**: `replication_blob_acks_sent` and `replication_blob_acks_received` counters.
 - **Metrics**: `replication_blob_acks_matched`, `replication_blob_acks_pending`, `replication_blob_ack_timeouts`, and `replication_blob_retries` counters.
+- **Metrics**: `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors` counters.
 - **Demo**: authenticated Docker Compose acceptance path proving matching-token replication and wrong-token rejection.
 - **Ops**: peer snapshots and connection logs label admission as `auth_method=none` or `auth_method=shared-token`.
 
 ### Changed
 
 - **`p2p`**: concurrent `TCPPeer.WriteFrame` calls are serialized per connection to preserve frame boundaries.
+- **Ops**: one-shot delivery logs classify accepted, ACK-timeout, write-error, and canceled outcomes; write failures close the peer.
 
 ## [0.7.0] — 2026-08-02
 

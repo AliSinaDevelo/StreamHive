@@ -135,6 +135,14 @@ send. `replication_blob_acks_pending` exposes current waiters. Inventory and req
 blob sends remain one-way write units; later anti-entropy or reconnect passes repair a
 send that fails outside the one-shot ACK path.
 
+One-shot delivery logs use `outcome=accepted`, `outcome=ack-timeout`,
+`outcome=write-error`, or `outcome=canceled` and include the remote peer, key, and
+attempt count. Aggregate counters expose the same operational split without putting
+peer addresses into metric labels: `replication_blob_puts_accepted`,
+`replication_blob_put_failures`, and `replication_blob_write_errors`. A write failure
+closes the peer because the stream may contain a partial frame; it is never retried on
+that connection.
+
 Repair is driven by startup inventory, periodic inventory with `-sync-interval`, and
 reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a blob send
 fails mid-sync, a later inventory pass or reconnect can request the missing key again.
