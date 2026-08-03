@@ -149,6 +149,52 @@ func TestPeerAuthAcceptsMatchingToken(t *testing.T) {
 	assert.Equal(t, uint64(0), client.Metrics().PeerAuthFailures.Load())
 }
 
+func TestPeerAuthExchangesIdentity(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthIdentity = "node-a"
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	client.PeerAuthIdentity = "node-b"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.PeerSnapshots()) == 1 && len(client.PeerSnapshots()) == 1
+	})
+
+	assert.Equal(t, "node-b", server.PeerSnapshots()[0].AuthIdentity)
+	assert.Equal(t, "node-a", client.PeerSnapshots()[0].AuthIdentity)
+	assert.Equal(t, "node-b", server.Peers()[0].(*TCPPeer).AuthIdentity())
+	assert.Equal(t, "node-a", client.Peers()[0].(*TCPPeer).AuthIdentity())
+}
+
+func TestPeerAuthRejectsInvalidIdentity(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	client.PeerAuthIdentity = "node with spaces"
+
+	err := client.Dial(ctx, server.Addr().String())
+	assert.ErrorIs(t, err, ErrPeerAuthIdentityInvalid)
+	assert.Empty(t, server.Peers())
+	assert.Empty(t, client.Peers())
+}
+
 func TestPeerAuthRejectsWrongToken(t *testing.T) {
 	ctx := context.Background()
 	server := NewTCPTransport("127.0.0.1:0")

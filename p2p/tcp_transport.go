@@ -24,12 +24,13 @@ var ErrTransportClosed = errors.New("p2p: transport closed")
 
 // TCPPeer is a TCP-backed Peer.
 type TCPPeer struct {
-	conn        net.Conn
-	reader      *bufio.Reader
-	writeMu     sync.Mutex
-	outbound    bool
-	connectedAt time.Time
-	authMethod  string
+	conn         net.Conn
+	reader       *bufio.Reader
+	writeMu      sync.Mutex
+	outbound     bool
+	connectedAt  time.Time
+	authMethod   string
+	authIdentity string
 }
 
 // NewTCPPeer wraps a connection as a Peer.
@@ -61,6 +62,9 @@ func (p *TCPPeer) ConnectedAt() time.Time { return p.connectedAt }
 // AuthMethod reports how this peer passed application-level admission.
 func (p *TCPPeer) AuthMethod() string { return p.authMethod }
 
+// AuthIdentity reports the remote application's authenticated identity, when provided.
+func (p *TCPPeer) AuthIdentity() string { return p.authIdentity }
+
 // Conn returns the underlying connection for protocol codecs.
 func (p *TCPPeer) Conn() net.Conn { return p.conn }
 
@@ -82,11 +86,12 @@ const (
 
 // PeerSnapshot is a point-in-time description of a connected peer.
 type PeerSnapshot struct {
-	RemoteAddr  string
-	LocalAddr   string
-	Outbound    bool
-	ConnectedAt time.Time
-	AuthMethod  string
+	RemoteAddr   string
+	LocalAddr    string
+	Outbound     bool
+	ConnectedAt  time.Time
+	AuthMethod   string
+	AuthIdentity string
 }
 
 // TCPTransport listens on TCP and tracks connected peers.
@@ -111,6 +116,8 @@ type TCPTransport struct {
 	PeerAuthToken string
 	// PeerAuthTimeout bounds the optional auth handshake (0 = DefaultPeerAuthTimeout).
 	PeerAuthTimeout time.Duration
+	// PeerAuthIdentity is the optional application identity sent during shared-token auth.
+	PeerAuthIdentity string
 
 	TLSServerConfig *tls.Config
 	TLSClientConfig *tls.Config
@@ -170,6 +177,7 @@ func (t *TCPTransport) PeerSnapshots() []PeerSnapshot {
 			snapshot.LocalAddr = tcpPeer.LocalAddr().String()
 			snapshot.ConnectedAt = tcpPeer.ConnectedAt()
 			snapshot.AuthMethod = tcpPeer.AuthMethod()
+			snapshot.AuthIdentity = tcpPeer.AuthIdentity()
 		}
 		snapshots = append(snapshots, snapshot)
 	}
@@ -199,6 +207,9 @@ func (t *TCPTransport) Ready() bool {
 
 // ListenAndAccept binds TCP and starts accepting connections in the background.
 func (t *TCPTransport) ListenAndAccept(ctx context.Context) error {
+	if err := t.validatePeerAuthConfig(); err != nil {
+		return err
+	}
 	if t.ListenAddress == "" {
 		return ErrAddrRequired
 	}
@@ -309,7 +320,7 @@ func (t *TCPTransport) handlePeer(tp *TCPPeer) {
 		t.metrics.InboundAccepts.Add(1)
 	}
 
-	t.logger().Info("peer connected", "remote", key, "outbound", tp.outbound, "auth_method", tp.authMethod)
+	t.logger().Info("peer connected", "remote", key, "outbound", tp.outbound, "auth_method", tp.authMethod, "auth_identity", tp.authIdentity)
 
 	if t.OnPeer != nil {
 		t.OnPeer(tp)
@@ -381,6 +392,9 @@ func (t *TCPTransport) peerServe(tp *TCPPeer) {
 
 // Dial opens an outbound TCP connection and registers the peer.
 func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
+	if err := t.validatePeerAuthConfig(); err != nil {
+		return err
+	}
 	if t.closed.Load() {
 		return ErrTransportClosed
 	}
@@ -428,6 +442,10 @@ func (t *TCPTransport) peerAuthEnabled() bool {
 	return t.PeerAuthToken != ""
 }
 
+func (t *TCPTransport) validatePeerAuthConfig() error {
+	return validatePeerIdentity(t.PeerAuthIdentity)
+}
+
 func (t *TCPTransport) peerAuthDeadline(ctx context.Context) time.Time {
 	timeout := t.PeerAuthTimeout
 	if timeout <= 0 {
@@ -461,13 +479,15 @@ func (t *TCPTransport) authenticateInbound(ctx context.Context, tp *TCPPeer) err
 	if err != nil {
 		return errors.Join(ErrPeerAuthFailed, err)
 	}
-	if err := validatePeerAuthPayload(payload, t.PeerAuthToken); err != nil {
+	identity, err := validatePeerAuthPayload(payload, t.PeerAuthToken)
+	if err != nil {
 		if rejectPayload, encErr := encodePeerAuthReject(); encErr == nil {
 			_ = WriteFrame(tp.Conn(), rejectPayload, t.maxFrame())
 		}
 		return err
 	}
-	ackPayload, err := encodePeerAuthOK()
+	tp.authIdentity = identity
+	ackPayload, err := encodePeerAuthOK(t.PeerAuthIdentity)
 	if err != nil {
 		return err
 	}
@@ -485,7 +505,7 @@ func (t *TCPTransport) authenticateOutbound(ctx context.Context, tp *TCPPeer) er
 	clearDeadline := t.withPeerAuthDeadline(ctx, tp.Conn())
 	defer clearDeadline()
 
-	payload, err := encodePeerAuth(t.PeerAuthToken)
+	payload, err := encodePeerAuth(t.PeerAuthToken, t.PeerAuthIdentity)
 	if err != nil {
 		return err
 	}
@@ -496,9 +516,11 @@ func (t *TCPTransport) authenticateOutbound(ctx context.Context, tp *TCPPeer) er
 	if err != nil {
 		return errors.Join(ErrPeerAuthFailed, err)
 	}
-	if err := validatePeerAuthAck(ackPayload); err != nil {
+	identity, err := validatePeerAuthAck(ackPayload)
+	if err != nil {
 		return err
 	}
+	tp.authIdentity = identity
 	t.metrics.PeerAuthSuccess.Add(1)
 	return nil
 }

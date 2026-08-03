@@ -19,32 +19,40 @@ const (
 // DefaultPeerAuthTimeout bounds optional application-level peer auth handshakes.
 const DefaultPeerAuthTimeout = 5 * time.Second
 
+// MaxPeerAuthIdentityBytes bounds the application identity carried in auth frames.
+const MaxPeerAuthIdentityBytes = 128
+
 var (
 	// ErrPeerAuthFailed is returned when the peer auth handshake is malformed or incomplete.
 	ErrPeerAuthFailed = errors.New("p2p: peer auth failed")
 	// ErrPeerAuthRejected is returned when a peer presents an invalid auth token.
 	ErrPeerAuthRejected = errors.New("p2p: peer auth rejected")
+	// ErrPeerAuthIdentityInvalid is returned when an application identity is malformed.
+	ErrPeerAuthIdentityInvalid = errors.New("p2p: peer auth identity invalid")
 )
 
 type peerAuthMessage struct {
-	Type    string `json:"type"`
-	Version string `json:"version"`
-	Token   string `json:"token,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Type     string `json:"type"`
+	Version  string `json:"version"`
+	Token    string `json:"token,omitempty"`
+	Identity string `json:"identity,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
-func encodePeerAuth(token string) ([]byte, error) {
+func encodePeerAuth(token, identity string) ([]byte, error) {
 	return json.Marshal(peerAuthMessage{
-		Type:    handshakeTypePeerAuth,
-		Version: HandshakeVersionV1,
-		Token:   token,
+		Type:     handshakeTypePeerAuth,
+		Version:  HandshakeVersionV1,
+		Token:    token,
+		Identity: identity,
 	})
 }
 
-func encodePeerAuthOK() ([]byte, error) {
+func encodePeerAuthOK(identity string) ([]byte, error) {
 	return json.Marshal(peerAuthMessage{
-		Type:    handshakeTypePeerAuthOK,
-		Version: HandshakeVersionV1,
+		Type:     handshakeTypePeerAuthOK,
+		Version:  HandshakeVersionV1,
+		Identity: identity,
 	})
 }
 
@@ -56,34 +64,55 @@ func encodePeerAuthReject() ([]byte, error) {
 	})
 }
 
-func validatePeerAuthPayload(payload []byte, token string) error {
+func validatePeerAuthPayload(payload []byte, token string) (string, error) {
 	var msg peerAuthMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
-		return errors.Join(ErrPeerAuthFailed, err)
+		return "", errors.Join(ErrPeerAuthFailed, err)
 	}
 	if msg.Type != handshakeTypePeerAuth || msg.Version != HandshakeVersionV1 {
-		return ErrPeerAuthFailed
+		return "", ErrPeerAuthFailed
 	}
 	if subtle.ConstantTimeCompare([]byte(msg.Token), []byte(token)) != 1 {
-		return ErrPeerAuthRejected
+		return "", ErrPeerAuthRejected
 	}
-	return nil
+	if err := validatePeerIdentity(msg.Identity); err != nil {
+		return "", err
+	}
+	return msg.Identity, nil
 }
 
-func validatePeerAuthAck(payload []byte) error {
+func validatePeerAuthAck(payload []byte) (string, error) {
 	var msg peerAuthMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
-		return errors.Join(ErrPeerAuthFailed, err)
+		return "", errors.Join(ErrPeerAuthFailed, err)
 	}
 	if msg.Version != HandshakeVersionV1 {
-		return ErrPeerAuthFailed
+		return "", ErrPeerAuthFailed
 	}
 	switch msg.Type {
 	case handshakeTypePeerAuthOK:
-		return nil
+		if err := validatePeerIdentity(msg.Identity); err != nil {
+			return "", err
+		}
+		return msg.Identity, nil
 	case handshakeTypePeerAuthReject:
-		return ErrPeerAuthRejected
+		return "", ErrPeerAuthRejected
 	default:
-		return ErrPeerAuthFailed
+		return "", ErrPeerAuthFailed
 	}
+}
+
+func validatePeerIdentity(identity string) error {
+	if identity == "" {
+		return nil
+	}
+	if len(identity) > MaxPeerAuthIdentityBytes {
+		return ErrPeerAuthIdentityInvalid
+	}
+	for i := 0; i < len(identity); i++ {
+		if identity[i] < 0x21 || identity[i] > 0x7e {
+			return ErrPeerAuthIdentityInvalid
+		}
+	}
+	return nil
 }
