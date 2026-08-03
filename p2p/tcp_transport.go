@@ -118,6 +118,9 @@ type TCPTransport struct {
 	PeerAuthTimeout time.Duration
 	// PeerAuthIdentity is the optional application identity sent during shared-token auth.
 	PeerAuthIdentity string
+	// PeerAuthAllowedIdentities restricts inbound shared-token peers to these application identities.
+	// An empty list disables identity authorization while retaining token-only compatibility.
+	PeerAuthAllowedIdentities []string
 
 	TLSServerConfig *tls.Config
 	TLSClientConfig *tls.Config
@@ -443,10 +446,13 @@ func (t *TCPTransport) peerAuthEnabled() bool {
 }
 
 func (t *TCPTransport) validatePeerAuthConfig() error {
-	if t.PeerAuthIdentity != "" && !t.peerAuthEnabled() {
+	if (t.PeerAuthIdentity != "" || len(t.PeerAuthAllowedIdentities) > 0) && !t.peerAuthEnabled() {
 		return ErrPeerAuthIdentityRequiresToken
 	}
-	return validatePeerIdentity(t.PeerAuthIdentity)
+	if err := validatePeerIdentity(t.PeerAuthIdentity); err != nil {
+		return err
+	}
+	return validatePeerAuthAllowlist(t.PeerAuthAllowedIdentities)
 }
 
 func (t *TCPTransport) peerAuthDeadline(ctx context.Context) time.Time {
@@ -482,8 +488,11 @@ func (t *TCPTransport) authenticateInbound(ctx context.Context, tp *TCPPeer) err
 	if err != nil {
 		return errors.Join(ErrPeerAuthFailed, err)
 	}
-	identity, err := validatePeerAuthPayload(payload, t.PeerAuthToken)
+	identity, err := validatePeerAuthPayload(payload, t.PeerAuthToken, t.PeerAuthAllowedIdentities)
 	if err != nil {
+		if errors.Is(err, ErrPeerAuthIdentityInvalid) || errors.Is(err, ErrPeerAuthIdentityNotAllowed) {
+			t.metrics.PeerAuthIdentityRejections.Add(1)
+		}
 		if rejectPayload, encErr := encodePeerAuthReject(); encErr == nil {
 			_ = WriteFrame(tp.Conn(), rejectPayload, t.maxFrame())
 		}

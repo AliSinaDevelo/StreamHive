@@ -31,6 +31,8 @@ var (
 	ErrPeerAuthIdentityInvalid = errors.New("p2p: peer auth identity invalid")
 	// ErrPeerAuthIdentityRequiresToken is returned when identity exchange is configured without shared-token auth.
 	ErrPeerAuthIdentityRequiresToken = errors.New("p2p: peer auth identity requires peer auth token")
+	// ErrPeerAuthIdentityNotAllowed is returned when an identity is absent from the inbound allowlist.
+	ErrPeerAuthIdentityNotAllowed = errors.New("p2p: peer auth identity not allowed")
 )
 
 type peerAuthMessage struct {
@@ -66,7 +68,7 @@ func encodePeerAuthReject() ([]byte, error) {
 	})
 }
 
-func validatePeerAuthPayload(payload []byte, token string) (string, error) {
+func validatePeerAuthPayload(payload []byte, token string, allowedIdentities []string) (string, error) {
 	var msg peerAuthMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		return "", errors.Join(ErrPeerAuthFailed, err)
@@ -79,6 +81,9 @@ func validatePeerAuthPayload(payload []byte, token string) (string, error) {
 	}
 	if err := validatePeerIdentity(msg.Identity); err != nil {
 		return "", err
+	}
+	if len(allowedIdentities) > 0 && !peerAuthIdentityAllowed(msg.Identity, allowedIdentities) {
+		return "", ErrPeerAuthIdentityNotAllowed
 	}
 	return msg.Identity, nil
 }
@@ -117,4 +122,25 @@ func validatePeerIdentity(identity string) error {
 		}
 	}
 	return nil
+}
+
+func validatePeerAuthAllowlist(identities []string) error {
+	for _, identity := range identities {
+		if identity == "" {
+			return ErrPeerAuthIdentityInvalid
+		}
+		if err := validatePeerIdentity(identity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func peerAuthIdentityAllowed(identity string, allowedIdentities []string) bool {
+	for _, allowedIdentity := range allowedIdentities {
+		if identity == allowedIdentity {
+			return true
+		}
+	}
+	return false
 }

@@ -21,6 +21,7 @@ func TestNewTCPTransport(t *testing.T) {
 	require.NotNil(t, tr)
 	assert.Equal(t, "127.0.0.1:0", tr.ListenAddress)
 	require.NotNil(t, tr.Metrics())
+	assert.Contains(t, tr.Metrics().Snapshot(), "peer_auth_identity_rejections")
 }
 
 func TestListenAndAccept_emptyAddress(t *testing.T) {
@@ -193,6 +194,96 @@ func TestPeerAuthRejectsInvalidIdentity(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPeerAuthIdentityInvalid)
 	assert.Empty(t, server.Peers())
 	assert.Empty(t, client.Peers())
+}
+
+func TestPeerAuthAllowlistAcceptsMatchingIdentity(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthAllowedIdentities = []string{"node-b"}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	client.PeerAuthIdentity = "node-b"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.PeerSnapshots()) == 1 && len(client.PeerSnapshots()) == 1
+	})
+
+	assert.Equal(t, "node-b", server.PeerSnapshots()[0].AuthIdentity)
+	assert.Equal(t, uint64(0), server.Metrics().PeerAuthIdentityRejections.Load())
+}
+
+func TestPeerAuthAllowlistRejectsUnknownIdentity(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthAllowedIdentities = []string{"node-a"}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	client.PeerAuthIdentity = "node-b"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	err := client.Dial(ctx, server.Addr().String())
+	require.ErrorIs(t, err, ErrPeerAuthRejected)
+	waitFor(t, func() bool {
+		return server.Metrics().PeerAuthIdentityRejections.Load() == 1
+	})
+	assert.Equal(t, uint64(1), server.Metrics().PeerAuthFailures.Load())
+	assert.Empty(t, server.Peers())
+	assert.Empty(t, client.Peers())
+}
+
+func TestPeerAuthAllowlistRejectsMissingIdentity(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthAllowedIdentities = []string{"node-a"}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	err := client.Dial(ctx, server.Addr().String())
+	require.ErrorIs(t, err, ErrPeerAuthRejected)
+	waitFor(t, func() bool {
+		return server.Metrics().PeerAuthIdentityRejections.Load() == 1
+	})
+}
+
+func TestPeerAuthAllowlistRequiresToken(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.PeerAuthAllowedIdentities = []string{"node-a"}
+
+	err := tr.ListenAndAccept(context.Background())
+	assert.ErrorIs(t, err, ErrPeerAuthIdentityRequiresToken)
+}
+
+func TestPeerAuthAllowlistRejectsInvalidEntry(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.PeerAuthToken = "shared-secret"
+	tr.PeerAuthAllowedIdentities = []string{""}
+
+	err := tr.ListenAndAccept(context.Background())
+	assert.ErrorIs(t, err, ErrPeerAuthIdentityInvalid)
 }
 
 func TestPeerAuthIdentityRequiresToken(t *testing.T) {
