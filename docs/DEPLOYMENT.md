@@ -18,10 +18,12 @@ Use TLS flags (`-tls-cert`, `-tls-key`, `-tls-ca`, `-tls-server-name`) when expo
 
 For private clusters where every node shares an operator-managed secret, add
 `-peer-auth-token` to each node. Add a stable `-peer-id` to make the remote application
-visible in `/peers` and connection logs. Peers that do not present the token are rejected
-before replication frames reach the application handler. Identity is an operational label,
-not authorization; keep the P2P port behind a trusted network boundary and use TLS/mTLS
-when the token or identity leaves localhost.
+visible in `/peers` and connection logs. Add `-peer-allow-ids` to each listener when only
+specific remote identities should be admitted; matching is exact and missing identities
+are rejected. Peers that do not present the token are rejected before replication frames
+reach the application handler. Identity labels and allowlists do not replace TLS/mTLS;
+keep the P2P port behind a trusted network boundary and use TLS/mTLS when the token or
+identity leaves localhost.
 
 ## Docker Compose demo
 
@@ -122,4 +124,4 @@ Define error budgets once you expose a workload to users. Baseline probes:
 - **Availability**: `/livez` success rate.
 - **Readiness**: `/readyz` reflects listener bound (`TCPTransport.Ready`).
 - **Peer visibility**: `/peers` returns active connected peers with remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
-- **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, or Prometheus samples from `/metrics/prometheus`.
+- **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, or Prometheus samples from `/metrics/prometheus`.

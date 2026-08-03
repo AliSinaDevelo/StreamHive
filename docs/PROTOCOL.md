@@ -52,9 +52,12 @@ successes and failures are exposed as `peer_auth_success` and `peer_auth_failure
 
 The `identity` fields are optional for compatibility with token-only peers. They provide
 an explicit application identity label for snapshots and logs, but this slice does not
-authorize identities or provide signed identity claims. Use TLS or mTLS whenever the
-token or identity crosses a network boundary where passive capture or active interception
-is possible.
+authorize identities by default or provide signed identity claims. To authorize inbound
+identities, configure `TCPTransport.PeerAuthAllowedIdentities` or the CLI
+`-peer-allow-ids` flag. Entries use exact matching; a missing or unlisted identity is
+rejected before peer registration. An empty allowlist preserves token-only and
+identity-label-only deployments. Use TLS or mTLS whenever the token or identity crosses a
+network boundary where passive capture or active interception is possible.
 
 ## Replication Payloads
 
@@ -156,6 +159,7 @@ fails mid-sync, a later inventory pass or reconnect can request the missing key 
 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
 `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
-replication counters. `/peers` includes remote address, local address, direction,
+replication counters, including `peer_auth_identity_rejections` for inbound identity
+allowlist failures. `/peers` includes remote address, local address, direction,
 connection timestamp, connection age in milliseconds, `auth_method` (`none` or
 `shared-token`), and optional `auth_identity`.

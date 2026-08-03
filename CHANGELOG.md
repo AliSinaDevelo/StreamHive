@@ -7,7 +7,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 ### Added
 
 - **`p2p` / CLI**: optional application identity exchange during shared-token auth via `PeerAuthIdentity` and `-peer-id`.
+- **`p2p` / CLI**: exact inbound identity allowlists via `PeerAuthAllowedIdentities` and `-peer-allow-ids`.
 - **Ops**: `/peers` snapshots and connection logs expose optional `auth_identity` values.
+- **Metrics**: `peer_auth_identity_rejections` counts inbound identities rejected by validation or the allowlist.
 
 ## [0.8.0] — 2026-08-03
 
