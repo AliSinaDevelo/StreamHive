@@ -8,10 +8,16 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 - **`p2p` / CLI**: optional shared-token peer auth handshake via `TCPTransport.PeerAuthToken` and `-peer-auth-token`.
 - **`replication`**: `blob.ack` messages acknowledge accepted `blob.put` keys.
+- **CLI**: one-shot blob puts wait for matching acknowledgments and retry idempotently with `-put-ack-timeout`, `-put-retries`, and `-put-retry-delay`.
 - **Metrics**: `peer_auth_success` and `peer_auth_failures` counters for authenticated peer admission.
 - **Metrics**: `replication_blob_acks_sent` and `replication_blob_acks_received` counters.
+- **Metrics**: `replication_blob_acks_matched`, `replication_blob_acks_pending`, `replication_blob_ack_timeouts`, and `replication_blob_retries` counters.
 - **Demo**: authenticated Docker Compose acceptance path proving matching-token replication and wrong-token rejection.
 - **Ops**: peer snapshots and connection logs label admission as `auth_method=none` or `auth_method=shared-token`.
+
+### Changed
+
+- **`p2p`**: concurrent `TCPPeer.WriteFrame` calls are serialized per connection to preserve frame boundaries.
 
 ## [0.7.0] — 2026-08-02
 

@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.7.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, startup and periodic anti-entropy sync, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ Inspect connected peers:
 curl -s http://127.0.0.1:8080/peers
 ```
 
-Look for `replication_blobs_stored`, `replication_bytes_stored`, ACK, duplicate/skipped, auth, and transport frame counters. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, and `auth_method` (`none` or `shared-token`).
+Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, and `replication_blob_retries`, plus duplicate/skipped, auth, and transport frame counters. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, and `auth_method` (`none` or `shared-token`).
 
 Or run the whole flow:
 
@@ -152,7 +152,10 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-list-keys` | Print durable `-store-dir` keys as hex and exit |
 | `-put-key` / `-put-data` | Send one manually keyed blob to outbound peers |
 | `-put-content-key` | Derive the outbound blob key from `SHA-256(-put-data)` |
-| `-exit-after-put` | Exit after the outbound blob frame is written |
+| `-put-ack-timeout` | Time to wait for each one-shot blob acknowledgment |
+| `-put-retries` | Additional one-shot blob sends after an ACK timeout (0-10) |
+| `-put-retry-delay` | Initial delay before retrying an unacknowledged blob (backoff capped at 500ms) |
+| `-exit-after-put` | Wait for matching acknowledgments from all outbound peers, then exit |
 | `-max-blob-bytes` | Cap replicated blob payload size |
 
 See the [Makefile](Makefile) for `test-race`, `vet`, `cover`, `lint`, and demos.

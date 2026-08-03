@@ -82,12 +82,12 @@ classDiagram
 
 - Listener and peer map share a mutex; the accept loop exits when the listener is closed.
 - `Close` stops new accepts, waits for the accept goroutine, then closes open peer connections. Peer goroutines remove themselves from the map on EOF / error via `unregisterPeer`.
-- Optional `FrameHandler` runs per frame on each peer session until error, context cancellation, or disconnect.
+- Optional `FrameHandler` runs per frame on each peer session until error, context cancellation, or disconnect. `TCPPeer.WriteFrame` serializes concurrent frame writers so ACK responses, retries, and inventory messages cannot interleave on one TCP stream.
 - CLI replication installs a `FrameHandler` that decodes `blob.put` messages and writes to `MemoryStore` by default, or `FileStore` when `-store-dir` is set. Outbound `-put-key` / `-put-data` sends one manually keyed frame after `-dial` or `-peers` connects; `-put-content-key` derives the key from `SHA-256(-put-data)`. `-list-keys` inspects durable stores by printing known keys as hex.
 - Receivers treat 32-byte keys as SHA-256 content addresses and verify payload integrity before storage. Exact duplicate key/data writes are skipped and counted separately; opaque keys with different data still replace existing values.
 - `-peer-reconnect` manages only static `-peers` targets. It retries failed dials with exponential backoff and schedules another retry when an outbound configured peer disconnects.
 - `-peer-auth-token` requires a shared-token auth frame before a peer is registered or allowed to exchange replication frames. The default is unauthenticated for local demos. Connection logs and peer snapshots label the admission mode as `auth_method=none` or `auth_method=shared-token`.
-- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`.
+- Replication peers advertise local keys on connect. When `-sync-interval` is set, nodes also advertise local keys periodically to repair blobs added after peer startup. Receivers reply with `blob.missing`, owners send the requested blobs with `blob.put`, and receivers answer accepted puts with `blob.ack`. One-shot CLI puts track ACKs per peer/key and retry timed-out writes within a bounded budget; anti-entropy sends remain repairable through later inventory passes.
 
 ### Peer lifecycle
 
@@ -135,6 +135,8 @@ sequenceDiagram
   ReceiverTransport->>Replication: FrameHandler(payload)
   Replication->>Replication: decode + validate limits
   Replication->>Store: Put(ctx, key, data)
+  ReceiverTransport-->>SenderTransport: blob.ack for accepted key
+  SenderTransport->>SenderTransport: match ACK or retry after bounded timeout
 ```
 
 Implemented:
@@ -142,11 +144,11 @@ Implemented:
 - Static peer replication over `-dial` and comma-separated `-peers`.
 - Optional reconnect/backoff for `-peers`.
 - Message types: `blob.put`, `blob.has`, `blob.get`, and `blob.missing`.
-- Per-key `blob.ack` observability after stored or duplicate `blob.put` messages.
+- Per-key `blob.ack` responses plus bounded ACK-driven retries for one-shot CLI puts.
 - Startup anti-entropy for connected `-replicate` peers.
 - Receiver-side storage via `storage.MemoryStore` or durable `storage.FileStore` with `-store-dir`.
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, connection age, and `auth_method`.
-- JSON `/metrics` counters for stored/sent blobs, ACKs, bytes, duplicates, and replication errors.
+- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, and replication errors.
 
 Not implemented yet:
 

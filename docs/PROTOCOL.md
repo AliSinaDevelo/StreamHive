@@ -123,9 +123,17 @@ If writing a frame to the TCP stream fails, the peer loop stops instead of retry
 same frame on a potentially partial stream.
 
 StreamHive sends `blob.ack` after a `blob.put` is stored or recognized as an exact
-duplicate. ACKs are currently observability signals: they increment
-`replication_blob_acks_sent` and `replication_blob_acks_received`, but they do not yet
-drive retransmission state or commit indexes.
+duplicate. For one-shot CLI puts, the sender registers the `(peer, key)` pair before
+writing the frame and waits up to `-put-ack-timeout` for the matching ACK. A timeout
+removes the pending entry, increments `replication_blob_ack_timeouts`, and retries the
+same idempotent `blob.put` up to `-put-retries` additional times. `-put-retry-delay`
+starts the bounded exponential delay between attempts; the delay is capped at 500ms.
+`-exit-after-put` returns only after every outbound target acknowledges the key or its
+retry budget is exhausted. `replication_blob_acks_received` counts every received ACK,
+while `replication_blob_acks_matched` counts ACKs that completed a pending one-shot
+send. `replication_blob_acks_pending` exposes current waiters. Inventory and requested
+blob sends remain one-way write units; later anti-entropy or reconnect passes repair a
+send that fails outside the one-shot ACK path.
 
 Repair is driven by startup inventory, periodic inventory with `-sync-interval`, and
 reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a blob send

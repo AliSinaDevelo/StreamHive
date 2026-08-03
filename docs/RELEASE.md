@@ -42,5 +42,7 @@ Highlight:
 - TLS/mTLS identity guidance and explicit application-level auth gaps.
 - Partial-sync resilience: unreadable or oversized requested blobs are skipped while later keys still send.
 - `replication_blobs_skipped` metric.
+- One-shot blob delivery waits for `blob.ack` and retries within the configured bounded budget.
+- `replication_blob_ack_timeouts`, `replication_blob_retries`, and `replication_blob_acks_matched` metrics.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.
