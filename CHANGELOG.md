@@ -4,6 +4,15 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-08-04
+
+### Added
+
+- **Metrics**: aggregate anti-entropy counters for inventory advertisements, missing-key requests, and repair blob deliveries.
+- **Ops**: structured replication logs distinguish one-shot sends from anti-entropy repair deliveries without adding peer labels.
+- **Demo**: authenticated Compose output now summarizes identity authorization, rejection counters, and restart repair evidence.
+- **Tests**: real TCP coverage combines authenticated identity policy, restart repair, and exact duplicate replay.
+
 ## [0.9.0] — 2026-08-03
 
 ### Added
