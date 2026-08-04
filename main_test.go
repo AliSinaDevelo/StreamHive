@@ -41,6 +41,16 @@ type capturePeer struct {
 	payloads [][]byte
 }
 
+type hasProbeStore struct {
+	storage.BlobStore
+	hasCalls atomic.Int32
+}
+
+func (s *hasProbeStore) Has(ctx context.Context, key []byte) (bool, error) {
+	s.hasCalls.Add(1)
+	return s.BlobStore.Has(ctx, key)
+}
+
 func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
 	if p.err != nil {
 		return p.err
@@ -1288,6 +1298,28 @@ func TestHandleReplicationMessageCountsMissingKeysRequested(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, replication.MessageTypeBlobMissing, missing.Type)
 	assert.Equal(t, [][]byte{[]byte("needs-repair")}, missing.Keys)
+	assert.Equal(t, uint64(1), metrics.MissingKeysRequested.Load())
+}
+
+func TestHandleReplicationMessageChecksAdvertisedKeysWithoutLister(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryStore()
+	require.NoError(t, base.Put(ctx, []byte("already-local"), []byte("value")))
+	store := &hasProbeStore{BlobStore: base}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	msg := replication.Message{
+		Type: replication.MessageTypeBlobHas,
+		Keys: [][]byte{[]byte("already-local"), []byte("needs-repair")},
+	}
+
+	require.NoError(t, handleReplicationMessage(ctx, peer, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	require.Len(t, peer.payloads, 1)
+	missing, err := replication.Decode(peer.payloads[0], replication.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, replication.MessageTypeBlobMissing, missing.Type)
+	assert.Equal(t, [][]byte{[]byte("needs-repair")}, missing.Keys)
+	assert.Equal(t, int32(2), store.hasCalls.Load())
 	assert.Equal(t, uint64(1), metrics.MissingKeysRequested.Load())
 }
 

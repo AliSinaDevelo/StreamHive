@@ -159,6 +159,9 @@ multiple bounded `blob.has` frames at the configured `MaxKeys` limit instead of 
 the entire advertisement. Each frame must also fit the transport `MaxFrameBytes` limit;
 the sender adaptively splits a batch further when necessary, while a single key that
 cannot fit fails the inventory pass with a frame-size error.
+The receiver checks each advertised key with its `BlobStore.Has` operation, so the work
+and temporary key set are bounded by the incoming inventory frame rather than the full
+local store size.
 Aggregate anti-entropy counters make that control loop visible without peer labels:
 `replication_inventory_advertisements` counts successful `blob.has` frames,
 `replication_missing_keys_requested` counts keys in `blob.missing` messages, and

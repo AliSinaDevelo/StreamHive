@@ -658,14 +658,22 @@ func handleReplicationMessage(
 		log.Info("replicated blob stored", attrs...)
 		return sendBlobAck(peer, msg.Key, limits, maxFrameBytes, metrics, log)
 	case replication.MessageTypeBlobHas:
-		if lister == nil {
+		var missing [][]byte
+		var err error
+		if store != nil {
+			missing, err = missingKeysFromStore(ctx, store, msg.Keys)
+		} else if lister != nil {
+			var localKeys [][]byte
+			localKeys, err = lister.ListKeys(ctx)
+			if err == nil {
+				missing = missingKeys(msg.Keys, localKeys)
+			}
+		} else {
 			return nil
 		}
-		localKeys, err := lister.ListKeys(ctx)
 		if err != nil {
 			return err
 		}
-		missing := missingKeys(msg.Keys, localKeys)
 		if len(missing) == 0 {
 			return nil
 		}
@@ -888,6 +896,20 @@ func missingKeys(remoteKeys, localKeys [][]byte) [][]byte {
 		missing = append(missing, append([]byte(nil), key...))
 	}
 	return missing
+}
+
+func missingKeysFromStore(ctx context.Context, store storage.BlobStore, remoteKeys [][]byte) ([][]byte, error) {
+	missing := make([][]byte, 0, len(remoteKeys))
+	for _, key := range remoteKeys {
+		has, err := store.Has(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		if !has {
+			missing = append(missing, append([]byte(nil), key...))
+		}
+	}
+	return missing, nil
 }
 
 type peerReconnector struct {
