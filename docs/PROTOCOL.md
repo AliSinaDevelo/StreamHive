@@ -154,6 +154,9 @@ that connection.
 Repair is driven by startup inventory, periodic inventory with `-sync-interval`, and
 reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a blob send
 fails mid-sync, a later inventory pass or reconnect can request the missing key again.
+When a store contains more keys than one inventory message permits, the owner emits
+multiple bounded `blob.has` frames at the configured `MaxKeys` limit instead of failing
+the entire advertisement.
 Aggregate anti-entropy counters make that control loop visible without peer labels:
 `replication_inventory_advertisements` counts successful `blob.has` frames,
 `replication_missing_keys_requested` counts keys in `blob.missing` messages, and

@@ -1213,6 +1213,29 @@ func TestSendBlobHasCountsInventoryAdvertisement(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.InventoryAdvertisements.Load())
 }
 
+func TestSendBlobHasBatchesAtConfiguredKeyLimit(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d"), []byte("e")}
+	for _, key := range keys {
+		require.NoError(t, store.Put(ctx, key, []byte("value")))
+	}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	require.NoError(t, sendBlobHas(ctx, peer, store, replication.Limits{MaxKeys: 2}, 0, metrics))
+	require.Len(t, peer.payloads, 3)
+	var advertised [][]byte
+	for _, payload := range peer.payloads {
+		msg, err := replication.Decode(payload, replication.Limits{MaxKeys: 2})
+		require.NoError(t, err)
+		assert.Equal(t, replication.MessageTypeBlobHas, msg.Type)
+		advertised = append(advertised, msg.Keys...)
+	}
+	assert.Equal(t, keys, advertised)
+	assert.Equal(t, uint64(3), metrics.InventoryAdvertisements.Load())
+}
+
 func TestHandleReplicationMessageCountsMissingKeysRequested(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
