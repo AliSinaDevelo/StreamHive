@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.10.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ Inspect connected peers:
 curl -s http://127.0.0.1:8080/peers
 ```
 
-Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`), auth, and transport frame counters such as `peer_auth_identity_rejections`. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
+Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`), auth, and transport frame counters such as `peer_auth_identity_rejections`. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 
 Or run the whole flow:
 
@@ -160,6 +160,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-put-retry-delay` | Initial delay before retrying an unacknowledged blob (backoff capped at 500ms) |
 | `-exit-after-put` | Wait for matching acknowledgments from all outbound peers, then exit |
 | `-max-blob-bytes` | Cap replicated blob payload size |
+| `-max-repair-bytes` | Cap aggregate anti-entropy blob data per `blob.missing` response (0 = default) |
 
 See the [Makefile](Makefile) for `test-race`, `vet`, `cover`, `lint`, and demos.
 

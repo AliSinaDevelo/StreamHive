@@ -4,6 +4,11 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+### Added
+
+- **Replication**: bounded anti-entropy repair responses with `-max-repair-bytes` and later-inventory recovery for deferred keys.
+- **Metrics**: `replication_repair_blobs_deferred` counts keys held back by the per-response repair budget.
+
 ## [0.10.0] — 2026-08-04
 
 ### Added

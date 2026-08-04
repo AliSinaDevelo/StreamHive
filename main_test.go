@@ -178,6 +178,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_inventory_advertisements")
 	assert.Contains(t, metrics, "replication_missing_keys_requested")
 	assert.Contains(t, metrics, "replication_repair_blobs_sent")
+	assert.Contains(t, metrics, "replication_repair_blobs_deferred")
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
@@ -192,6 +193,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_inventory_advertisements")
 	assert.Contains(t, string(body), "streamhive_replication_missing_keys_requested")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_sent")
+	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_deferred")
 	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
 
 	resp5, err := client.Get(base + "/peers")
@@ -292,6 +294,13 @@ func TestRun_syncIntervalRejectsNegative(t *testing.T) {
 	err := run(context.Background(), []string{"-sync-interval", "-1s"}, &out, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "-sync-interval must be zero or greater")
+}
+
+func TestRun_maxRepairBytesRejectsNegative(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-max-repair-bytes", "-1"}, &out, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-max-repair-bytes must be zero or greater")
 }
 
 func TestRun_replicatesBlobPutToDialPeer(t *testing.T) {
@@ -1365,6 +1374,48 @@ func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.BlobsSkipped.Load())
 	assert.Equal(t, uint64(1), metrics.SendErrors.Load())
 	assert.Equal(t, uint64(1), metrics.RepairBlobsSent.Load())
+}
+
+func TestSendRequestedBlobsDefersAfterRepairByteBudgetAndRecovers(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("data")))
+	}
+	limits := replication.Limits{MaxDataBytes: 16, MaxRepairBytes: 8}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+
+	require.NoError(t, sendRequestedBlobs(
+		ctx,
+		peer,
+		store,
+		keys,
+		limits,
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		true,
+	))
+	assert.Len(t, peer.payloads, 2)
+	assert.Equal(t, uint64(2), metrics.RepairBlobsSent.Load())
+	assert.Equal(t, uint64(1), metrics.RepairBlobsDeferred.Load())
+
+	require.NoError(t, sendRequestedBlobs(
+		ctx,
+		peer,
+		store,
+		[][]byte{keys[2]},
+		limits,
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		true,
+	))
+	assert.Len(t, peer.payloads, 3)
+	assert.Equal(t, uint64(3), metrics.RepairBlobsSent.Load())
+	assert.Equal(t, uint64(1), metrics.RepairBlobsDeferred.Load())
 }
 
 func TestSendRequestedBlobsStopsWhenContextCancelsAfterRead(t *testing.T) {

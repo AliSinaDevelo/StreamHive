@@ -88,6 +88,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	putRetries := fs.Int("put-retries", defaultPutRetries, "additional blob sends after an acknowledgment timeout")
 	putRetryDelay := fs.Duration("put-retry-delay", defaultPutRetryDelay, "delay before retrying a blob after an acknowledgment timeout")
 	maxBlobBytes := fs.Int("max-blob-bytes", replication.DefaultMaxDataBytes, "max replicated blob payload bytes")
+	maxRepairBytes := fs.Int("max-repair-bytes", replication.DefaultMaxRepairBytes, "max aggregate anti-entropy blob data bytes per request (0 = default)")
 
 	tlsCert := fs.String("tls-cert", "", "path to PEM certificate (enables TLS on listener)")
 	tlsKey := fs.String("tls-key", "", "path to PEM private key for -tls-cert")
@@ -176,8 +177,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *putRetryDelay < 0 {
 		return fmt.Errorf("replication: -put-retry-delay must be zero or greater")
 	}
+	if *maxRepairBytes < 0 {
+		return fmt.Errorf("replication: -max-repair-bytes must be zero or greater")
+	}
 
-	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes}
+	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes, MaxRepairBytes: *maxRepairBytes}
 	var blobStore storage.BlobStore
 	var keyLister storage.BlobKeyLister
 	var memoryStore *storage.MemoryStore
@@ -815,7 +819,12 @@ func sendRequestedBlobs(
 	log *slog.Logger,
 	repair bool,
 ) error {
-	for _, key := range keys {
+	repairBudget := replication.DefaultMaxRepairBytes
+	if limits.MaxRepairBytes > 0 {
+		repairBudget = limits.MaxRepairBytes
+	}
+	var repairBytes int
+	for i, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -838,6 +847,12 @@ func sendRequestedBlobs(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if repair && repairBytes > 0 && repairBytes+len(data) > repairBudget {
+			deferred := len(keys) - i
+			metrics.RepairBlobsDeferred.Add(uint64(deferred))
+			log.Warn("replication repair deferred", "remote", peer.RemoteAddr().String(), "keys", deferred, "bytes_sent", repairBytes, "budget_bytes", repairBudget, "delivery", "anti-entropy")
+			return nil
+		}
 		payload, err := replication.EncodeBlobPut(key, data, limits)
 		if err != nil {
 			metrics.SendErrors.Add(1)
@@ -855,6 +870,7 @@ func sendRequestedBlobs(
 		metrics.BlobsSent.Add(1)
 		metrics.BytesSent.Add(uint64(len(data)))
 		if repair {
+			repairBytes += len(data)
 			metrics.RepairBlobsSent.Add(1)
 			log.Info("replication repair blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", len(data), "delivery", "anti-entropy")
 		} else {
@@ -1113,6 +1129,7 @@ type replicationMetrics struct {
 	InventoryAdvertisements atomic.Uint64
 	MissingKeysRequested    atomic.Uint64
 	RepairBlobsSent         atomic.Uint64
+	RepairBlobsDeferred     atomic.Uint64
 	ackTracker              *putAckTracker
 }
 
@@ -1142,6 +1159,7 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_inventory_advertisements": int64(m.InventoryAdvertisements.Load()),
 		"replication_missing_keys_requested":   int64(m.MissingKeysRequested.Load()),
 		"replication_repair_blobs_sent":        int64(m.RepairBlobsSent.Load()),
+		"replication_repair_blobs_deferred":    int64(m.RepairBlobsDeferred.Load()),
 	}
 }
 

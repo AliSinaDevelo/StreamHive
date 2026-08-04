@@ -27,6 +27,8 @@ const (
 	DefaultMaxKeys = 4096
 	// DefaultMaxDataBytes bounds replicated blob payloads.
 	DefaultMaxDataBytes = 4 << 20
+	// DefaultMaxRepairBytes bounds aggregate blob data sent for one anti-entropy request.
+	DefaultMaxRepairBytes = 64 << 20
 )
 
 var (
@@ -50,9 +52,10 @@ var (
 
 // Limits bounds decoded message sizes before they are applied.
 type Limits struct {
-	MaxKeyBytes  int
-	MaxKeys      int
-	MaxDataBytes int
+	MaxKeyBytes    int
+	MaxKeys        int
+	MaxDataBytes   int
+	MaxRepairBytes int
 }
 
 // Message is the JSON payload carried inside an SHV1 frame.
@@ -172,6 +175,9 @@ func normalizeLimits(limits Limits) Limits {
 	}
 	if limits.MaxDataBytes <= 0 {
 		limits.MaxDataBytes = DefaultMaxDataBytes
+	}
+	if limits.MaxRepairBytes <= 0 {
+		limits.MaxRepairBytes = DefaultMaxRepairBytes
 	}
 	return limits
 }

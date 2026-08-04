@@ -101,6 +101,7 @@ Default replication limits are:
 | Max key size | 512 bytes | `replication.ErrKeyTooLarge` |
 | Max keys per inventory message | 4096 | `replication.ErrTooManyKeys` |
 | Max blob payload | `4 << 20` bytes | `replication.ErrDataTooLarge` |
+| Max repair data per `blob.missing` response | `64 << 20` bytes | Remaining keys are deferred |
 
 Empty keys fail with `replication.ErrKeyEmpty`. Empty `keys` lists fail with
 `replication.ErrKeysEmpty`. Unknown message types fail with
@@ -129,6 +130,13 @@ cannot be encoded under the configured limits, that key is skipped, `replication
 and `replication_blobs_skipped` are incremented, and later requested keys are still sent.
 If writing a frame to the TCP stream fails, the peer loop stops instead of retrying the
 same frame on a potentially partial stream.
+For anti-entropy `blob.missing` responses, the sender also bounds aggregate blob data per
+request with `MaxRepairBytes`. Once that budget is reached, the remaining requested keys
+are deferred, the connection stays healthy, and `replication_repair_blobs_deferred` is
+incremented. A later periodic inventory or reconnect requests those keys again. The first
+blob is allowed through when it alone exceeds a deliberately smaller budget so repair
+cannot be permanently wedged; operators should keep `MaxRepairBytes` at or above the
+maximum blob size when they need a strict aggregate cap.
 
 StreamHive sends `blob.ack` after a `blob.put` is stored or recognized as an exact
 duplicate. For one-shot CLI puts, the sender registers the `(peer, key)` pair before
@@ -165,7 +173,9 @@ local store size.
 Aggregate anti-entropy counters make that control loop visible without peer labels:
 `replication_inventory_advertisements` counts successful `blob.has` frames,
 `replication_missing_keys_requested` counts keys in `blob.missing` messages, and
-`replication_repair_blobs_sent` counts successful repair `blob.put` frames. Repair
+`replication_repair_blobs_sent` counts successful repair `blob.put` frames, while
+`replication_repair_blobs_deferred` counts requested keys held back by the per-response
+repair budget. Repair
 delivery logs use `delivery=anti-entropy`; one-shot CLI deliveries use
 `delivery=one-shot`. Requested-blob delivery checks cancellation between store reads,
 encoding, and frame writes, so shutdown stops a long repair pass at the next safe
