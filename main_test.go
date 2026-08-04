@@ -51,6 +51,17 @@ func (s *hasProbeStore) Has(ctx context.Context, key []byte) (bool, error) {
 	return s.BlobStore.Has(ctx, key)
 }
 
+type cancelAfterGetStore struct {
+	storage.BlobStore
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterGetStore) Get(ctx context.Context, key []byte) ([]byte, error) {
+	data, err := s.BlobStore.Get(ctx, key)
+	s.cancel()
+	return data, err
+}
+
 func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
 	if p.err != nil {
 		return p.err
@@ -1354,6 +1365,32 @@ func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.BlobsSkipped.Load())
 	assert.Equal(t, uint64(1), metrics.SendErrors.Load())
 	assert.Equal(t, uint64(1), metrics.RepairBlobsSent.Load())
+}
+
+func TestSendRequestedBlobsStopsWhenContextCancelsAfterRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	base := storage.NewMemoryStore()
+	key := []byte("a")
+	require.NoError(t, base.Put(ctx, key, []byte("first")))
+	store := &cancelAfterGetStore{BlobStore: base, cancel: cancel}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	err := sendRequestedBlobs(
+		ctx,
+		peer,
+		store,
+		[][]byte{key},
+		replication.Limits{},
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		true,
+	)
+
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, peer.payloads)
+	assert.Equal(t, uint64(0), metrics.BlobsSent.Load())
 }
 
 func TestSendRequestedBlobsStopsOnFrameWriteError(t *testing.T) {

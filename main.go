@@ -816,15 +816,27 @@ func sendRequestedBlobs(
 	repair bool,
 ) error {
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		data, err := store.Get(ctx, key)
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
 			metrics.SendErrors.Add(1)
 			metrics.BlobsSkipped.Add(1)
 			log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		payload, err := replication.EncodeBlobPut(key, data, limits)
 		if err != nil {
@@ -832,6 +844,9 @@ func sendRequestedBlobs(
 			metrics.BlobsSkipped.Add(1)
 			log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
 			metrics.SendErrors.Add(1)
