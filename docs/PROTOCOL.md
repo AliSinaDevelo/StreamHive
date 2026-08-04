@@ -156,7 +156,9 @@ reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a b
 fails mid-sync, a later inventory pass or reconnect can request the missing key again.
 When a store contains more keys than one inventory message permits, the owner emits
 multiple bounded `blob.has` frames at the configured `MaxKeys` limit instead of failing
-the entire advertisement.
+the entire advertisement. Each frame must also fit the transport `MaxFrameBytes` limit;
+the sender adaptively splits a batch further when necessary, while a single key that
+cannot fit fails the inventory pass with a frame-size error.
 Aggregate anti-entropy counters make that control loop visible without peer labels:
 `replication_inventory_advertisements` counts successful `blob.has` frames,
 `replication_missing_keys_requested` counts keys in `blob.missing` messages, and

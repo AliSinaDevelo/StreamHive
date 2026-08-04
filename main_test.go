@@ -1236,6 +1236,41 @@ func TestSendBlobHasBatchesAtConfiguredKeyLimit(t *testing.T) {
 	assert.Equal(t, uint64(3), metrics.InventoryAdvertisements.Load())
 }
 
+func TestSendBlobHasSplitsAtFrameLimit(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d"), []byte("e")}
+	for _, key := range keys {
+		require.NoError(t, store.Put(ctx, key, []byte("value")))
+	}
+	single, err := replication.EncodeBlobHas([][]byte{keys[0]}, replication.Limits{})
+	require.NoError(t, err)
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	require.NoError(t, sendBlobHas(ctx, peer, store, replication.Limits{}, len(single), metrics))
+	require.Len(t, peer.payloads, len(keys))
+	for _, payload := range peer.payloads {
+		assert.LessOrEqual(t, len(payload), len(single))
+	}
+	assert.Equal(t, uint64(len(keys)), metrics.InventoryAdvertisements.Load())
+}
+
+func TestSendBlobHasRejectsSingleKeyOverFrameLimit(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(ctx, []byte("a"), []byte("value")))
+	single, err := replication.EncodeBlobHas([][]byte{[]byte("a")}, replication.Limits{})
+	require.NoError(t, err)
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	err = sendBlobHas(ctx, peer, store, replication.Limits{}, len(single)-1, metrics)
+	assert.ErrorIs(t, err, p2p.ErrFrameTooLarge)
+	assert.Empty(t, peer.payloads)
+	assert.Equal(t, uint64(0), metrics.InventoryAdvertisements.Load())
+}
+
 func TestHandleReplicationMessageCountsMissingKeysRequested(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()

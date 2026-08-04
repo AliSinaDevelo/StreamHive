@@ -731,21 +731,39 @@ func sendBlobHas(ctx context.Context, peer p2p.Peer, lister storage.BlobKeyListe
 	if limits.MaxKeys > 0 {
 		batchSize = limits.MaxKeys
 	}
-	for start := 0; start < len(keys); start += batchSize {
+	maxPayload := maxFrameBytes
+	if maxPayload <= 0 {
+		maxPayload = p2p.DefaultMaxFrameBytes
+	}
+	for start := 0; start < len(keys); {
 		end := start + batchSize
 		if end > len(keys) {
 			end = len(keys)
 		}
-		payload, err := replication.EncodeBlobHas(keys[start:end], limits)
-		if err != nil {
-			return err
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			payload, err := replication.EncodeBlobHas(keys[start:end], limits)
+			if err != nil {
+				return err
+			}
+			if len(payload) > maxPayload {
+				if end-start == 1 {
+					return p2p.ErrFrameTooLarge
+				}
+				end = start + (end-start)/2
+				continue
+			}
+			if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
+				return err
+			}
+			if metrics != nil {
+				metrics.InventoryAdvertisements.Add(1)
+			}
+			break
 		}
-		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
-			return err
-		}
-		if metrics != nil {
-			metrics.InventoryAdvertisements.Add(1)
-		}
+		start = end
 	}
 	return nil
 }
