@@ -11,6 +11,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Metrics**: `replication_repair_blobs_deferred` counts keys held back by the per-response repair budget.
 - **Metrics**: continuation scheduling, completion, and dropped-work counters are exposed through JSON and Prometheus health endpoints.
 - **Demo**: `make demo-continuation` forces a small repair budget and proves continuation delivery without periodic inventory.
+- **Tests**: multi-peer continuation fairness is covered by a deterministic race-enabled acceptance target and dedicated CI matrix job.
+- **Docs**: anti-entropy inventory research records the v0.11 decision to keep the bounded flat `blob.has` protocol until scale measurements justify a versioned digest exchange.
 
 ## [0.10.0] — 2026-08-04
 

@@ -35,12 +35,23 @@ go test -bench=. -benchmem -run '^$' ./...
 
 The current benchmark coverage focuses on `SHV1` frame round-trips and `MemoryStore` `Put`/`Get` throughput. Treat results as local-machine signals, not portable service-level guarantees.
 
+The anti-entropy inventory research benchmark is:
+
+```bash
+go test ./replication -run '^TestResearchInventoryEnvelopeSizes$' -count=1 -v
+go test ./replication -run '^$' -bench '^BenchmarkResearchInventory$' -benchmem -benchtime=200ms
+```
+
+It compares the current bounded JSON inventory with design-only digest envelopes; see
+[ANTI_ENTROPY.md](ANTI_ENTROPY.md) for the v0.11 decision.
+
 ## Continuous integration
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to `main`:
 
 - `go vet ./...`
 - `go test -race -count=1 ./...` on Go 1.22.x and 1.23.x
+- `make test-fairness` in a dedicated Go 1.22.x / 1.23.x matrix job to prove a blocked repair peer cannot serialize a healthy peer
 - Real TCP lost-ACK acceptance coverage through the main test package
 - `golangci-lint` with `.golangci.yml`
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)

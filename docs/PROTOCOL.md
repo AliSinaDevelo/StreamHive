@@ -190,6 +190,11 @@ encoding, and frame writes, so shutdown stops a long repair pass at the next saf
 boundary. Ordinary missing or unreadable blobs remain skip-and-continue cases and can
 be requested again by a later inventory pass.
 
+The inventory scaling decision and reproducible flat-vs-digest measurements are recorded
+in [ANTI_ENTROPY.md](ANTI_ENTROPY.md). The v0.11 decision is to keep the bounded flat
+`blob.has` protocol until a real workload demonstrates that its frame or CPU limits are
+insufficient.
+
 ## Observability
 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
