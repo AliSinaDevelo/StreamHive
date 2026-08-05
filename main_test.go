@@ -1523,7 +1523,9 @@ func TestHandleReplicationMessageSchedulesRepairContinuation(t *testing.T) {
 		store,
 	))
 
-	require.Eventually(t, func() bool { return peer.Len() == 3 }, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return peer.Len() == 3 && metrics.RepairContinuationsCompleted.Load() == 1
+	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, uint64(3), metrics.RepairBlobsSent.Load())
 	assert.Equal(t, uint64(1), metrics.RepairBlobsDeferred.Load())
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsScheduled.Load())
