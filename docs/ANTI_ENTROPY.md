@@ -88,11 +88,58 @@ case also keeps each frame below 4 MiB while producing about 45 MB of total wire
 current protocol is therefore still compatible and frame-bounded, but it does not yet
 have an aggregate whole-exchange byte or probe budget.
 
-The checkpoint keeps the flat wire format. A root-only digest cannot identify missing
+The checkpoint kept the flat wire format. A root-only digest cannot identify missing
 keys, and a range-digest protocol would add divergence traversal, mixed-version fallback,
-state, and new DoS limits. The next task is to decide whether aggregate exchange
-backpressure or a configurable inventory budget is enough before revisiting a new wire
-protocol.
+state, and new DoS limits. The follow-up implementation therefore tested aggregate
+exchange backpressure before considering a new wire protocol.
+
+## v0.12 Aggregate Exchange Budget
+
+The end-to-end benchmark showed that frame bounds alone did not bound one complete
+exchange. The implementation therefore adds scheduler state without changing the
+replication messages:
+
+- `-max-inventory-bytes` defaults to 16 MiB of encoded `blob.has` payload per peer
+  exchange; `0` disables the byte cap.
+- `-max-inventory-keys` defaults to 16,384 advertised keys per peer exchange; `0`
+  disables the key cap.
+- Each peer has one exclusive cursor. A budget hit sends a bounded chunk, records the
+  last key, and schedules a delayed continuation. Concurrent startup and periodic
+  triggers are coalesced, and disconnect or shutdown drops the cursor.
+- Older peers still see ordinary `blob.has` frames. The receiver has no new state and
+  remains bounded by each frame's `MaxKeys` and transport payload limit.
+- A deliberately tiny byte cap still sends one minimum frame so an exchange can make
+  progress rather than retrying the same key forever.
+
+Run both measurements with:
+
+```bash
+make bench-inventory-wire
+```
+
+The following approximate Apple M1 samples use 65,536 keys and the default aggregate
+budgets:
+
+| Key bytes | Mode | Chunks | Frames | Wire bytes | Time | Allocations/op |
+|---:|---|---:|---:|---:|---:|---:|
+| 32 | Flat | 1 | 16 | 3.08 MB | 27.8 ms | 30.8 MB |
+| 32 | Budgeted | 5 | 16 | 3.08 MB | 5.7 ms | 14.4 MB |
+| 512 | Flat | 1 | 16 | 45.0 MB | 290 ms | 320 MB |
+| 512 | Budgeted | 5 | 16 | 45.0 MB | 49 ms | 175 MB |
+
+Five chunks means four data chunks plus a final empty cursor check. The total wire
+volume and receiver-side probe count remain unchanged because the flat protocol is still
+used, but the budgeted exchange limits the work held by each pager invocation and gives
+other per-peer work a scheduling boundary. The aggregate counters
+`replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`,
+`replication_inventory_exchanges_limited`, `replication_inventory_exchanges_dropped`,
+and `replication_inventory_exchanges_active` make that behavior observable without peer
+or key labels.
+
+This closes the v0.12 whole-exchange safety boundary without introducing digest or range
+messages. Reconsider a versioned digest exchange only after a real workload still shows
+unacceptable aggregate wire, CPU, probe, or continuation pressure under these budgets;
+that work would need mixed-version fallback and independent DoS limits first.
 
 ## Research Sources
 

@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.11.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, bounded repair responses with delayed continuation, durable stores, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope with global repair I/O admission are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/INVENTORY_ITERATORS.md](docs/INVENTORY_ITERATORS.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope with global repair I/O admission are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/INVENTORY_ITERATORS.md](docs/INVENTORY_ITERATORS.md).
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ Inspect connected peers:
 curl -s http://127.0.0.1:8080/peers
 ```
 
-Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_probed`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`), auth, and transport frame counters such as `peer_auth_identity_rejections`. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
+Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_sent`, `replication_inventory_keys_probed`, `replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`, `replication_inventory_exchanges_active`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`), auth, and transport frame counters such as `peer_auth_identity_rejections`. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 
 Continuation operations add the aggregate `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
@@ -61,6 +61,20 @@ Anti-entropy storage admission adds aggregate
 `replication_repair_io_ops_waited`, `replication_repair_io_ops_rejected`,
 `replication_repair_io_ops_in_flight`, and `replication_repair_io_ops_queued` metrics;
 `-max-repair-ops` defaults to four concurrent blob operations.
+
+Whole inventory exchanges are bounded independently per peer. The defaults are 16 MiB of
+encoded inventory payload and 16,384 advertised keys per exchange; set either
+`-max-inventory-bytes` or `-max-inventory-keys` to `0` to disable that cap. A saturated
+exchange resumes from its exclusive key cursor after a short per-peer delay, while a
+periodic sync remains the convergence fallback. Even a deliberately tiny byte budget
+sends one minimum frame so progress cannot be permanently wedged.
+
+For an explicit budgeted local run:
+
+```bash
+go run . -listen 127.0.0.1:7071 -replicate -peers 127.0.0.1:7070 \
+  -max-inventory-bytes 16777216 -max-inventory-keys 16384
+```
 
 Or run the whole flow:
 
@@ -117,7 +131,7 @@ go run . -listen 127.0.0.1:7071 -peers 127.0.0.1:7070,127.0.0.1:7072 -peer-recon
 
 `-peer-reconnect` retries only `-peers` targets. `-dial` stays a one-shot connection attempt for scripts and tests.
 
-When both sides run with `-replicate`, peers advertise local keys on connect and send missing blobs to each other. A repair response that hits its byte budget gets one bounded delayed continuation; duplicate requests are merged per peer and periodic inventory remains the fallback. This startup anti-entropy path works with memory storage and durable `-store-dir` receivers.
+When both sides run with `-replicate`, peers advertise local keys on connect and send missing blobs to each other. A repair response that hits its byte budget gets one bounded delayed continuation; a large inventory exchange gets per-peer cursor continuations; duplicate requests are merged per peer and periodic inventory remains the fallback. This startup anti-entropy path works with memory storage and durable `-store-dir` receivers.
 
 For long-running nodes, add periodic inventory sync:
 

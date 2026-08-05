@@ -101,6 +101,14 @@ falls back to `BlobKeyLister.ListKeys` for older stores. A page may reflect keys
 or removed between calls, so the periodic inventory pass remains the convergence
 mechanism rather than a snapshot guarantee.
 
+The CLI scheduler keeps one cursor per peer across a bounded exchange. The aggregate
+`-max-inventory-bytes` budget defaults to 16 MiB of encoded inventory payload and
+`-max-inventory-keys` defaults to 16,384 advertised keys; `0` disables the corresponding
+cap. A saturated exchange continues after a short delay from the last exclusive cursor.
+This is scheduler state, not a new wire message: mixed-version peers still receive
+ordinary `blob.has` frames. A minimum frame is sent even when a deliberately tiny byte
+budget cannot fit one key, so the cursor can always advance.
+
 ## Limits
 
 Default replication limits are:
@@ -109,6 +117,8 @@ Default replication limits are:
 |-------|-------|-------|
 | Max key size | 512 bytes | `replication.ErrKeyTooLarge` |
 | Max keys per inventory message | 4096 | `replication.ErrTooManyKeys` |
+| Max inventory bytes per peer exchange | 16 MiB by default; `-max-inventory-bytes`, `0` unlimited | Scheduler continues from the exclusive cursor |
+| Max inventory keys per peer exchange | 16,384 by default; `-max-inventory-keys`, `0` unlimited | Scheduler continues from the exclusive cursor |
 | Max blob payload | `4 << 20` bytes | `replication.ErrDataTooLarge` |
 | Max repair data per `blob.missing` response | `64 << 20` bytes | Remaining keys are deferred |
 
@@ -189,15 +199,24 @@ When a store contains more keys than one inventory message permits, the owner em
 multiple bounded `blob.has` frames at the configured `MaxKeys` limit instead of failing
 the entire advertisement. Each frame must also fit the transport `MaxFrameBytes` limit;
 the sender adaptively splits a batch further when necessary, while a single key that
-cannot fit fails the inventory pass with a frame-size error.
+cannot fit fails the inventory pass with a frame-size error. The per-peer scheduler also
+stops an exchange when its aggregate byte or key budget is reached, records the last key,
+and resumes later without changing the frame format. Startup and periodic triggers are
+coalesced, so one peer cannot start overlapping inventory exchanges.
 The receiver checks each advertised key with its `BlobStore.Has` operation, so the work
 and temporary key set are bounded by the incoming inventory frame rather than the full
 local store size.
 Aggregate anti-entropy counters make that control loop visible without peer labels:
 `replication_inventory_advertisements` counts successful `blob.has` frames,
 `replication_inventory_bytes_sent` counts their encoded payload bytes, and
+`replication_inventory_keys_sent` counts advertised keys,
 `replication_inventory_keys_probed` counts receiver-side `BlobStore.Has` probes for
-advertised keys. `replication_missing_keys_requested` counts keys in `blob.missing` messages, and
+advertised keys. `replication_inventory_exchanges_started`,
+`replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`,
+and `replication_inventory_exchanges_dropped` count scheduler outcomes, while
+`replication_inventory_exchanges_active` counts current per-peer entries. These counters
+have no peer, blob, or key labels. `replication_missing_keys_requested` counts keys in
+`blob.missing` messages, and
 `replication_repair_blobs_sent` counts successful repair `blob.put` frames, while
 `replication_repair_blobs_deferred` counts requested keys held back by the per-response
 repair budget. `replication_corrupt_blobs_detected` counts damaged content-addressed
@@ -217,9 +236,9 @@ be requested again by a later inventory pass.
 
 The inventory scaling decision and reproducible flat-vs-digest measurements are recorded
 in [ANTI_ENTROPY.md](ANTI_ENTROPY.md). The current decision is to keep the bounded flat
-`blob.has` protocol until a real workload demonstrates that its frame or CPU limits are
-insufficient; the aggregate byte/probe counters make whole-exchange pressure visible
-before that decision.
+`blob.has` protocol with aggregate per-peer exchange budgets until a real workload
+demonstrates that its frame, CPU, or continuation limits are insufficient; the aggregate
+inventory counters make whole-exchange pressure visible before that decision.
 
 ## Observability
 
