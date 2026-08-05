@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.10.0`, the release with observable anti-entropy outcomes, authenticated identity policy, and Compose acceptance evidence.
+Use this checklist for StreamHive releases. The current target is `v0.11.0`, the release with bounded repair continuations, multi-peer fairness evidence, dependency updates, and inventory scaling research.
 
 ## Preflight
 
@@ -10,6 +10,8 @@ go test ./...
 go test -race ./...
 go vet ./...
 go test -bench=. -benchmem -run '^$' ./...
+make test-fairness
+go test ./replication -run '^TestResearchInventoryEnvelopeSizes$' -count=1 -v
 go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
 go test . -run '^TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob$' -count=1 -v
 P2P_ADDR=127.0.0.1:17070 HEALTH_ADDR=127.0.0.1:18080 make demo-replication
@@ -18,7 +20,7 @@ make demo-auth
 make demo-repair
 make demo-failure
 make demo-continuation
-go run . -version  # expected: 0.10.0
+go run . -version  # expected: 0.11.0
 ```
 
 ## Version
@@ -29,15 +31,15 @@ go run . -version  # expected: 0.10.0
 
 ```bash
 git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
-git commit -m "chore: release v0.10.0"
+git commit -m "chore: release v0.11.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.10.0 -m "v0.10.0"
+git tag -a v0.11.0 -m "v0.11.0"
 git push origin main
-git push origin v0.10.0
+git push origin v0.11.0
 ```
 
 ## Release Notes
@@ -63,5 +65,8 @@ Highlight:
 - Authenticated restart/repair and duplicate-safe replay acceptance coverage.
 - Repair demos that require a positive `replication_repair_blobs_sent` outcome.
 - Bounded continuation demo evidence with periodic inventory disabled.
+- Multi-peer continuation fairness acceptance under Go 1.22.x and 1.23.x.
+- Anti-entropy inventory benchmark and the decision to retain the bounded flat `blob.has` protocol for v0.11.
+- Dependency updates for checkout, setup-go, golangci-lint, testify, and upload-artifact with green CI evidence.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.
