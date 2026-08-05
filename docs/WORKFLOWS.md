@@ -43,9 +43,11 @@ Compare full inventory materialization with the bounded native pager at 4,096 an
 make bench-inventory
 ```
 
-The pager benchmark intentionally reports cumulative allocations from repeated store
-scans. Its acceptance property is bounded live page state, while a future indexed store
-can reduce the current scan and allocation cost.
+The benchmark reports cumulative allocations from repeated page calls. MemoryStore uses
+an ordered B-tree index, so its page path measures seek plus page materialization rather
+than a full scan. FileStore remains a bounded directory scan and is intentionally kept
+separate from the in-memory index decision. See [INVENTORY_ITERATORS.md](INVENTORY_ITERATORS.md)
+for the measurements and rejected alternatives.
 
 The resource-budget acceptance check is separate from throughput benchmarks:
 

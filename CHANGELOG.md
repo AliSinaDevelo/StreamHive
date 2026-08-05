@@ -10,6 +10,7 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
 - **Storage**: durable 32-byte SHA-256 keys are verified on read and inventory; corrupted content is observable and repairable through anti-entropy.
 - **Storage**: `BlobKeyPager` lets native memory and file stores enumerate bounded inventory pages with cancellation and deterministic bytewise cursors; legacy `BlobKeyLister` implementations remain compatible.
+- **Storage**: `MemoryStore` maintains an ordered B-tree key index for cursor pages; `FileStore` keeps its bounded directory-scan fallback while durable index recovery is designed explicitly.
 - **Replication**: `-max-repair-ops` applies a process-wide default-four admission budget to anti-entropy blob reads/writes, with aggregate queue, in-flight, wait, completion, and rejection metrics.
 - **Docs**: resource-budget design records peer, frame, blob, repair, reconnect, shutdown, and paged-inventory pressure behavior, with deterministic saturation and inventory benchmarks.
 

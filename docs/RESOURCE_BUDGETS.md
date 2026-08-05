@@ -31,7 +31,7 @@ and [memberlist configuration](https://github.com/hashicorp/memberlist/blob/mast
 | One inventory message | `replication.DefaultMaxKeys`: 4,096 keys | `replication.Decode` and repair scheduler | The message is rejected or pending continuation keys are deduplicated and dropped at the cap. |
 | One blob | `replication.DefaultMaxDataBytes`: 4 MiB; CLI `-max-blob-bytes` | `replication.Decode` | The message is rejected with `ErrDataTooLarge` before storage. |
 | One repair response | `replication.DefaultMaxRepairBytes`: 64 MiB; CLI `-max-repair-bytes` | `sendRequestedBlobsResult` | Remaining keys are deferred to one delayed continuation and later inventory passes. |
-| One inventory page | `BlobKeyPager` requested limit; direct non-positive limits use `storage.DefaultKeyPageSize`: 256 | `MemoryStore`, `FileStore`, and `sendBlobHas` | Native stores retain only the smallest page after the exclusive cursor; FileStore reads directory entries in 128-entry chunks. Legacy `BlobKeyLister` stores still use their complete-list API. |
+| One inventory page | `BlobKeyPager` requested limit; direct non-positive limits use `storage.DefaultKeyPageSize`: 256 | `MemoryStore`, `FileStore`, and `sendBlobHas` | MemoryStore seeks an ordered B-tree and retains one page; FileStore reads directory entries in 128-entry chunks and retains only the smallest page after the exclusive cursor. Legacy `BlobKeyLister` stores still use their complete-list API. |
 | Global repair I/O operations | CLI `-max-repair-ops`; default 4, `0` selects the default | `repairIOLimiter` | Each anti-entropy blob read/write waits for a permit; cancellation rejects the waiter. `repair_io_ops_*` metrics show pressure without labels. |
 | Per-peer repair queue | One running continuation and at most `MaxKeys` pending keys per peer | `repairContinuationScheduler` | New unique keys beyond the queue cap are dropped and counted; disconnect or shutdown discards the entry. |
 | Reconnect delay | 500 ms minimum, 30 s maximum by CLI defaults | `peerReconnector` | Failed static targets back off exponentially and stop on context cancellation. |
@@ -67,11 +67,13 @@ uses `max_ops=1`, holds the only permit with one peer, queues a healthy peer, an
 verifies that the healthy operation completes after release. This is an admission and
 progress measurement, not a throughput claim. Existing frame, storage, anti-entropy,
 fairness, and Docker demos should be read alongside it for latency and recovery
-behavior. The inventory benchmark is intentionally a tradeoff measurement: on one
-Apple M1 sample, full `ListKeys` took about 0.63 ms with 131 KB of allocations, while
-four-thousand-key paged enumeration took about 3.35 ms with 347 KB of cumulative
-allocations. The paged path trades repeated scans for bounded live page state; it is a
-memory envelope, not a claim of faster enumeration.
+behavior. The inventory benchmark is intentionally a scaling measurement. On one Apple
+M1 sample after the MemoryStore index change, 4,096 keys took about 0.09 ms and 131 KB
+for full `ListKeys`, versus 0.17 ms and 144 KB for indexed pages. At 65,536 keys, full
+listing took about 2.22 ms and 2.54 MB, versus 2.40 ms and 2.65 MB for indexed pages.
+The pre-index repeated-scan page path took about 824.5 ms and 9.4 MB at 65,536 keys.
+These are local signals, not portable latency promises; FileStore still has the
+bounded repeated-scan tradeoff until a durable ordered index is designed.
 
 Run the comparison with:
 
@@ -91,11 +93,10 @@ make bench-inventory
   across peers. Waiters observe `replication_repair_io_ops_queued`, and canceled waiters
   increment `replication_repair_io_ops_rejected`.
 - **Inventory pressure:** native `BlobKeyPager` stores enumerate only a bounded page
-  before outbound `blob.has` frame paging. The current MemoryStore and FileStore
-  implementations rescan between pages, so large inventories trade CPU and repeated
-  allocations for bounded live page state. Legacy `BlobKeyLister` implementations may
-  still materialize the complete store and should be migrated when their ownership is
-  known.
+  before outbound `blob.has` frame paging. MemoryStore seeks through its ordered index,
+  while FileStore rescans directory entries between pages and trades CPU for bounded
+  live page state. Legacy `BlobKeyLister` implementations may still materialize the
+  complete store and should be migrated when their ownership is known.
 - **Shutdown:** transport shutdown cancels peer handlers; the scheduler forgets pending
   continuations and leaves the gauges at zero. In-flight file operations observe the
   shared context between blob operations.

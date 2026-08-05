@@ -20,7 +20,7 @@ flowchart TD
 1. **Transport (`p2p`)** — `TCPTransport` with `context.Context` on `ListenAndAccept` / `Dial`, accept-loop shutdown coordinated with `Close`, optional TLS, optional shared-token peer auth with exchanged application identities and exact inbound allowlists, optional framed reads via `FrameHandler`, metrics, peer snapshots with auth-method and identity labels, and peer disconnect hooks.
 2. **Framing (`p2p`)** — `SHV1` length-prefixed payloads (`ReadFrame` / `WriteFrame`) with a configurable maximum size (DoS bound). Application-level handshake string: `HandshakeVersionV1`.
 3. **Replication (`replication`)** — typed JSON messages carried inside frames. `blob.put` writes one key/value blob to a receiving `BlobStore`; `blob.has`, `blob.get`, and `blob.missing` provide the inventory/request vocabulary for anti-entropy sync; `blob.ack` records accepted puts.
-4. **Storage (`storage`)** — `BlobStore` interface with `BlobKeyLister` inventory support, `MemoryStore` for tests/demos, and `FileStore` for durable local blobs; SHA-256 helpers provide stable content-addressed keys.
+4. **Storage (`storage`)** — `BlobStore` with `BlobKeyLister` and bounded `BlobKeyPager` inventory support, `MemoryStore` for tests/demos, and `FileStore` for durable local blobs; SHA-256 helpers provide stable content-addressed keys. MemoryStore pages through an ordered B-tree index; FileStore keeps a bounded directory scan until a durable inventory index has explicit recovery semantics.
 
 ## Package map
 
@@ -164,9 +164,9 @@ Not implemented yet:
 
 ## Storage choices
 
-Use `MemoryStore` for tests, examples, and short-lived CLI demos. It copies values on `Put`/`Get`, is safe for concurrent access, and loses data when the process exits. CLI replication uses this by default.
+Use `MemoryStore` for tests, examples, and short-lived CLI demos. It copies values on `Put`/`Get`, is safe for concurrent access, and loses data when the process exits. Its ordered B-tree key index makes cursor-based inventory pages seekable without shifting a sorted slice on every write. CLI replication uses this by default.
 
-Use `FileStore` when blobs must survive process restarts. Keys are hex-encoded into file names, writes use a temporary file followed by `rename`, and missing keys map to `storage.ErrNotFound`. CLI replication uses this when `-store-dir` is set. It is intentionally simple local storage, not a distributed database.
+Use `FileStore` when blobs must survive process restarts. Keys are hex-encoded into file names, writes use a temporary file followed by `rename`, and missing keys map to `storage.ErrNotFound`. Its bounded pager reads directory entries in chunks and retains only the smallest page, but each page currently rescans the directory because the Go directory API has no bytewise seek. CLI replication uses this when `-store-dir` is set. It is intentionally simple local storage, not a distributed database.
 
 Use `storage.SHA256Key` or `storage.SHA256KeyHex` when the key should be derived from blob content instead of caller-chosen metadata.
 
