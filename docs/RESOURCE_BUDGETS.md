@@ -10,9 +10,9 @@ node to untrusted or unexpectedly large peer sets.
 Keep the current wire protocol and its per-message limits. The next safety boundary is
 process-level admission and I/O scheduling, not another message type or digest format.
 The current implementation already bounds a single frame, key list, blob, repair
-response, per-peer continuation queue, and process-wide repair I/O operation count. It
-does not yet stream a large store inventory, so inventory enumeration remains a
-follow-up implementation task rather than a hidden assumption.
+response, per-peer continuation queue, process-wide repair I/O operation count, and
+native store inventory page. Native stores page a large inventory before wire batching;
+older `BlobKeyLister` implementations remain supported through a compatibility fallback.
 
 This split follows the same operational shape used by bounded distributed systems:
 request size and storage quotas are explicit separately in etcd, while memberlist uses
@@ -31,6 +31,7 @@ and [memberlist configuration](https://github.com/hashicorp/memberlist/blob/mast
 | One inventory message | `replication.DefaultMaxKeys`: 4,096 keys | `replication.Decode` and repair scheduler | The message is rejected or pending continuation keys are deduplicated and dropped at the cap. |
 | One blob | `replication.DefaultMaxDataBytes`: 4 MiB; CLI `-max-blob-bytes` | `replication.Decode` | The message is rejected with `ErrDataTooLarge` before storage. |
 | One repair response | `replication.DefaultMaxRepairBytes`: 64 MiB; CLI `-max-repair-bytes` | `sendRequestedBlobsResult` | Remaining keys are deferred to one delayed continuation and later inventory passes. |
+| One inventory page | `BlobKeyPager` requested limit; direct non-positive limits use `storage.DefaultKeyPageSize`: 256 | `MemoryStore`, `FileStore`, and `sendBlobHas` | Native stores retain only the smallest page after the exclusive cursor; FileStore reads directory entries in 128-entry chunks. Legacy `BlobKeyLister` stores still use their complete-list API. |
 | Global repair I/O operations | CLI `-max-repair-ops`; default 4, `0` selects the default | `repairIOLimiter` | Each anti-entropy blob read/write waits for a permit; cancellation rejects the waiter. `repair_io_ops_*` metrics show pressure without labels. |
 | Per-peer repair queue | One running continuation and at most `MaxKeys` pending keys per peer | `repairContinuationScheduler` | New unique keys beyond the queue cap are dropped and counted; disconnect or shutdown discards the entry. |
 | Reconnect delay | 500 ms minimum, 30 s maximum by CLI defaults | `peerReconnector` | Failed static targets back off exponentially and stop on context cancellation. |
@@ -61,13 +62,22 @@ go test -race . -run '^TestRepairContinuationSchedulerSaturatesAtConfiguredKeyBu
 make test-budgets
 ```
 
-This is a queue-admission measurement, not a throughput claim. Existing frame,
-The global limiter test uses `max_ops=1`, holds the only permit with one peer, queues a
-healthy peer, and verifies that the healthy operation completes after release. This is
-an admission and progress measurement, not a throughput claim. Existing frame,
-storage, anti-entropy, fairness, and Docker demos should be read alongside it for
-latency and recovery behavior. `BlobKeyLister.ListKeys` still returns a complete
-inventory slice, so large-store enumeration remains the next process-memory gap.
+This is a queue-admission measurement, not a throughput claim. The global limiter test
+uses `max_ops=1`, holds the only permit with one peer, queues a healthy peer, and
+verifies that the healthy operation completes after release. This is an admission and
+progress measurement, not a throughput claim. Existing frame, storage, anti-entropy,
+fairness, and Docker demos should be read alongside it for latency and recovery
+behavior. The inventory benchmark is intentionally a tradeoff measurement: on one
+Apple M1 sample, full `ListKeys` took about 0.63 ms with 131 KB of allocations, while
+four-thousand-key paged enumeration took about 3.35 ms with 347 KB of cumulative
+allocations. The paged path trades repeated scans for bounded live page state; it is a
+memory envelope, not a claim of faster enumeration.
+
+Run the comparison with:
+
+```bash
+make bench-inventory
+```
 
 ## Pressure Behavior
 
@@ -80,10 +90,12 @@ inventory slice, so large-store enumeration remains the next process-memory gap.
   response, while `-max-repair-ops` caps aggregate anti-entropy read/write operations
   across peers. Waiters observe `replication_repair_io_ops_queued`, and canceled waiters
   increment `replication_repair_io_ops_rejected`.
-- **Inventory pressure:** each outbound `blob.has` frame is bounded by key and frame
-  limits, but `ListKeys` can materialize the entire store before paging the wire
-  messages. Large stores therefore need an operator-level store-size and process-memory
-  envelope until pagination exists.
+- **Inventory pressure:** native `BlobKeyPager` stores enumerate only a bounded page
+  before outbound `blob.has` frame paging. The current MemoryStore and FileStore
+  implementations rescan between pages, so large inventories trade CPU and repeated
+  allocations for bounded live page state. Legacy `BlobKeyLister` implementations may
+  still materialize the complete store and should be migrated when their ownership is
+  known.
 - **Shutdown:** transport shutdown cancels peer handlers; the scheduler forgets pending
   continuations and leaves the gauges at zero. In-flight file operations observe the
   shared context between blob operations.
@@ -92,9 +104,7 @@ inventory slice, so large-store enumeration remains the next process-memory gap.
 
 ## Follow-up Work
 
-1. Add a paginated or iterator-based inventory API so store enumeration does not
-   require a complete key slice in memory.
-2. Revisit a safe finite default for `-max-peers` after the representative workload
+1. Revisit a safe finite default for `-max-peers` after the representative workload
    and deployment topology are defined. Until then, production operators should set it
    explicitly and alert on `peers_rejected`.
 

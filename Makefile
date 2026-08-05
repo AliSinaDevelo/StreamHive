@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-fairness test-fuzz test-budgets vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci help
+.PHONY: build run test test-race test-fairness test-fuzz test-budgets bench-inventory vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -24,6 +24,9 @@ test-fuzz:
 
 test-budgets:
 	@go test -race -count=1 -run '^TestRepairContinuationSchedulerSaturatesAtConfiguredKeyBudget$$' ./...
+
+bench-inventory:
+	@go test -run '^$$' -bench '^BenchmarkMemoryStoreList(Keys|KeyPages)4096$$' -benchmem -benchtime=100ms ./storage
 
 vet:
 	@go vet ./...
@@ -59,4 +62,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race test-fairness test-fuzz test-budgets vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci"
+	@echo "Targets: build run test test-race test-fairness test-fuzz test-budgets bench-inventory vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci"

@@ -36,6 +36,16 @@ go test -bench=. -benchmem -run '^$' ./...
 
 The current benchmark coverage focuses on `SHV1` frame round-trips and `MemoryStore` `Put`/`Get` throughput. Treat results as local-machine signals, not portable service-level guarantees.
 
+Compare full inventory materialization with the bounded native pager:
+
+```bash
+make bench-inventory
+```
+
+The pager benchmark intentionally reports cumulative allocations from repeated store
+scans. Its acceptance property is bounded live page state, while a future indexed store
+can reduce the current scan and allocation cost.
+
 The resource-budget acceptance check is separate from throughput benchmarks:
 
 ```bash
@@ -60,6 +70,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `go test -race -count=1 ./...` on Go 1.22.x and 1.23.x
 - `make test-fairness` in a dedicated Go 1.22.x / 1.23.x matrix job to prove a blocked repair peer cannot serialize a healthy peer
 - `make test-budgets` in a dedicated Go 1.23.x job to prove the configured per-peer continuation queue saturates at `MaxKeys` and drops excess work
+- `make bench-inventory` in a dedicated Go 1.23.x job to keep the paged inventory comparison measurable
 - Real TCP lost-ACK acceptance coverage through the main test package
 - `golangci-lint` with `.golangci.yml`
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)

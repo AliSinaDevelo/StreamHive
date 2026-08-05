@@ -93,6 +93,14 @@ The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 5. If the repair byte budget defers keys, the owner schedules one bounded continuation.
 6. The receiver answers accepted `blob.put` messages with `blob.ack`.
 
+Inventory enumeration is an internal storage API and does not change the wire format.
+Stores implementing `storage.BlobKeyPager` return at most the requested page size in
+bytewise order, strictly after an exclusive cursor, and use the last returned key as
+the next cursor. `MemoryStore` and `FileStore` implement this bounded path; the sender
+falls back to `BlobKeyLister.ListKeys` for older stores. A page may reflect keys added
+or removed between calls, so the periodic inventory pass remains the convergence
+mechanism rather than a snapshot guarantee.
+
 ## Limits
 
 Default replication limits are:
