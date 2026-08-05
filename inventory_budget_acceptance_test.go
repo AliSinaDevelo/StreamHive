@@ -188,6 +188,80 @@ func TestRun_budgetedInventoryConvergesAfterTargetRestart(t *testing.T) {
 	assert.Contains(t, prometheus, "streamhive_replication_inventory_exchanges_active 0\n")
 }
 
+func TestRun_localEvictionRehydratesThroughStartupOnlyRepair(t *testing.T) {
+	ctx := context.Background()
+	data := []byte("streamhive-local-eviction-startup-repair")
+	key := storage.SHA256Key(data)
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	sourceStore, err := storage.NewFileStore(sourceDir)
+	require.NoError(t, err)
+	require.NoError(t, sourceStore.Put(ctx, key, data))
+
+	source := startInventoryBudgetNode(t, sourceDir, "")
+	t.Cleanup(func() { source.stop(t) })
+	target := startInventoryBudgetNode(t, targetDir, source.listen)
+	t.Cleanup(func() { target.stop(t) })
+
+	require.Eventually(t, func() bool {
+		store, storeErr := storage.NewFileStore(targetDir)
+		if storeErr != nil {
+			return false
+		}
+		got, getErr := store.Get(ctx, key)
+		if getErr != nil || string(got) != string(data) {
+			return false
+		}
+		metrics, metricsErr := tryInventoryBudgetMetrics(source)
+		return metricsErr == nil &&
+			metrics["replication_inventory_exchanges_completed"] >= 1 &&
+			metrics["replication_inventory_exchanges_active"] == 0
+	}, 5*time.Second, 20*time.Millisecond, "initial repair did not converge: source metrics=%v source stderr=%q target stderr=%q", inventoryBudgetMetrics(t, source), source.err.String(), target.err.String())
+
+	target.stop(t)
+	targetStore, err := storage.NewFileStore(targetDir)
+	require.NoError(t, err)
+	require.NoError(t, targetStore.Delete(ctx, key))
+	hasKey, err := targetStore.Has(ctx, key)
+	require.NoError(t, err)
+	require.False(t, hasKey, "target eviction should remove only the local blob")
+	localKeys, err := targetStore.ListKeys(ctx)
+	require.NoError(t, err)
+	require.Empty(t, localKeys, "target should start the repair with an empty local object set")
+
+	target = startInventoryBudgetNode(t, targetDir, source.listen)
+	require.Eventually(t, func() bool {
+		store, storeErr := storage.NewFileStore(targetDir)
+		if storeErr != nil {
+			return false
+		}
+		got, getErr := store.Get(ctx, key)
+		if getErr != nil || string(got) != string(data) {
+			return false
+		}
+		metrics, metricsErr := tryInventoryBudgetMetrics(source)
+		return metricsErr == nil &&
+			metrics["replication_inventory_exchanges_started"] >= 2 &&
+			metrics["replication_inventory_exchanges_completed"] >= 2 &&
+			metrics["replication_inventory_exchanges_active"] == 0
+	}, 5*time.Second, 20*time.Millisecond, "startup-only repair did not converge: source metrics=%v source stderr=%q target stderr=%q", inventoryBudgetMetrics(t, source), source.err.String(), target.err.String())
+
+	finalStore, err := storage.NewFileStore(targetDir)
+	require.NoError(t, err)
+	repaired, err := finalStore.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, key, storage.SHA256Key(repaired))
+	assert.Equal(t, data, repaired)
+
+	metrics := inventoryBudgetMetrics(t, source)
+	assert.GreaterOrEqual(t, metrics["replication_inventory_exchanges_started"], int64(2))
+	assert.GreaterOrEqual(t, metrics["replication_inventory_exchanges_completed"], int64(2))
+	assert.GreaterOrEqual(t, metrics["replication_inventory_keys_sent"], int64(2))
+	assert.Equal(t, int64(0), metrics["replication_inventory_exchanges_active"])
+	assert.Equal(t, int64(0), metrics["replication_inventory_exchanges_dropped"])
+}
+
 func tryInventoryBudgetMetrics(source *inventoryBudgetNode) (map[string]int64, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get("http://" + source.health + "/metrics")
