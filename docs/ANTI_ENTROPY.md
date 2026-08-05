@@ -60,6 +60,40 @@ becomes a measurable part of the node budget. Any follow-up should specify mixed
 fallback, range boundaries, digest domain separation, missing-key retrieval, and its own
 DoS limits before changing the wire protocol.
 
+## v0.12 Wire Pressure Checkpoint
+
+After the native store indexes landed, the end-to-end research benchmark measured the
+current flat exchange through `sendBlobHas`, JSON decode, and receiver-side
+`BlobStore.Has` probes. Run it with:
+
+```bash
+make bench-inventory-wire
+```
+
+The local Apple M1 samples below use `MaxKeys=4096` and the default 4 MiB frame limit:
+
+| Key bytes | Keys | Frames/op | Wire bytes/op | Exchange time | Allocations/op | Probes/op |
+|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 4,096 | 1 | 192,540 B | 1.84 ms | 2.29 MB | 4,096 |
+| 32 | 65,536 | 16 | 3,080,640 B | 27.2 ms | 30.8 MB | 65,536 |
+| 64 | 4,096 | 1 | 372,764 B | 3.06 ms | 4.26 MB | 4,096 |
+| 64 | 65,536 | 16 | 5,964,224 B | 45.6 ms | 53.5 MB | 65,536 |
+| 512 | 4,096 | 1 | 2,813,980 B | 17.0 ms | 25.6 MB | 4,096 |
+| 512 | 65,536 | 16 | 45,023,680 B | 293 ms | 320 MB | 65,536 |
+
+The canonical 32-byte case remains below the per-frame limit and is a reasonable
+bounded exchange, but total work is visible at 65,536 keys. The maximum 512-byte key
+case also keeps each frame below 4 MiB while producing about 45 MB of total wire data,
+293 ms of exchange time, 320 MB of allocations, and one receiver probe per key. The
+current protocol is therefore still compatible and frame-bounded, but it does not yet
+have an aggregate whole-exchange byte or probe budget.
+
+The checkpoint keeps the flat wire format. A root-only digest cannot identify missing
+keys, and a range-digest protocol would add divergence traversal, mixed-version fallback,
+state, and new DoS limits. The next task is to decide whether aggregate exchange
+backpressure or a configurable inventory budget is enough before revisiting a new wire
+protocol.
+
 ## Research Sources
 
 - [Dynamo: Amazon's highly available key-value store](https://www.amazon.science/publications/dynamo-amazons-highly-available-key-value-store)

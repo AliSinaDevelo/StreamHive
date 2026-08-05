@@ -65,6 +65,16 @@ go test ./replication -run '^$' -bench '^BenchmarkResearchInventory$' -benchmem 
 It compares the current bounded JSON inventory with design-only digest envelopes; see
 [ANTI_ENTROPY.md](ANTI_ENTROPY.md) for the v0.11 decision.
 
+Measure the complete indexed-store inventory exchange, including frame count, encoded
+bytes, receiver key probes, and allocations:
+
+```bash
+make bench-inventory-wire
+```
+
+This is a research checkpoint, not a protocol compatibility test. It intentionally
+keeps the current flat `blob.has` wire format while exposing the whole-exchange budget.
+
 ## Continuous integration
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to `main`:
@@ -74,6 +84,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-fairness` in a dedicated Go 1.22.x / 1.23.x matrix job to prove a blocked repair peer cannot serialize a healthy peer
 - `make test-budgets` in a dedicated Go 1.23.x job to prove the configured per-peer continuation queue saturates at `MaxKeys` and drops excess work
 - `make bench-inventory` in a dedicated Go 1.23.x job to keep the paged inventory comparison measurable
+- `make bench-inventory-wire` in a dedicated Go 1.23.x job to keep end-to-end inventory wire pressure measurable
 - Real TCP lost-ACK acceptance coverage through the main test package
 - `golangci-lint` with `.golangci.yml`
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)

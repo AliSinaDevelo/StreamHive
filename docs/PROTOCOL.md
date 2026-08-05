@@ -195,7 +195,9 @@ and temporary key set are bounded by the incoming inventory frame rather than th
 local store size.
 Aggregate anti-entropy counters make that control loop visible without peer labels:
 `replication_inventory_advertisements` counts successful `blob.has` frames,
-`replication_missing_keys_requested` counts keys in `blob.missing` messages, and
+`replication_inventory_bytes_sent` counts their encoded payload bytes, and
+`replication_inventory_keys_probed` counts receiver-side `BlobStore.Has` probes for
+advertised keys. `replication_missing_keys_requested` counts keys in `blob.missing` messages, and
 `replication_repair_blobs_sent` counts successful repair `blob.put` frames, while
 `replication_repair_blobs_deferred` counts requested keys held back by the per-response
 repair budget. `replication_corrupt_blobs_detected` counts damaged content-addressed
@@ -214,9 +216,10 @@ boundary. Ordinary missing or unreadable blobs remain skip-and-continue cases an
 be requested again by a later inventory pass.
 
 The inventory scaling decision and reproducible flat-vs-digest measurements are recorded
-in [ANTI_ENTROPY.md](ANTI_ENTROPY.md). The v0.11 decision is to keep the bounded flat
+in [ANTI_ENTROPY.md](ANTI_ENTROPY.md). The current decision is to keep the bounded flat
 `blob.has` protocol until a real workload demonstrates that its frame or CPU limits are
-insufficient.
+insufficient; the aggregate byte/probe counters make whole-exchange pressure visible
+before that decision.
 
 ## Observability
 

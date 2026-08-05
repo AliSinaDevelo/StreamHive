@@ -35,6 +35,7 @@ and [memberlist configuration](https://github.com/hashicorp/memberlist/blob/mast
 | One blob | `replication.DefaultMaxDataBytes`: 4 MiB; CLI `-max-blob-bytes` | `replication.Decode` | The message is rejected with `ErrDataTooLarge` before storage. |
 | One repair response | `replication.DefaultMaxRepairBytes`: 64 MiB; CLI `-max-repair-bytes` | `sendRequestedBlobsResult` | Remaining keys are deferred to one delayed continuation and later inventory passes. |
 | One inventory page | `BlobKeyPager` requested limit; direct non-positive limits use `storage.DefaultKeyPageSize`: 256 | `MemoryStore`, `FileStore`, and `sendBlobHas` | Both native stores seek an ordered B-tree and retain one page. FileStore rebuilds its process-local index from `File.ReadDir(128)` chunks when the directory stamp changes. Legacy `BlobKeyLister` stores still use their complete-list API. |
+| One inventory exchange | `MaxKeys`: 4,096 per frame; transport `MaxFrameBytes`: 4 MiB by default; no aggregate exchange cap yet | `sendBlobHas` and `blob.has` receiver | Inventory frames are adaptively split and aggregate wire bytes/probes are exposed without labels. A whole-exchange budget is the next research boundary. |
 | Global repair I/O operations | CLI `-max-repair-ops`; default 4, `0` selects the default | `repairIOLimiter` | Each anti-entropy blob read/write waits for a permit; cancellation rejects the waiter. `repair_io_ops_*` metrics show pressure without labels. |
 | Per-peer repair queue | One running continuation and at most `MaxKeys` pending keys per peer | `repairContinuationScheduler` | New unique keys beyond the queue cap are dropped and counted; disconnect or shutdown discards the entry. |
 | Reconnect delay | 500 ms minimum, 30 s maximum by CLI defaults | `peerReconnector` | Failed static targets back off exponentially and stop on context cancellation. |
@@ -101,7 +102,9 @@ make bench-inventory
 - **Inventory pressure:** native `BlobKeyPager` stores enumerate only a bounded page
   before outbound `blob.has` frame paging. Both native stores seek through ordered
   indexes; FileStore pays a one-time O(N) key/index rebuild after startup or an external
-  directory mutation. Legacy `BlobKeyLister` implementations may still materialize the
+  directory mutation. The wire path bounds each frame but not a complete exchange yet;
+  `replication_inventory_bytes_sent` and `replication_inventory_keys_probed` expose that
+  aggregate pressure. Legacy `BlobKeyLister` implementations may still materialize the
   complete store and should be migrated when their ownership is known.
 - **Shutdown:** transport shutdown cancels peer handlers; the scheduler forgets pending
   continuations and leaves the gauges at zero. In-flight file operations observe the

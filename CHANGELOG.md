@@ -11,6 +11,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Storage**: durable 32-byte SHA-256 keys are verified on read and inventory; corrupted content is observable and repairable through anti-entropy.
 - **Storage**: `BlobKeyPager` lets native memory and file stores enumerate bounded inventory pages with cancellation and deterministic bytewise cursors; legacy `BlobKeyLister` implementations remain compatible.
 - **Storage**: `MemoryStore` and `FileStore` maintain ordered B-tree key indexes for cursor pages; FileStore rebuilds from durable filenames when its directory stamp changes without adding a sidecar format.
+- **Metrics**: aggregate anti-entropy inventory bytes sent and receiver key probes are exposed without peer, blob, or key labels.
+- **Tests**: an end-to-end indexed inventory exchange benchmark covers 4,096/65,536 keys and 32/64/512-byte key widths before any wire-format change.
 - **Replication**: `-max-repair-ops` applies a process-wide default-four admission budget to anti-entropy blob reads/writes, with aggregate queue, in-flight, wait, completion, and rejection metrics.
 - **Docs**: resource-budget design records peer, frame, blob, repair, reconnect, shutdown, and paged-inventory pressure behavior, with deterministic saturation and inventory benchmarks.
 
