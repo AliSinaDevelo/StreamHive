@@ -1,6 +1,7 @@
 # Peer Admission
 
-Status: v0.12 operator contract, tracked by issue #36.
+Status: v0.12 operator contract, tracked by issue #36. TLS and application-auth ordering is
+covered separately in [TLS_AUTH.md](TLS_AUTH.md).
 
 ## Decision
 

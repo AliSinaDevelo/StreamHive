@@ -59,6 +59,12 @@ rejected before peer registration. An empty allowlist preserves token-only and
 identity-label-only deployments. Use TLS or mTLS whenever the token or identity crosses a
 network boundary where passive capture or active interception is possible.
 
+TLS is a transport boundary around these frames, not a replacement for the application
+handshake. The CLI listener uses `-tls-cert` and `-tls-key`; an outbound CLI peer uses
+`-tls-ca` and `-tls-server-name` for certificate-chain and hostname verification. TLS must
+complete before the shared-token handshake, identity allowlist, and peer registration can
+succeed. See [TLS_AUTH.md](TLS_AUTH.md) for the executable ordering and library mTLS boundary.
+
 ## Replication Payloads
 
 Replication payloads are JSON values decoded into `replication.Message`:

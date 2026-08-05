@@ -208,6 +208,9 @@ go run . -listen 127.0.0.1:7071 -replicate -dial 127.0.0.1:7070 -peer-auth-token
 
 Peers that cannot complete the auth handshake are rejected before replication frames reach the application handler. `-peer-id` is an explicit application identity label exchanged during that handshake; `-peer-allow-ids` is an exact inbound authorization allowlist and rejects missing or unlisted identities. An empty allowlist preserves token-only compatibility. Use TLS or mTLS as well when the token or identity crosses a network you do not fully control.
 
+For the verified TLS plus application-auth boundary, including wrong-CA and wrong-hostname
+acceptance paths, see [docs/TLS_AUTH.md](docs/TLS_AUTH.md) and run `make test-tls-auth`.
+
 To persist replicated blobs on the receiver, add `-store-dir`:
 
 ```bash
@@ -241,8 +244,9 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-peer-allow-ids` | Comma-separated exact inbound identities allowed during shared-token auth (requires `-peer-auth-token`) |
 | `-dial-timeout` | Outbound dial timeout |
 | `-read-idle-timeout` | Peer read deadline refresh |
-| `-tls-cert` / `-tls-key` | Server TLS |
-| `-tls-ca` / `-tls-server-name` / `-tls-insecure-skip-verify` | Client TLS |
+| `-tls-cert` / `-tls-key` | Server TLS certificate and private key |
+| `-tls-ca` / `-tls-server-name` | Client CA trust and verified server name |
+| `-tls-insecure-skip-verify` | Development-only client TLS bypass |
 | `-replicate` | Enable blob replication from framed peers |
 | `-store-dir` | Persist replicated blobs with `storage.FileStore` |
 | `-list-keys` | Print durable `-store-dir` keys as hex and exit |
@@ -258,7 +262,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
 | `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
-See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `vet`, `cover`, `lint`, and demos.
+See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-tls-auth`, `vet`, `cover`, `lint`, and demos.
 
 ## Architecture (summary)
 

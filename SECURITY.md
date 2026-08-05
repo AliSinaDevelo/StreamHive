@@ -10,6 +10,9 @@ This project is experimental research code. It is not hardened for hostile netwo
 
 ## Transport Security And Identity
 
+The verified CLI TLS and application-auth contract is documented in
+[docs/TLS_AUTH.md](docs/TLS_AUTH.md) and exercised by `make test-tls-auth`.
+
 StreamHive can wrap peer connections in TLS:
 
 - `-tls-cert` and `-tls-key` enable TLS on the listener.
