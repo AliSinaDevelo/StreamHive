@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -147,4 +148,44 @@ func TestRepairIOLimiterRejectsCanceledWaiter(t *testing.T) {
 	hold()
 	assert.Equal(t, uint64(1), metrics.RepairIOOpsCompleted.Load())
 	assert.Zero(t, metrics.RepairIOOpsInFlight.Load())
+}
+
+func BenchmarkRepairIOLimiterSaturation(b *testing.B) {
+	for _, maxOps := range []int{1, defaultMaxRepairOps} {
+		b.Run("max_ops_"+strconv.Itoa(maxOps), func(b *testing.B) {
+			ctx := context.Background()
+			metrics := &replicationMetrics{}
+			limiter := newRepairIOLimiter(maxOps, metrics)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				holds := make([]func(), maxOps)
+				for j := range holds {
+					release, err := limiter.acquire(ctx)
+					if err != nil {
+						b.Fatal(err)
+					}
+					holds[j] = release
+				}
+				result := make(chan error, 1)
+				go func() {
+					release, err := limiter.acquire(ctx)
+					if err == nil {
+						release()
+					}
+					result <- err
+				}()
+				for metrics.RepairIOOpsQueued.Load() == 0 {
+					runtime.Gosched()
+				}
+				holds[0]()
+				if err := <-result; err != nil {
+					b.Fatal(err)
+				}
+				for _, release := range holds[1:] {
+					release()
+				}
+			}
+		})
+	}
 }
