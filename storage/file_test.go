@@ -204,6 +204,53 @@ func TestFileStore_ListKeyPageEmpty(t *testing.T) {
 	assert.Empty(t, next)
 }
 
+func TestFileStore_ListKeyPageReflectsMutations(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewFileStore(t.TempDir())
+	require.NoError(t, err)
+	for _, key := range []string{"a", "c", "d"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("value")))
+	}
+
+	page, next, err := store.ListKeyPage(ctx, nil, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("a"), []byte("c")}, page)
+	assert.Equal(t, []byte("c"), next)
+
+	require.NoError(t, store.Delete(ctx, []byte("d")))
+	require.NoError(t, store.Put(ctx, []byte("b"), []byte("value")))
+	cursor := next
+	page, next, err = store.ListKeyPage(ctx, cursor, 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Empty(t, next)
+
+	require.NoError(t, store.Put(ctx, []byte("e"), []byte("value")))
+	page, next, err = store.ListKeyPage(ctx, cursor, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("e")}, page)
+	assert.Equal(t, []byte("e"), next)
+}
+
+func TestFileStore_ListKeyPageRefreshesExternalMutation(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+	external, err := NewFileStore(dir)
+	require.NoError(t, err)
+	require.NoError(t, store.Put(ctx, []byte("a"), []byte("value")))
+
+	_, _, err = store.ListKeyPage(ctx, nil, 2)
+	require.NoError(t, err)
+	require.NoError(t, external.Put(ctx, []byte("b"), []byte("value")))
+
+	page, next, err := store.ListKeyPage(ctx, nil, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("a"), []byte("b")}, page)
+	assert.Equal(t, []byte("b"), next)
+}
+
 func TestNewFileStore_EmptyDirectory(t *testing.T) {
 	_, err := NewFileStore("")
 	require.Error(t, err)

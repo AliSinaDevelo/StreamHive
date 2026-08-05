@@ -26,7 +26,7 @@ test-budgets:
 	@go test -race -count=1 -run '^TestRepairContinuationSchedulerSaturatesAtConfiguredKeyBudget$$' ./...
 
 bench-inventory:
-	@go test -run '^$$' -bench '^BenchmarkMemoryStoreList(Keys|KeyPages)(4096|65536)$$' -benchmem -benchtime=100ms ./storage
+	@go test -run '^$$' -bench '^Benchmark(MemoryStoreList(Keys|KeyPages)(4096|65536)|FileStore(ListKeys|ListKeyPages|BuildIndex)(4096|65536))$$' -benchmem -benchtime=100ms ./storage
 
 vet:
 	@go vet ./...

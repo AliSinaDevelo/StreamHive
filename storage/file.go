@@ -7,13 +7,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/btree"
 )
 
 // FileStore stores blobs as files named by hex-encoded keys.
 type FileStore struct {
-	dir string
+	mu           sync.RWMutex
+	dir          string
+	keys         *btree.BTreeG[string]
+	indexModTime time.Time
 }
 
 // NewFileStore opens or creates a directory-backed BlobStore.
@@ -32,6 +38,77 @@ func (s *FileStore) pathFor(key []byte) (string, error) {
 		return "", ErrKeyEmpty
 	}
 	return filepath.Join(s.dir, hex.EncodeToString(key)), nil
+}
+
+func (s *FileStore) ensureKeyIndex(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	dirInfo, err := os.Stat(s.dir)
+	if err != nil {
+		return err
+	}
+	if s.keys != nil && dirInfo.ModTime().Equal(s.indexModTime) {
+		return nil
+	}
+
+	for {
+		index, err := s.readKeyIndex(ctx)
+		if err != nil {
+			return err
+		}
+		latestInfo, err := os.Stat(s.dir)
+		if err != nil {
+			return err
+		}
+		if latestInfo.ModTime().Equal(dirInfo.ModTime()) {
+			s.keys = index
+			s.indexModTime = latestInfo.ModTime()
+			return nil
+		}
+		dirInfo = latestInfo
+	}
+}
+
+func (s *FileStore) readKeyIndex(ctx context.Context) (*btree.BTreeG[string], error) {
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = dir.Close()
+	}()
+
+	index := btree.NewOrderedG[string](32)
+	for {
+		entries, readErr := dir.ReadDir(128)
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".streamhive-") {
+				continue
+			}
+			key, err := hex.DecodeString(entry.Name())
+			if err != nil {
+				return nil, err
+			}
+			index.ReplaceOrInsert(string(key))
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, readErr
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return index, nil
 }
 
 // Put stores data under key, replacing any existing value atomically.
@@ -66,8 +143,16 @@ func (s *FileStore) Put(ctx context.Context, key []byte, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
+
+	s.mu.Lock()
+	renameErr := os.Rename(tmpName, path)
+	if renameErr == nil && s.keys != nil {
+		s.keys.ReplaceOrInsert(string(key))
+		s.refreshIndexModTimeLocked()
+	}
+	s.mu.Unlock()
+	if renameErr != nil {
+		return renameErr
 	}
 	removeTmp = false
 	return nil
@@ -133,35 +218,48 @@ func (s *FileStore) Delete(ctx context.Context, key []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	s.mu.Lock()
+	removeErr := os.Remove(path)
+	if (removeErr == nil || os.IsNotExist(removeErr)) && s.keys != nil {
+		s.keys.Delete(string(key))
+		s.refreshIndexModTimeLocked()
+	}
+	s.mu.Unlock()
+	if removeErr != nil && !os.IsNotExist(removeErr) {
+		return removeErr
 	}
 	return nil
 }
 
+func (s *FileStore) refreshIndexModTimeLocked() {
+	info, err := os.Stat(s.dir)
+	if err != nil {
+		s.indexModTime = time.Time{}
+		return
+	}
+	s.indexModTime = info.ModTime()
+}
+
 // ListKeys returns all known keys in deterministic bytewise order.
 func (s *FileStore) ListKeys(ctx context.Context) ([][]byte, error) {
-	if err := ctx.Err(); err != nil {
+	if err := s.ensureKeyIndex(ctx); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return nil, err
-	}
-	keys := make([][]byte, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".streamhive-") {
-			continue
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([][]byte, 0, s.keys.Len())
+	var ctxErr error
+	s.keys.Ascend(func(key string) bool {
+		if err := ctx.Err(); err != nil {
+			ctxErr = err
+			return false
 		}
-		key, err := hex.DecodeString(entry.Name())
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return string(keys[i]) < string(keys[j])
+		keys = append(keys, []byte(key))
+		return true
 	})
+	if ctxErr != nil {
+		return nil, ctxErr
+	}
 	return keys, nil
 }
 
@@ -170,43 +268,35 @@ var _ BlobKeyLister = (*FileStore)(nil)
 var _ BlobKeyPager = (*FileStore)(nil)
 
 // ListKeyPage returns the smallest keys strictly after after, bounded by limit.
-// Directory entries are scanned in chunks so the process does not materialize
-// the complete inventory just to send one bounded replication page.
+// The process-local ordered index is rebuilt from the durable file names on first
+// enumeration and then maintained after successful store mutations.
 func (s *FileStore) ListKeyPage(ctx context.Context, after []byte, limit int) ([][]byte, []byte, error) {
-	if err := ctx.Err(); err != nil {
+	if err := s.ensureKeyIndex(ctx); err != nil {
 		return nil, nil, err
 	}
 	limit = normalizeKeyPageLimit(limit)
-	dir, err := os.Open(s.dir)
-	if err != nil {
-		return nil, nil, err
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	capacity := limit
+	if capacity > s.keys.Len() {
+		capacity = s.keys.Len()
 	}
-	defer func() {
-		_ = dir.Close()
-	}()
-
-	var page [][]byte
-	for {
-		entries, readErr := dir.Readdir(128)
-		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
-				return nil, nil, err
-			}
-			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".streamhive-") {
-				continue
-			}
-			key, err := hex.DecodeString(entry.Name())
-			if err != nil {
-				return nil, nil, err
-			}
-			page = insertKeyPage(page, key, after, limit)
+	page := make([][]byte, 0, capacity)
+	var ctxErr error
+	pivot := string(after)
+	s.keys.AscendGreaterOrEqual(pivot, func(key string) bool {
+		if err := ctx.Err(); err != nil {
+			ctxErr = err
+			return false
 		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return nil, nil, readErr
+		if len(after) > 0 && key == pivot {
+			return true
 		}
+		page = append(page, []byte(key))
+		return len(page) < limit
+	})
+	if ctxErr != nil {
+		return nil, nil, ctxErr
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
