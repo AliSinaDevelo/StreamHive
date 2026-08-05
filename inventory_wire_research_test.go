@@ -112,3 +112,42 @@ func BenchmarkResearchInventoryExchange(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkResearchBudgetedInventoryExchange(b *testing.B) {
+	for _, width := range []int{32, 512} {
+		b.Run(fmt.Sprintf("key_bytes=%d/keys=65536", width), func(b *testing.B) {
+			store := researchInventoryStore(b, 65536, width)
+			limits := replication.Limits{MaxKeyBytes: width, MaxKeys: replication.DefaultMaxKeys}
+			budget := inventoryExchangeBudget{maxBytes: defaultMaxInventoryBytes, maxKeys: defaultMaxInventoryKeys}
+			ctx := context.Background()
+			var chunks, frames, wireBytes, keysSent int
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				peer := &inventoryResearchPeer{}
+				metrics := &replicationMetrics{}
+				var cursor []byte
+				chunkCount := 0
+				for {
+					next, complete, err := sendInventoryExchange(ctx, peer, store, limits, 0, budget, cursor, metrics)
+					if err != nil {
+						b.Fatal(err)
+					}
+					chunkCount++
+					cursor = next
+					if complete {
+						break
+					}
+				}
+				chunks = chunkCount
+				frames = peer.frames
+				wireBytes = peer.wireBytes
+				keysSent = int(metrics.InventoryKeysSent.Load())
+			}
+			b.ReportMetric(float64(chunks), "chunks/op")
+			b.ReportMetric(float64(frames), "frames/op")
+			b.ReportMetric(float64(wireBytes), "wire_bytes/op")
+			b.ReportMetric(float64(keysSent), "keys_sent/op")
+		})
+	}
+}

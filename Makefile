@@ -29,7 +29,7 @@ bench-inventory:
 	@go test -run '^$$' -bench '^Benchmark(MemoryStoreList(Keys|KeyPages)(4096|65536)|FileStore(ListKeys|ListKeyPages|BuildIndex)(4096|65536))$$' -benchmem -benchtime=100ms ./storage
 
 bench-inventory-wire:
-	@go test -run '^TestResearchInventoryWireFrameBudget$$' -bench '^BenchmarkResearchInventoryExchange$$' -benchmem -benchtime=100ms .
+	@go test -run '^TestResearchInventoryWireFrameBudget$$' -bench '^BenchmarkResearch(BudgetedInventoryExchange|InventoryExchange)$$' -benchmem -benchtime=100ms .
 
 vet:
 	@go vet ./...

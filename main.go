@@ -93,6 +93,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	maxBlobBytes := fs.Int("max-blob-bytes", replication.DefaultMaxDataBytes, "max replicated blob payload bytes")
 	maxRepairBytes := fs.Int("max-repair-bytes", replication.DefaultMaxRepairBytes, "max aggregate anti-entropy blob data bytes per request (0 = default)")
 	maxRepairOps := fs.Int("max-repair-ops", defaultMaxRepairOps, "max concurrent anti-entropy blob reads/writes (0 = default)")
+	maxInventoryBytes := fs.Int("max-inventory-bytes", defaultMaxInventoryBytes, "max encoded anti-entropy inventory bytes per peer exchange (0 = unlimited)")
+	maxInventoryKeys := fs.Int("max-inventory-keys", defaultMaxInventoryKeys, "max anti-entropy inventory keys per peer exchange (0 = unlimited)")
 
 	tlsCert := fs.String("tls-cert", "", "path to PEM certificate (enables TLS on listener)")
 	tlsKey := fs.String("tls-key", "", "path to PEM private key for -tls-cert")
@@ -187,8 +189,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *maxRepairOps < 0 {
 		return fmt.Errorf("replication: -max-repair-ops must be zero or greater")
 	}
+	if *maxInventoryBytes < 0 {
+		return fmt.Errorf("replication: -max-inventory-bytes must be zero or greater")
+	}
+	if *maxInventoryKeys < 0 {
+		return fmt.Errorf("replication: -max-inventory-keys must be zero or greater")
+	}
 
 	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes, MaxRepairBytes: *maxRepairBytes}
+	inventoryBudget := inventoryExchangeBudget{maxBytes: *maxInventoryBytes, maxKeys: *maxInventoryKeys}
 	var blobStore storage.BlobStore
 	var keyLister storage.BlobKeyLister
 	var memoryStore *storage.MemoryStore
@@ -234,6 +243,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.PeerAuthAllowedIdentities = peerAllowedIDs
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle
+	var inventoryScheduler *inventoryExchangeScheduler
+	if keyLister != nil {
+		inventoryScheduler = newInventoryExchangeScheduler(ctx, keyLister, replLimits, tr.MaxFrameBytes, inventoryBudget, replMetrics, log, repairContinuationDelay)
+	}
 	tr.OnPeer = func(peer p2p.Peer) {
 		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound(), "auth_method", authMethodForPeer(peer), "auth_identity", authIdentityForPeer(peer))
 		if putPayload != nil && peer.IsOutbound() {
@@ -269,12 +282,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 				reportPutResult(putResult, err)
 			}()
 		}
-		if keyLister != nil {
-			if err := sendBlobHas(ctx, peer, keyLister, replLimits, tr.MaxFrameBytes, replMetrics); err != nil {
-				replMetrics.SendErrors.Add(1)
-				log.Error("replication inventory send", "remote", peer.RemoteAddr().String(), "err", err)
-				_ = peer.Close()
-			}
+		if inventoryScheduler != nil {
+			inventoryScheduler.Start(peer)
 		}
 	}
 	var repairScheduler *repairContinuationScheduler
@@ -305,6 +314,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if repairScheduler != nil || reconnector != nil {
 		tr.OnPeerDisconnected = func(peer p2p.Peer) {
+			if inventoryScheduler != nil {
+				inventoryScheduler.Forget(peer)
+			}
 			if repairScheduler != nil {
 				repairScheduler.Forget(peer)
 			}
@@ -357,7 +369,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_ = tr.Close()
 	}()
 	if keyLister != nil && *syncInterval > 0 {
-		startPeriodicBlobHas(ctx, tr, keyLister, replLimits, *syncInterval, replMetrics, log)
+		startPeriodicBlobHas(ctx, tr, inventoryScheduler, *syncInterval)
 	}
 
 	addr := tr.Addr()
@@ -838,6 +850,7 @@ func sendBlobHasKeys(ctx context.Context, peer p2p.Peer, keys [][]byte, limits r
 			if metrics != nil {
 				metrics.InventoryAdvertisements.Add(1)
 				metrics.InventoryBytesSent.Add(uint64(len(payload)))
+				metrics.InventoryKeysSent.Add(uint64(end - start))
 			}
 			break
 		}
@@ -849,12 +862,12 @@ func sendBlobHasKeys(ctx context.Context, peer p2p.Peer, keys [][]byte, limits r
 func startPeriodicBlobHas(
 	ctx context.Context,
 	tr *p2p.TCPTransport,
-	lister storage.BlobKeyLister,
-	limits replication.Limits,
+	scheduler *inventoryExchangeScheduler,
 	interval time.Duration,
-	metrics *replicationMetrics,
-	log *slog.Logger,
 ) {
+	if scheduler == nil {
+		return
+	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -865,10 +878,7 @@ func startPeriodicBlobHas(
 			case <-ticker.C:
 			}
 			for _, peer := range tr.Peers() {
-				if err := sendBlobHas(ctx, peer, lister, limits, tr.MaxFrameBytes, metrics); err != nil {
-					metrics.SendErrors.Add(1)
-					log.Error("replication periodic inventory send", "remote", peer.RemoteAddr().String(), "err", err)
-				}
+				scheduler.Start(peer)
 			}
 		}
 	}()
@@ -1556,7 +1566,13 @@ type replicationMetrics struct {
 	SendErrors                    atomic.Uint64
 	InventoryAdvertisements       atomic.Uint64
 	InventoryBytesSent            atomic.Uint64
+	InventoryKeysSent             atomic.Uint64
 	InventoryKeysProbed           atomic.Uint64
+	InventoryExchangesStarted     atomic.Uint64
+	InventoryExchangesCompleted   atomic.Uint64
+	InventoryExchangesLimited     atomic.Uint64
+	InventoryExchangesDropped     atomic.Uint64
+	InventoryExchangesActive      atomic.Int64
 	MissingKeysRequested          atomic.Uint64
 	RepairBlobsSent               atomic.Uint64
 	RepairBlobsDeferred           atomic.Uint64
@@ -1602,7 +1618,13 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_send_errors":                      int64(m.SendErrors.Load()),
 		"replication_inventory_advertisements":         int64(m.InventoryAdvertisements.Load()),
 		"replication_inventory_bytes_sent":             int64(m.InventoryBytesSent.Load()),
+		"replication_inventory_keys_sent":              int64(m.InventoryKeysSent.Load()),
 		"replication_inventory_keys_probed":            int64(m.InventoryKeysProbed.Load()),
+		"replication_inventory_exchanges_started":      int64(m.InventoryExchangesStarted.Load()),
+		"replication_inventory_exchanges_completed":    int64(m.InventoryExchangesCompleted.Load()),
+		"replication_inventory_exchanges_limited":      int64(m.InventoryExchangesLimited.Load()),
+		"replication_inventory_exchanges_dropped":      int64(m.InventoryExchangesDropped.Load()),
+		"replication_inventory_exchanges_active":       m.InventoryExchangesActive.Load(),
 		"replication_missing_keys_requested":           int64(m.MissingKeysRequested.Load()),
 		"replication_repair_blobs_sent":                int64(m.RepairBlobsSent.Load()),
 		"replication_repair_blobs_deferred":            int64(m.RepairBlobsDeferred.Load()),

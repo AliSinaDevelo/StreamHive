@@ -257,7 +257,12 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_blob_write_errors")
 	assert.Contains(t, metrics, "replication_inventory_advertisements")
 	assert.Contains(t, metrics, "replication_inventory_bytes_sent")
+	assert.Contains(t, metrics, "replication_inventory_keys_sent")
 	assert.Contains(t, metrics, "replication_inventory_keys_probed")
+	assert.Contains(t, metrics, "replication_inventory_exchanges_started")
+	assert.Contains(t, metrics, "replication_inventory_exchanges_completed")
+	assert.Contains(t, metrics, "replication_inventory_exchanges_limited")
+	assert.Contains(t, metrics, "replication_inventory_exchanges_active")
 	assert.Contains(t, metrics, "replication_missing_keys_requested")
 	assert.Contains(t, metrics, "replication_repair_blobs_sent")
 	assert.Contains(t, metrics, "replication_repair_blobs_deferred")
@@ -298,7 +303,12 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_blob_puts_accepted")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_advertisements")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_bytes_sent")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_keys_sent")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_keys_probed")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_exchanges_started")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_exchanges_completed")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_exchanges_limited")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_exchanges_active")
 	assert.Contains(t, string(body), "streamhive_replication_missing_keys_requested")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_sent")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_deferred")
@@ -428,6 +438,20 @@ func TestRun_maxRepairOpsRejectsNegative(t *testing.T) {
 	err := run(context.Background(), []string{"-max-repair-ops", "-1"}, &out, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "-max-repair-ops must be zero or greater")
+}
+
+func TestRun_maxInventoryBytesRejectsNegative(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-max-inventory-bytes", "-1"}, &out, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-max-inventory-bytes must be zero or greater")
+}
+
+func TestRun_maxInventoryKeysRejectsNegative(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-max-inventory-keys", "-1"}, &out, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-max-inventory-keys must be zero or greater")
 }
 
 func TestRun_replicatesBlobPutToDialPeer(t *testing.T) {
@@ -1423,6 +1447,7 @@ func TestSendBlobHasCountsInventoryAdvertisement(t *testing.T) {
 	assert.Equal(t, [][]byte{[]byte("inventory-key")}, msg.Keys)
 	assert.Equal(t, uint64(1), metrics.InventoryAdvertisements.Load())
 	assert.Equal(t, uint64(len(peer.payloads[0])), metrics.InventoryBytesSent.Load())
+	assert.Equal(t, uint64(1), metrics.InventoryKeysSent.Load())
 }
 
 func TestSendBlobHasBatchesAtConfiguredKeyLimit(t *testing.T) {
@@ -1446,6 +1471,194 @@ func TestSendBlobHasBatchesAtConfiguredKeyLimit(t *testing.T) {
 	}
 	assert.Equal(t, keys, advertised)
 	assert.Equal(t, uint64(3), metrics.InventoryAdvertisements.Load())
+	assert.Equal(t, uint64(len(keys)), metrics.InventoryKeysSent.Load())
+}
+
+func TestSendInventoryExchangeResumesAtAggregateKeyBudget(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d"), []byte("e")}
+	for _, key := range keys {
+		require.NoError(t, store.Put(ctx, key, []byte("value")))
+	}
+	limits := replication.Limits{MaxKeys: 2}
+	budget := inventoryExchangeBudget{maxBytes: 1 << 20, maxKeys: 2}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	var cursor []byte
+	var advertised [][]byte
+	for {
+		next, complete, err := sendInventoryExchange(ctx, peer, store, limits, 0, budget, cursor, metrics)
+		require.NoError(t, err)
+		cursor = next
+		if complete {
+			break
+		}
+		require.NotEmpty(t, cursor)
+	}
+	for _, payload := range peer.payloads {
+		msg, err := replication.Decode(payload, limits)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(msg.Keys), budget.maxKeys)
+		advertised = append(advertised, msg.Keys...)
+	}
+	assert.Equal(t, keys, advertised)
+	assert.Equal(t, uint64(len(keys)), metrics.InventoryKeysSent.Load())
+}
+
+func TestSendInventoryExchangeRespectsAggregateByteBudget(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	keys := make([][]byte, 8)
+	for i := range keys {
+		key := make([]byte, 512)
+		key[len(key)-1] = byte(i)
+		keys[i] = key
+		require.NoError(t, store.Put(ctx, key, []byte("value")))
+	}
+	limits := replication.Limits{MaxKeyBytes: 512, MaxKeys: 4}
+	twoKeyPayload, err := replication.EncodeBlobHas(keys[:2], limits)
+	require.NoError(t, err)
+	budget := inventoryExchangeBudget{maxBytes: len(twoKeyPayload)}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	var cursor []byte
+	var advertised [][]byte
+	for {
+		before := metrics.InventoryBytesSent.Load()
+		next, complete, err := sendInventoryExchange(ctx, peer, store, limits, 0, budget, cursor, metrics)
+		require.NoError(t, err)
+		delta := metrics.InventoryBytesSent.Load() - before
+		assert.LessOrEqual(t, delta, uint64(budget.maxBytes))
+		cursor = next
+		if complete {
+			break
+		}
+		require.NotEmpty(t, cursor)
+	}
+	for _, payload := range peer.payloads {
+		msg, err := replication.Decode(payload, limits)
+		require.NoError(t, err)
+		advertised = append(advertised, msg.Keys...)
+	}
+	assert.Equal(t, keys, advertised)
+}
+
+func TestInventoryExchangeSchedulerCompletesBoundedExchange(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemoryStore()
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d"), []byte("e")}
+	for _, key := range keys {
+		require.NoError(t, store.Put(ctx, key, []byte("value")))
+	}
+	metrics := &replicationMetrics{}
+	peer := &asyncCapturePeer{}
+	scheduler := newInventoryExchangeScheduler(
+		ctx,
+		store,
+		replication.Limits{MaxKeys: 2},
+		0,
+		inventoryExchangeBudget{maxBytes: 1 << 20, maxKeys: 2},
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		time.Millisecond,
+	)
+
+	scheduler.Start(peer)
+	require.Eventually(t, func() bool {
+		scheduler.mu.Lock()
+		defer scheduler.mu.Unlock()
+		return peer.Len() == 3 && len(scheduler.entries) == 0
+	}, 2*time.Second, 5*time.Millisecond)
+
+	assert.Equal(t, uint64(3), metrics.InventoryExchangesStarted.Load())
+	assert.Equal(t, uint64(1), metrics.InventoryExchangesCompleted.Load())
+	assert.Equal(t, uint64(2), metrics.InventoryExchangesLimited.Load())
+	assert.Zero(t, metrics.InventoryExchangesDropped.Load())
+	assert.Zero(t, metrics.InventoryExchangesActive.Load())
+}
+
+func TestInventoryExchangeSchedulerKeepsPeersIndependent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c", "d", "e"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("value")))
+	}
+	metrics := &replicationMetrics{}
+	releaseSlow := make(chan struct{})
+	var releaseSlowOnce sync.Once
+	defer func() { releaseSlowOnce.Do(func() { close(releaseSlow) }) }()
+	slow := &asyncCapturePeer{
+		addr:         &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7073},
+		writeStarted: make(chan struct{}),
+		writeRelease: releaseSlow,
+	}
+	healthy := &asyncCapturePeer{
+		addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7074},
+	}
+	scheduler := newInventoryExchangeScheduler(
+		ctx,
+		store,
+		replication.Limits{MaxKeys: 2},
+		0,
+		inventoryExchangeBudget{maxBytes: 1 << 20, maxKeys: 2},
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		time.Millisecond,
+	)
+
+	scheduler.Start(slow)
+	select {
+	case <-slow.writeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow peer did not reach its gated inventory write")
+	}
+	scheduler.Start(healthy)
+	require.Eventually(t, func() bool { return healthy.Len() == 3 }, 2*time.Second, 5*time.Millisecond)
+	assert.Zero(t, slow.Len())
+	assert.Equal(t, int64(1), metrics.InventoryExchangesActive.Load())
+
+	releaseSlowOnce.Do(func() { close(releaseSlow) })
+	require.Eventually(t, func() bool { return slow.Len() == 3 }, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		scheduler.mu.Lock()
+		defer scheduler.mu.Unlock()
+		return len(scheduler.entries) == 0
+	}, time.Second, 5*time.Millisecond)
+	assert.Zero(t, metrics.InventoryExchangesActive.Load())
+}
+
+func TestInventoryExchangeSchedulerStopsContinuationOnShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c", "d"} {
+		require.NoError(t, store.Put(context.Background(), []byte(key), []byte("value")))
+	}
+	metrics := &replicationMetrics{}
+	peer := &asyncCapturePeer{}
+	scheduler := newInventoryExchangeScheduler(
+		ctx,
+		store,
+		replication.Limits{MaxKeys: 2},
+		0,
+		inventoryExchangeBudget{maxBytes: 1 << 20, maxKeys: 2},
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		100*time.Millisecond,
+	)
+
+	scheduler.Start(peer)
+	require.Eventually(t, func() bool { return peer.Len() == 2 }, time.Second, 5*time.Millisecond)
+	cancel()
+	require.Eventually(t, func() bool {
+		scheduler.mu.Lock()
+		defer scheduler.mu.Unlock()
+		return len(scheduler.entries) == 0
+	}, time.Second, 5*time.Millisecond)
+	assert.Equal(t, 2, peer.Len())
+	assert.Zero(t, metrics.InventoryExchangesActive.Load())
 }
 
 func TestSendBlobHasUsesPagedInventory(t *testing.T) {
