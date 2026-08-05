@@ -233,12 +233,24 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_repair_continuations_dropped")
 	assert.Contains(t, metrics, "replication_repair_continuations_active")
 	assert.Contains(t, metrics, "replication_repair_continuation_keys_pending")
+	assert.Contains(t, metrics, "replication_repair_io_ops_started")
+	assert.Contains(t, metrics, "replication_repair_io_ops_completed")
+	assert.Contains(t, metrics, "replication_repair_io_ops_waited")
+	assert.Contains(t, metrics, "replication_repair_io_ops_rejected")
+	assert.Contains(t, metrics, "replication_repair_io_ops_in_flight")
+	assert.Contains(t, metrics, "replication_repair_io_ops_queued")
 	assert.Zero(t, metrics["replication_repair_continuations_scheduled"])
 	assert.Zero(t, metrics["replication_repair_continuations_completed"])
 	assert.Zero(t, metrics["replication_repair_continuations_dropped"])
 	assert.Zero(t, metrics["replication_corrupt_blobs_detected"])
 	assert.Zero(t, metrics["replication_repair_continuations_active"])
 	assert.Zero(t, metrics["replication_repair_continuation_keys_pending"])
+	assert.Zero(t, metrics["replication_repair_io_ops_started"])
+	assert.Zero(t, metrics["replication_repair_io_ops_completed"])
+	assert.Zero(t, metrics["replication_repair_io_ops_waited"])
+	assert.Zero(t, metrics["replication_repair_io_ops_rejected"])
+	assert.Zero(t, metrics["replication_repair_io_ops_in_flight"])
+	assert.Zero(t, metrics["replication_repair_io_ops_queued"])
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
@@ -260,6 +272,12 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_dropped")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_active")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuation_keys_pending")
+	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_started")
+	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_completed")
+	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_waited")
+	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_rejected")
+	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_in_flight")
+	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_queued")
 	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
 
 	resp5, err := client.Get(base + "/peers")
@@ -367,6 +385,13 @@ func TestRun_maxRepairBytesRejectsNegative(t *testing.T) {
 	err := run(context.Background(), []string{"-max-repair-bytes", "-1"}, &out, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "-max-repair-bytes must be zero or greater")
+}
+
+func TestRun_maxRepairOpsRejectsNegative(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-max-repair-ops", "-1"}, &out, io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-max-repair-ops must be zero or greater")
 }
 
 func TestRun_replicatesBlobPutToDialPeer(t *testing.T) {

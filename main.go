@@ -37,6 +37,7 @@ const (
 	maxPutRetryDelay              = 500 * time.Millisecond
 	repairContinuationDelay       = 100 * time.Millisecond
 	maxRepairContinuationAttempts = 1
+	defaultMaxRepairOps           = 4
 	maxDuration                   = time.Duration(1<<63 - 1)
 )
 
@@ -91,6 +92,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	putRetryDelay := fs.Duration("put-retry-delay", defaultPutRetryDelay, "delay before retrying a blob after an acknowledgment timeout")
 	maxBlobBytes := fs.Int("max-blob-bytes", replication.DefaultMaxDataBytes, "max replicated blob payload bytes")
 	maxRepairBytes := fs.Int("max-repair-bytes", replication.DefaultMaxRepairBytes, "max aggregate anti-entropy blob data bytes per request (0 = default)")
+	maxRepairOps := fs.Int("max-repair-ops", defaultMaxRepairOps, "max concurrent anti-entropy blob reads/writes (0 = default)")
 
 	tlsCert := fs.String("tls-cert", "", "path to PEM certificate (enables TLS on listener)")
 	tlsKey := fs.String("tls-key", "", "path to PEM private key for -tls-cert")
@@ -182,12 +184,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *maxRepairBytes < 0 {
 		return fmt.Errorf("replication: -max-repair-bytes must be zero or greater")
 	}
+	if *maxRepairOps < 0 {
+		return fmt.Errorf("replication: -max-repair-ops must be zero or greater")
+	}
 
 	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes, MaxRepairBytes: *maxRepairBytes}
 	var blobStore storage.BlobStore
 	var keyLister storage.BlobKeyLister
 	var memoryStore *storage.MemoryStore
 	replMetrics := &replicationMetrics{}
+	replMetrics.repairBudget = newRepairIOLimiter(*maxRepairOps, replMetrics)
 	if *replicate {
 		if *storeDir != "" {
 			var err error
@@ -831,6 +837,84 @@ func startPeriodicBlobHas(
 	}()
 }
 
+// repairIOLimiter bounds one anti-entropy blob read and write across all peers.
+// Each peer still owns its own continuation queue, so a blocked peer can hold at
+// most one operation at a time.
+type repairIOLimiter struct {
+	slots   chan struct{}
+	metrics *replicationMetrics
+}
+
+func newRepairIOLimiter(maxOps int, metrics *replicationMetrics) *repairIOLimiter {
+	if maxOps <= 0 {
+		maxOps = defaultMaxRepairOps
+	}
+	slots := make(chan struct{}, maxOps)
+	for range maxOps {
+		slots <- struct{}{}
+	}
+	return &repairIOLimiter{slots: slots, metrics: metrics}
+}
+
+func (b *repairIOLimiter) acquire(ctx context.Context) (func(), error) {
+	if b == nil {
+		return func() {}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		b.recordRejected()
+		return nil, err
+	}
+	if b.metrics != nil {
+		b.metrics.RepairIOOpsQueued.Add(1)
+	}
+	select {
+	case <-b.slots:
+	case <-ctx.Done():
+		b.finishWaiting()
+		b.recordRejected()
+		return nil, ctx.Err()
+	default:
+		if b.metrics != nil {
+			b.metrics.RepairIOOpsWaited.Add(1)
+		}
+		select {
+		case <-b.slots:
+		case <-ctx.Done():
+			b.finishWaiting()
+			b.recordRejected()
+			return nil, ctx.Err()
+		}
+	}
+
+	b.finishWaiting()
+	if b.metrics != nil {
+		b.metrics.RepairIOOpsStarted.Add(1)
+		b.metrics.RepairIOOpsInFlight.Add(1)
+	}
+	var releaseOnce sync.Once
+	return func() {
+		releaseOnce.Do(func() {
+			if b.metrics != nil {
+				b.metrics.RepairIOOpsCompleted.Add(1)
+				b.metrics.RepairIOOpsInFlight.Add(-1)
+			}
+			b.slots <- struct{}{}
+		})
+	}, nil
+}
+
+func (b *repairIOLimiter) finishWaiting() {
+	if b.metrics != nil {
+		b.metrics.RepairIOOpsQueued.Add(-1)
+	}
+}
+
+func (b *repairIOLimiter) recordRejected() {
+	if b.metrics != nil {
+		b.metrics.RepairIOOpsRejected.Add(1)
+	}
+}
+
 func sendRequestedBlobs(
 	ctx context.Context,
 	peer p2p.Peer,
@@ -866,53 +950,72 @@ func sendRequestedBlobsResult(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		data, err := store.Get(ctx, key)
-		if errors.Is(err, storage.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
+		var deferredKeys [][]byte
+		err := func() error {
+			if repair && metrics != nil && metrics.repairBudget != nil {
+				release, acquireErr := metrics.repairBudget.acquire(ctx)
+				if acquireErr != nil {
+					return acquireErr
+				}
+				defer release()
 			}
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+
+			data, err := store.Get(ctx, key)
+			if errors.Is(err, storage.ErrNotFound) {
+				return nil
 			}
-			metrics.SendErrors.Add(1)
-			metrics.BlobsSkipped.Add(1)
-			log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if repair && repairBytes > 0 && repairBytes+len(data) > repairBudget {
-			deferred := len(keys) - i
-			metrics.RepairBlobsDeferred.Add(uint64(deferred))
-			log.Warn("replication repair deferred", "remote", peer.RemoteAddr().String(), "keys", deferred, "bytes_sent", repairBytes, "budget_bytes", repairBudget, "delivery", "anti-entropy")
-			return cloneBlobKeys(keys[i:]), nil
-		}
-		payload, err := replication.EncodeBlobPut(key, data, limits)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return err
+				}
+				metrics.SendErrors.Add(1)
+				metrics.BlobsSkipped.Add(1)
+				log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
+				return nil
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if repair && repairBytes > 0 && repairBytes+len(data) > repairBudget {
+				deferred := len(keys) - i
+				metrics.RepairBlobsDeferred.Add(uint64(deferred))
+				deferredKeys = cloneBlobKeys(keys[i:])
+				log.Warn("replication repair deferred", "remote", peer.RemoteAddr().String(), "keys", deferred, "bytes_sent", repairBytes, "budget_bytes", repairBudget, "delivery", "anti-entropy")
+				return nil
+			}
+			payload, err := replication.EncodeBlobPut(key, data, limits)
+			if err != nil {
+				metrics.SendErrors.Add(1)
+				metrics.BlobsSkipped.Add(1)
+				log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
+				return nil
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
+				metrics.SendErrors.Add(1)
+				return err
+			}
+			metrics.BlobsSent.Add(1)
+			metrics.BytesSent.Add(uint64(len(data)))
+			if repair {
+				repairBytes += len(data)
+				metrics.RepairBlobsSent.Add(1)
+				log.Info("replication repair blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", len(data), "delivery", "anti-entropy")
+			} else {
+				log.Info("replicated blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", len(data), "delivery", "request")
+			}
+			return nil
+		}()
 		if err != nil {
-			metrics.SendErrors.Add(1)
-			metrics.BlobsSkipped.Add(1)
-			log.Warn("replicated blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "err", err)
-			continue
-		}
-		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
-			metrics.SendErrors.Add(1)
-			return nil, err
-		}
-		metrics.BlobsSent.Add(1)
-		metrics.BytesSent.Add(uint64(len(data)))
-		if repair {
-			repairBytes += len(data)
-			metrics.RepairBlobsSent.Add(1)
-			log.Info("replication repair blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", len(data), "delivery", "anti-entropy")
-		} else {
-			log.Info("replicated blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", len(data), "delivery", "request")
+		if len(deferredKeys) > 0 {
+			return deferredKeys, nil
 		}
 	}
 	return nil, nil
@@ -1424,7 +1527,14 @@ type replicationMetrics struct {
 	RepairContinuationsDropped    atomic.Uint64
 	RepairContinuationsActive     atomic.Int64
 	RepairContinuationKeysPending atomic.Int64
+	RepairIOOpsStarted            atomic.Uint64
+	RepairIOOpsCompleted          atomic.Uint64
+	RepairIOOpsWaited             atomic.Uint64
+	RepairIOOpsRejected           atomic.Uint64
+	RepairIOOpsInFlight           atomic.Int64
+	RepairIOOpsQueued             atomic.Int64
 	ackTracker                    *putAckTracker
+	repairBudget                  *repairIOLimiter
 	repairScheduler               *repairContinuationScheduler
 }
 
@@ -1461,6 +1571,12 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_repair_continuations_dropped":     int64(m.RepairContinuationsDropped.Load()),
 		"replication_repair_continuations_active":      m.RepairContinuationsActive.Load(),
 		"replication_repair_continuation_keys_pending": m.RepairContinuationKeysPending.Load(),
+		"replication_repair_io_ops_started":            int64(m.RepairIOOpsStarted.Load()),
+		"replication_repair_io_ops_completed":          int64(m.RepairIOOpsCompleted.Load()),
+		"replication_repair_io_ops_waited":             int64(m.RepairIOOpsWaited.Load()),
+		"replication_repair_io_ops_rejected":           int64(m.RepairIOOpsRejected.Load()),
+		"replication_repair_io_ops_in_flight":          m.RepairIOOpsInFlight.Load(),
+		"replication_repair_io_ops_queued":             m.RepairIOOpsQueued.Load(),
 	}
 }
 
