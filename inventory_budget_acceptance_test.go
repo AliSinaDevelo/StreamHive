@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,10 @@ type inventoryBudgetNode struct {
 }
 
 func startInventoryBudgetNode(t *testing.T, storeDir, dial string) *inventoryBudgetNode {
+	return startInventoryBudgetNodeWithInterval(t, storeDir, dial, "0s")
+}
+
+func startInventoryBudgetNodeWithInterval(t *testing.T, storeDir, dial, syncInterval string) *inventoryBudgetNode {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	node := &inventoryBudgetNode{
@@ -42,7 +48,7 @@ func startInventoryBudgetNode(t *testing.T, storeDir, dial string) *inventoryBud
 		"-health", "127.0.0.1:0",
 		"-replicate",
 		"-store-dir", storeDir,
-		"-sync-interval", "0s",
+		"-sync-interval", syncInterval,
 		"-max-inventory-bytes", budgetedInventoryBytes,
 		"-max-inventory-keys", budgetedInventoryKeys,
 	}
@@ -260,6 +266,77 @@ func TestRun_localEvictionRehydratesThroughStartupOnlyRepair(t *testing.T) {
 	assert.GreaterOrEqual(t, metrics["replication_inventory_keys_sent"], int64(2))
 	assert.Equal(t, int64(0), metrics["replication_inventory_exchanges_active"])
 	assert.Equal(t, int64(0), metrics["replication_inventory_exchanges_dropped"])
+}
+
+func TestRun_periodicInventoryRepairsKeyAddedBehindLiveCursor(t *testing.T) {
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	sourceStore, err := storage.NewFileStore(sourceDir)
+	require.NoError(t, err)
+
+	initialKeys := make([][]byte, 0, 4)
+	for i := 0; i < 4; i++ {
+		data := []byte(fmt.Sprintf("streamhive-live-cursor-initial-%02d", i))
+		key := storage.SHA256Key(data)
+		require.NoError(t, sourceStore.Put(ctx, key, data))
+		initialKeys = append(initialKeys, key)
+	}
+	sort.Slice(initialKeys, func(i, j int) bool { return bytes.Compare(initialKeys[i], initialKeys[j]) < 0 })
+
+	lateData := []byte("streamhive-live-cursor-late")
+	lateKey := storage.SHA256Key(lateData)
+	for suffix := 0; bytes.Compare(lateKey, initialKeys[0]) >= 0; suffix++ {
+		lateData = []byte(fmt.Sprintf("streamhive-live-cursor-late-%d", suffix))
+		lateKey = storage.SHA256Key(lateData)
+	}
+
+	source := startInventoryBudgetNodeWithInterval(t, sourceDir, "", "2s")
+	t.Cleanup(func() { source.stop(t) })
+	target := startInventoryBudgetNode(t, targetDir, source.listen)
+	t.Cleanup(func() { target.stop(t) })
+
+	var firstExchange map[string]int64
+	require.Eventually(t, func() bool {
+		metrics, requestErr := tryInventoryBudgetMetrics(source)
+		if requestErr != nil {
+			return false
+		}
+		firstExchange = metrics
+		return metrics["replication_inventory_exchanges_limited"] >= 1 &&
+			metrics["replication_inventory_exchanges_active"] >= 1
+	}, 3*time.Second, 10*time.Millisecond, "source cursor did not become active: metrics=%v source stderr=%q target stderr=%q", firstExchange, source.err.String(), target.err.String())
+
+	require.NoError(t, sourceStore.Put(ctx, lateKey, lateData))
+	require.Eventually(t, func() bool {
+		metrics := inventoryBudgetMetrics(t, source)
+		return metrics["replication_inventory_exchanges_completed"] >= 1 &&
+			metrics["replication_inventory_exchanges_active"] == 0
+	}, 3*time.Second, 10*time.Millisecond, "initial live-cursor exchange did not finish: metrics=%v", inventoryBudgetMetrics(t, source))
+
+	require.True(t, inventoryBudgetStoreHasExactKeys(targetDir, initialKeys), "late key should wait for periodic fallback after the live cursor passes its position")
+	targetBeforePeriodic, err := storage.NewFileStore(targetDir)
+	require.NoError(t, err)
+	hasLate, err := targetBeforePeriodic.Has(ctx, lateKey)
+	require.NoError(t, err)
+	require.False(t, hasLate)
+
+	finalKeys := append([][]byte{lateKey}, initialKeys...)
+	require.Eventually(t, func() bool {
+		if !inventoryBudgetStoreHasExactKeys(targetDir, finalKeys) {
+			return false
+		}
+		metrics := inventoryBudgetMetrics(t, source)
+		return metrics["replication_inventory_exchanges_started"] > firstExchange["replication_inventory_exchanges_started"] &&
+			metrics["replication_inventory_exchanges_active"] == 0
+	}, 6*time.Second, 20*time.Millisecond, "periodic inventory did not repair behind-cursor key: source metrics=%v source stderr=%q target stderr=%q", inventoryBudgetMetrics(t, source), source.err.String(), target.err.String())
+
+	repaired, err := storage.NewFileStore(targetDir)
+	require.NoError(t, err)
+	got, err := repaired.Get(ctx, lateKey)
+	require.NoError(t, err)
+	assert.Equal(t, lateData, got)
+	assert.Equal(t, lateKey, storage.SHA256Key(got))
 }
 
 func tryInventoryBudgetMetrics(source *inventoryBudgetNode) (map[string]int64, error) {

@@ -277,6 +277,23 @@ jobs:
       - name: Startup-only local eviction repair
         run: make test-eviction-repair
 
+  inventory-consistency:
+    name: live cursor periodic fallback
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Periodic repair after behind-cursor mutation
+        run: make test-inventory-consistency
+
   sbom:
     runs-on: ubuntu-latest
     steps:
