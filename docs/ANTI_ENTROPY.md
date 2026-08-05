@@ -141,6 +141,24 @@ messages. Reconsider a versioned digest exchange only after a real workload stil
 unacceptable aggregate wire, CPU, probe, or continuation pressure under these budgets;
 that work would need mixed-version fallback and independent DoS limits first.
 
+## v0.12 Convergence Evidence
+
+The budget is now exercised by a real-TCP restart acceptance path, not only unit tests and
+benchmarks:
+
+```bash
+go test . -run '^TestRun_budgetedInventoryConvergesAfterTargetRestart$' -count=1 -v
+make demo-inventory-budget
+```
+
+Both paths seed eight SHA-256 content-addressed blobs, disable periodic inventory, and cap each
+startup exchange at one key and 128 encoded bytes. They observe a limited active source cursor,
+disconnect the target before the cursor completes, verify the source gauge returns to zero, then
+restart the durable target and require all eight keys, a completed exchange, and zero active
+inventory work. The acceptance test also checks the limited, completed, keys-sent, active, and
+dropped counters in JSON and the corresponding Prometheus text samples. This establishes the
+current convergence and cleanup behavior before any digest or range protocol is considered.
+
 ## Research Sources
 
 - [Dynamo: Amazon's highly available key-value store](https://www.amazon.science/publications/dynamo-amazons-highly-available-key-value-store)

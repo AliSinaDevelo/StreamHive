@@ -26,6 +26,16 @@ It authenticates bounded peer identities, repairs a deleted content-addressed bl
 the target process restarts, repairs a deliberately corrupted content-addressed file,
 and verifies that an exact replay is acknowledged as a duplicate.
 
+The budgeted inventory restart acceptance test is:
+
+```bash
+go test . -run '^TestRun_budgetedInventoryConvergesAfterTargetRestart$' -count=1 -v
+```
+
+It seeds eight content-addressed blobs, forces one-key inventory continuations over real TCP,
+disconnects the target while a source cursor is active, restarts the durable target, and checks
+convergence plus JSON and Prometheus exchange counters with no active cursor left behind.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -96,6 +106,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make demo-repair` to overwrite durable content, observe `replication_corrupt_blobs_detected`, and verify a positive `replication_repair_blobs_sent` outcome plus recovered SHA-256 bytes
 - `make demo-failure` to verify peer reconnect plus repair after a node restart
 - `make demo-continuation` to force an 8-byte repair budget and verify deferred delivery through continuation counters without periodic inventory
+- `make demo-inventory-budget` to force one-key/128-byte startup inventory continuations, interrupt a real TCP target, restart its durable store, and verify complete convergence plus JSON/Prometheus counters
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

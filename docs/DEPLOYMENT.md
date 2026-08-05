@@ -80,6 +80,18 @@ This starts two local processes, seeds three 4-byte blobs, limits the source to 
 bytes per response, leaves periodic inventory disabled, and checks that the continuation
 counters and target storage prove the deferred blob arrived.
 
+Run the bounded inventory convergence demo:
+
+```bash
+make demo-inventory-budget
+```
+
+This starts two real TCP processes with durable stores, seeds eight SHA-256-addressed blobs,
+limits each startup inventory exchange to one key and 128 encoded bytes, stops the target while
+the source has a pending cursor, restarts the target, and verifies every key plus JSON and
+Prometheus counters. The demo is cleanup-safe and accepts `P2P_ADDR`, `HEALTH_ADDR`,
+`TARGET_P2P_ADDR`, `TARGET_HEALTH_ADDR`, and `STREAMHIVE_DATA_DIR` overrides.
+
 Health endpoints are exposed on:
 
 - **node1**: <http://127.0.0.1:18081>

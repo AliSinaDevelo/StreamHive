@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.11.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope with global repair I/O admission are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/INVENTORY_ITERATORS.md](docs/INVENTORY_ITERATORS.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope with global repair I/O admission are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/INVENTORY_ITERATORS.md](docs/INVENTORY_ITERATORS.md).
 
 ## Prerequisites
 
@@ -123,6 +123,18 @@ make demo-continuation
 This local two-node demo seeds three 4-byte blobs, caps one repair response at 8 bytes,
 and verifies the delayed continuation delivers the remaining blob.
 
+To prove that a bounded whole-inventory exchange converges across a real TCP disconnect and
+durable target restart:
+
+```bash
+make demo-inventory-budget
+```
+
+This demo seeds eight SHA-256-addressed blobs, limits each inventory exchange to 128 encoded
+bytes and one key, stops the target while the source cursor is active, restarts the target, and
+checks all keys plus JSON and Prometheus inventory counters. It leaves periodic inventory off so
+the result comes from startup exchange continuation and reconnect cleanup.
+
 For a longer-lived node with static peers, use `-peers` and reconnect backoff:
 
 ```bash
@@ -195,6 +207,8 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-blob-bytes` | Cap replicated blob payload size |
 | `-max-repair-bytes` | Cap aggregate anti-entropy blob data per `blob.missing` response (0 = default) |
 | `-max-repair-ops` | Cap concurrent anti-entropy blob reads/writes across peers (0 = default) |
+| `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
+| `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
 See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `vet`, `cover`, `lint`, and demos.
 

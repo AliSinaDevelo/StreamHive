@@ -9,6 +9,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Replication**: aggregate `-max-inventory-bytes` and `-max-inventory-keys` budgets bound whole anti-entropy exchanges per peer; delayed continuations resume from an exclusive cursor without changing the flat `blob.has` wire format.
 - **Metrics**: inventory keys sent and exchange started/completed/limited/dropped/active counters expose aggregate scheduler pressure without peer, blob, or key labels.
 - **Tests**: deterministic inventory budget tests cover byte/key saturation, cursor continuation, cancellation, peer independence, and budgeted end-to-end benchmarks.
+- **Tests**: real-TCP budgeted inventory acceptance coverage proves eight content-addressed blobs converge after a target disconnect and durable restart, with JSON and Prometheus counter assertions.
+- **Demo**: `make demo-inventory-budget` reproduces the interrupted startup exchange with cleanup-safe local processes and fixed-port CI defaults.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
 - **Storage**: durable 32-byte SHA-256 keys are verified on read and inventory; corrupted content is observable and repairable through anti-entropy.
