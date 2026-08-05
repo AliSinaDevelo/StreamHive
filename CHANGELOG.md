@@ -4,6 +4,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+### Added
+
+- **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
+
 ## [0.11.0] — 2026-08-05
 
 ### Added

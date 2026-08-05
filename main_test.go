@@ -228,9 +228,13 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_repair_continuations_scheduled")
 	assert.Contains(t, metrics, "replication_repair_continuations_completed")
 	assert.Contains(t, metrics, "replication_repair_continuations_dropped")
+	assert.Contains(t, metrics, "replication_repair_continuations_active")
+	assert.Contains(t, metrics, "replication_repair_continuation_keys_pending")
 	assert.Zero(t, metrics["replication_repair_continuations_scheduled"])
 	assert.Zero(t, metrics["replication_repair_continuations_completed"])
 	assert.Zero(t, metrics["replication_repair_continuations_dropped"])
+	assert.Zero(t, metrics["replication_repair_continuations_active"])
+	assert.Zero(t, metrics["replication_repair_continuation_keys_pending"])
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
@@ -249,6 +253,8 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_scheduled")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_completed")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_dropped")
+	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_active")
+	assert.Contains(t, string(body), "streamhive_replication_repair_continuation_keys_pending")
 	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
 
 	resp5, err := client.Get(base + "/peers")
@@ -1509,6 +1515,8 @@ func TestRepairContinuationSchedulerDeduplicatesAndCompletes(t *testing.T) {
 	assert.Equal(t, uint64(2), metrics.RepairContinuationsScheduled.Load())
 	assert.Equal(t, uint64(2), metrics.RepairContinuationsCompleted.Load())
 	assert.Equal(t, uint64(0), metrics.RepairContinuationsDropped.Load())
+	assert.Zero(t, metrics.RepairContinuationsActive.Load())
+	assert.Zero(t, metrics.RepairContinuationKeysPending.Load())
 }
 
 func TestRepairContinuationSchedulerKeepsPeersIndependent(t *testing.T) {
@@ -1555,6 +1563,8 @@ func TestRepairContinuationSchedulerKeepsPeersIndependent(t *testing.T) {
 	}
 	scheduler.mu.Unlock()
 	assert.Zero(t, slow.Len())
+	assert.Equal(t, int64(1), metrics.RepairContinuationsActive.Load())
+	assert.Equal(t, int64(3), metrics.RepairContinuationKeysPending.Load())
 
 	releaseSlowOnce.Do(func() { close(releaseSlow) })
 	require.Eventually(t, func() bool {
@@ -1565,6 +1575,8 @@ func TestRepairContinuationSchedulerKeepsPeersIndependent(t *testing.T) {
 		defer scheduler.mu.Unlock()
 		return len(scheduler.entries) == 0
 	}, time.Second, 5*time.Millisecond)
+	assert.Zero(t, metrics.RepairContinuationsActive.Load())
+	assert.Zero(t, metrics.RepairContinuationKeysPending.Load())
 }
 
 func TestHandleReplicationMessageSchedulesRepairContinuation(t *testing.T) {
@@ -1604,6 +1616,8 @@ func TestHandleReplicationMessageSchedulesRepairContinuation(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsScheduled.Load())
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsCompleted.Load())
 	assert.Equal(t, uint64(0), metrics.RepairContinuationsDropped.Load())
+	assert.Zero(t, metrics.RepairContinuationsActive.Load())
+	assert.Zero(t, metrics.RepairContinuationKeysPending.Load())
 }
 
 func TestRepairContinuationSchedulerForgetsDisconnectedPeer(t *testing.T) {
@@ -1623,6 +1637,8 @@ func TestRepairContinuationSchedulerForgetsDisconnectedPeer(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsScheduled.Load())
 	assert.Equal(t, uint64(0), metrics.RepairContinuationsCompleted.Load())
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsDropped.Load())
+	assert.Zero(t, metrics.RepairContinuationsActive.Load())
+	assert.Zero(t, metrics.RepairContinuationKeysPending.Load())
 	scheduler.mu.Lock()
 	assert.Empty(t, scheduler.entries)
 	scheduler.mu.Unlock()
@@ -1638,11 +1654,15 @@ func TestRepairContinuationSchedulerBoundsQueueAndCountsDrops(t *testing.T) {
 
 	scheduler.Schedule(peer, [][]byte{[]byte("a")})
 	scheduler.Schedule(peer, [][]byte{[]byte("b")})
+	assert.Equal(t, int64(1), metrics.RepairContinuationsActive.Load())
+	assert.Equal(t, int64(1), metrics.RepairContinuationKeysPending.Load())
 	scheduler.Forget(peer)
 
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsScheduled.Load())
 	assert.Equal(t, uint64(0), metrics.RepairContinuationsCompleted.Load())
 	assert.Equal(t, uint64(2), metrics.RepairContinuationsDropped.Load())
+	assert.Zero(t, metrics.RepairContinuationsActive.Load())
+	assert.Zero(t, metrics.RepairContinuationKeysPending.Load())
 }
 
 func TestRepairContinuationSchedulerStopsOnShutdown(t *testing.T) {
@@ -1666,6 +1686,8 @@ func TestRepairContinuationSchedulerStopsOnShutdown(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsScheduled.Load())
 	assert.Equal(t, uint64(0), metrics.RepairContinuationsCompleted.Load())
 	assert.Equal(t, uint64(1), metrics.RepairContinuationsDropped.Load())
+	assert.Zero(t, metrics.RepairContinuationsActive.Load())
+	assert.Zero(t, metrics.RepairContinuationKeysPending.Load())
 }
 
 func TestReplicationMetricsSnapshotContinuationCountersAreMonotonic(t *testing.T) {
@@ -1678,6 +1700,8 @@ func TestReplicationMetricsSnapshotContinuationCountersAreMonotonic(t *testing.T
 	second := metrics.Snapshot()
 
 	assert.Equal(t, int64(0), initial["replication_repair_continuations_scheduled"])
+	assert.Equal(t, int64(0), initial["replication_repair_continuations_active"])
+	assert.Equal(t, int64(0), initial["replication_repair_continuation_keys_pending"])
 	assert.Equal(t, int64(2), first["replication_repair_continuations_scheduled"])
 	assert.Equal(t, int64(1), first["replication_repair_continuations_completed"])
 	assert.Equal(t, int64(1), first["replication_repair_continuations_dropped"])

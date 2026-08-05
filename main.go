@@ -932,6 +932,7 @@ type repairContinuationScheduler struct {
 type repairContinuationEntry struct {
 	peer      p2p.Peer
 	pending   map[string][]byte
+	inFlight  int
 	attempt   int
 	running   bool
 	scheduled bool
@@ -993,6 +994,7 @@ func (s *repairContinuationScheduler) Schedule(peer p2p.Peer, keys [][]byte) {
 		entry.scheduled = true
 		launch = true
 	}
+	s.updateGaugesLocked()
 	s.mu.Unlock()
 
 	if launch {
@@ -1033,8 +1035,10 @@ func (s *repairContinuationScheduler) run(id string) {
 	entry.running = true
 	keys := repairContinuationKeys(entry.pending)
 	entry.pending = make(map[string][]byte)
+	entry.inFlight = len(keys)
 	attempt := entry.attempt
 	peer := entry.peer
+	s.updateGaugesLocked()
 	s.mu.Unlock()
 
 	deferred, err := sendRequestedBlobsResult(s.ctx, peer, s.store, keys, s.limits, s.maxFrameBytes, s.metrics, s.log, true)
@@ -1053,6 +1057,7 @@ func (s *repairContinuationScheduler) run(id string) {
 		return
 	}
 	entry.running = false
+	entry.inFlight = 0
 	if err == nil && len(deferred) > 0 && attempt < maxRepairContinuationAttempts {
 		if mergeRepairContinuationKeys(entry.pending, deferred, s.maxKeys) && s.metrics != nil {
 			s.metrics.RepairContinuationsDropped.Add(1)
@@ -1065,6 +1070,7 @@ func (s *repairContinuationScheduler) run(id string) {
 	} else {
 		delete(s.entries, id)
 	}
+	s.updateGaugesLocked()
 	s.mu.Unlock()
 
 	if launch {
@@ -1078,13 +1084,31 @@ func (s *repairContinuationScheduler) run(id string) {
 func (s *repairContinuationScheduler) forgetID(id string) {
 	s.mu.Lock()
 	entry, ok := s.entries[id]
+	dropped := ok && (entry.scheduled || entry.running || len(entry.pending) > 0 || entry.inFlight > 0)
 	if ok {
 		delete(s.entries, id)
 	}
+	s.updateGaugesLocked()
 	s.mu.Unlock()
-	if ok && (entry.scheduled || len(entry.pending) > 0) && s.metrics != nil {
+	if dropped && s.metrics != nil {
 		s.metrics.RepairContinuationsDropped.Add(1)
 	}
+}
+
+// updateGaugesLocked publishes scheduler state as aggregate gauges. The caller must hold s.mu.
+func (s *repairContinuationScheduler) updateGaugesLocked() {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	var active, pending int64
+	for _, entry := range s.entries {
+		if entry.scheduled || entry.running {
+			active++
+		}
+		pending += int64(len(entry.pending) + entry.inFlight)
+	}
+	s.metrics.RepairContinuationsActive.Store(active)
+	s.metrics.RepairContinuationKeysPending.Store(pending)
 }
 
 func mergeRepairContinuationKeys(dst map[string][]byte, keys [][]byte, maxKeys int) bool {
@@ -1369,33 +1393,35 @@ func validateReconnectBackoff(minBackoff, maxBackoff time.Duration) error {
 }
 
 type replicationMetrics struct {
-	BlobsStored                  atomic.Uint64
-	BytesStored                  atomic.Uint64
-	DuplicateBlobs               atomic.Uint64
-	DuplicateBytes               atomic.Uint64
-	ApplyErrors                  atomic.Uint64
-	BlobsSent                    atomic.Uint64
-	BytesSent                    atomic.Uint64
-	BlobsSkipped                 atomic.Uint64
-	BlobAcksSent                 atomic.Uint64
-	BlobAcksReceived             atomic.Uint64
-	BlobAcksMatched              atomic.Uint64
-	BlobAcksPending              atomic.Int64
-	BlobAckTimeouts              atomic.Uint64
-	BlobRetries                  atomic.Uint64
-	BlobPutsAccepted             atomic.Uint64
-	BlobPutFailures              atomic.Uint64
-	BlobWriteErrors              atomic.Uint64
-	SendErrors                   atomic.Uint64
-	InventoryAdvertisements      atomic.Uint64
-	MissingKeysRequested         atomic.Uint64
-	RepairBlobsSent              atomic.Uint64
-	RepairBlobsDeferred          atomic.Uint64
-	RepairContinuationsScheduled atomic.Uint64
-	RepairContinuationsCompleted atomic.Uint64
-	RepairContinuationsDropped   atomic.Uint64
-	ackTracker                   *putAckTracker
-	repairScheduler              *repairContinuationScheduler
+	BlobsStored                   atomic.Uint64
+	BytesStored                   atomic.Uint64
+	DuplicateBlobs                atomic.Uint64
+	DuplicateBytes                atomic.Uint64
+	ApplyErrors                   atomic.Uint64
+	BlobsSent                     atomic.Uint64
+	BytesSent                     atomic.Uint64
+	BlobsSkipped                  atomic.Uint64
+	BlobAcksSent                  atomic.Uint64
+	BlobAcksReceived              atomic.Uint64
+	BlobAcksMatched               atomic.Uint64
+	BlobAcksPending               atomic.Int64
+	BlobAckTimeouts               atomic.Uint64
+	BlobRetries                   atomic.Uint64
+	BlobPutsAccepted              atomic.Uint64
+	BlobPutFailures               atomic.Uint64
+	BlobWriteErrors               atomic.Uint64
+	SendErrors                    atomic.Uint64
+	InventoryAdvertisements       atomic.Uint64
+	MissingKeysRequested          atomic.Uint64
+	RepairBlobsSent               atomic.Uint64
+	RepairBlobsDeferred           atomic.Uint64
+	RepairContinuationsScheduled  atomic.Uint64
+	RepairContinuationsCompleted  atomic.Uint64
+	RepairContinuationsDropped    atomic.Uint64
+	RepairContinuationsActive     atomic.Int64
+	RepairContinuationKeysPending atomic.Int64
+	ackTracker                    *putAckTracker
+	repairScheduler               *repairContinuationScheduler
 }
 
 func (m *replicationMetrics) Snapshot() map[string]int64 {
@@ -1403,31 +1429,33 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		return map[string]int64{}
 	}
 	return map[string]int64{
-		"replication_blobs_stored":                   int64(m.BlobsStored.Load()),
-		"replication_bytes_stored":                   int64(m.BytesStored.Load()),
-		"replication_duplicate_blobs":                int64(m.DuplicateBlobs.Load()),
-		"replication_duplicate_bytes":                int64(m.DuplicateBytes.Load()),
-		"replication_apply_errors":                   int64(m.ApplyErrors.Load()),
-		"replication_blobs_sent":                     int64(m.BlobsSent.Load()),
-		"replication_bytes_sent":                     int64(m.BytesSent.Load()),
-		"replication_blobs_skipped":                  int64(m.BlobsSkipped.Load()),
-		"replication_blob_acks_sent":                 int64(m.BlobAcksSent.Load()),
-		"replication_blob_acks_received":             int64(m.BlobAcksReceived.Load()),
-		"replication_blob_acks_matched":              int64(m.BlobAcksMatched.Load()),
-		"replication_blob_acks_pending":              m.BlobAcksPending.Load(),
-		"replication_blob_ack_timeouts":              int64(m.BlobAckTimeouts.Load()),
-		"replication_blob_retries":                   int64(m.BlobRetries.Load()),
-		"replication_blob_puts_accepted":             int64(m.BlobPutsAccepted.Load()),
-		"replication_blob_put_failures":              int64(m.BlobPutFailures.Load()),
-		"replication_blob_write_errors":              int64(m.BlobWriteErrors.Load()),
-		"replication_send_errors":                    int64(m.SendErrors.Load()),
-		"replication_inventory_advertisements":       int64(m.InventoryAdvertisements.Load()),
-		"replication_missing_keys_requested":         int64(m.MissingKeysRequested.Load()),
-		"replication_repair_blobs_sent":              int64(m.RepairBlobsSent.Load()),
-		"replication_repair_blobs_deferred":          int64(m.RepairBlobsDeferred.Load()),
-		"replication_repair_continuations_scheduled": int64(m.RepairContinuationsScheduled.Load()),
-		"replication_repair_continuations_completed": int64(m.RepairContinuationsCompleted.Load()),
-		"replication_repair_continuations_dropped":   int64(m.RepairContinuationsDropped.Load()),
+		"replication_blobs_stored":                     int64(m.BlobsStored.Load()),
+		"replication_bytes_stored":                     int64(m.BytesStored.Load()),
+		"replication_duplicate_blobs":                  int64(m.DuplicateBlobs.Load()),
+		"replication_duplicate_bytes":                  int64(m.DuplicateBytes.Load()),
+		"replication_apply_errors":                     int64(m.ApplyErrors.Load()),
+		"replication_blobs_sent":                       int64(m.BlobsSent.Load()),
+		"replication_bytes_sent":                       int64(m.BytesSent.Load()),
+		"replication_blobs_skipped":                    int64(m.BlobsSkipped.Load()),
+		"replication_blob_acks_sent":                   int64(m.BlobAcksSent.Load()),
+		"replication_blob_acks_received":               int64(m.BlobAcksReceived.Load()),
+		"replication_blob_acks_matched":                int64(m.BlobAcksMatched.Load()),
+		"replication_blob_acks_pending":                m.BlobAcksPending.Load(),
+		"replication_blob_ack_timeouts":                int64(m.BlobAckTimeouts.Load()),
+		"replication_blob_retries":                     int64(m.BlobRetries.Load()),
+		"replication_blob_puts_accepted":               int64(m.BlobPutsAccepted.Load()),
+		"replication_blob_put_failures":                int64(m.BlobPutFailures.Load()),
+		"replication_blob_write_errors":                int64(m.BlobWriteErrors.Load()),
+		"replication_send_errors":                      int64(m.SendErrors.Load()),
+		"replication_inventory_advertisements":         int64(m.InventoryAdvertisements.Load()),
+		"replication_missing_keys_requested":           int64(m.MissingKeysRequested.Load()),
+		"replication_repair_blobs_sent":                int64(m.RepairBlobsSent.Load()),
+		"replication_repair_blobs_deferred":            int64(m.RepairBlobsDeferred.Load()),
+		"replication_repair_continuations_scheduled":   int64(m.RepairContinuationsScheduled.Load()),
+		"replication_repair_continuations_completed":   int64(m.RepairContinuationsCompleted.Load()),
+		"replication_repair_continuations_dropped":     int64(m.RepairContinuationsDropped.Load()),
+		"replication_repair_continuations_active":      m.RepairContinuationsActive.Load(),
+		"replication_repair_continuation_keys_pending": m.RepairContinuationKeysPending.Load(),
 	}
 }
 

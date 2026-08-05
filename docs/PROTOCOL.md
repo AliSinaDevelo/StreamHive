@@ -183,7 +183,10 @@ Aggregate anti-entropy counters make that control loop visible without peer labe
 repair budget. `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` count delayed continuation batches without peer
-labels. Repair
+labels. `replication_repair_continuations_active` counts scheduled or running per-peer
+continuation entries, and `replication_repair_continuation_keys_pending` counts queued
+plus in-flight keys. These gauges expose repair saturation without peer or blob labels
+and return to zero after completion, disconnect, or shutdown. Repair
 delivery logs use `delivery=anti-entropy`; one-shot CLI deliveries use
 `delivery=one-shot`. Requested-blob delivery checks cancellation between store reads,
 encoding, and frame writes, so shutdown stops a long repair pass at the next safe

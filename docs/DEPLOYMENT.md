@@ -140,4 +140,9 @@ Define error budgets once you expose a workload to users. Baseline probes:
 Continuation counters are also aggregate: `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` count queued, executed, and discarded
-continuation batches without peer labels.
+continuation batches without peer labels. The
+`replication_repair_continuations_active` gauge counts scheduled or running per-peer
+continuation entries, while `replication_repair_continuation_keys_pending` includes
+queued and currently in-flight keys. Both gauges are zero when no continuation work is
+outstanding and remain bounded by the scheduler's per-peer queue limit plus the active
+batch.
