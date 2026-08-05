@@ -50,7 +50,7 @@ func startInventoryBudgetNode(t *testing.T, storeDir, dial string) *inventoryBud
 		args = append(args, "-dial", dial)
 	}
 	go func() {
-		node.errCh <- run(node.ctx, args, &node.out, &node.err)
+		node.errCh <- run(ctx, args, &node.out, &node.err)
 	}()
 
 	require.Eventually(t, func() bool {
