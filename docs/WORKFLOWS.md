@@ -43,11 +43,11 @@ Compare full inventory materialization with the bounded native pager at 4,096 an
 make bench-inventory
 ```
 
-The benchmark reports cumulative allocations from repeated page calls. MemoryStore uses
-an ordered B-tree index, so its page path measures seek plus page materialization rather
-than a full scan. FileStore remains a bounded directory scan and is intentionally kept
-separate from the in-memory index decision. See [INVENTORY_ITERATORS.md](INVENTORY_ITERATORS.md)
-for the measurements and rejected alternatives.
+The benchmark reports cumulative allocations from repeated page calls and separates the
+one-time FileStore index build. MemoryStore and FileStore page through ordered B-trees;
+FileStore rebuilds from `File.ReadDir` chunks when its directory modification stamp
+changes. See [INVENTORY_ITERATORS.md](INVENTORY_ITERATORS.md) for the measurements,
+startup budget, and rejected alternatives.
 
 The resource-budget acceptance check is separate from throughput benchmarks:
 

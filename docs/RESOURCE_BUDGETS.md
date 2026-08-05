@@ -13,6 +13,9 @@ The current implementation already bounds a single frame, key list, blob, repair
 response, per-peer continuation queue, process-wide repair I/O operation count, and
 native store inventory page. Native stores page a large inventory before wire batching;
 older `BlobKeyLister` implementations remain supported through a compatibility fallback.
+MemoryStore and FileStore keep process-local ordered key indexes; FileStore rebuilds its
+index from durable filenames when first used or when the directory modification stamp
+changes.
 
 This split follows the same operational shape used by bounded distributed systems:
 request size and storage quotas are explicit separately in etcd, while memberlist uses
@@ -31,7 +34,7 @@ and [memberlist configuration](https://github.com/hashicorp/memberlist/blob/mast
 | One inventory message | `replication.DefaultMaxKeys`: 4,096 keys | `replication.Decode` and repair scheduler | The message is rejected or pending continuation keys are deduplicated and dropped at the cap. |
 | One blob | `replication.DefaultMaxDataBytes`: 4 MiB; CLI `-max-blob-bytes` | `replication.Decode` | The message is rejected with `ErrDataTooLarge` before storage. |
 | One repair response | `replication.DefaultMaxRepairBytes`: 64 MiB; CLI `-max-repair-bytes` | `sendRequestedBlobsResult` | Remaining keys are deferred to one delayed continuation and later inventory passes. |
-| One inventory page | `BlobKeyPager` requested limit; direct non-positive limits use `storage.DefaultKeyPageSize`: 256 | `MemoryStore`, `FileStore`, and `sendBlobHas` | MemoryStore seeks an ordered B-tree and retains one page; FileStore reads directory entries in 128-entry chunks and retains only the smallest page after the exclusive cursor. Legacy `BlobKeyLister` stores still use their complete-list API. |
+| One inventory page | `BlobKeyPager` requested limit; direct non-positive limits use `storage.DefaultKeyPageSize`: 256 | `MemoryStore`, `FileStore`, and `sendBlobHas` | Both native stores seek an ordered B-tree and retain one page. FileStore rebuilds its process-local index from `File.ReadDir(128)` chunks when the directory stamp changes. Legacy `BlobKeyLister` stores still use their complete-list API. |
 | Global repair I/O operations | CLI `-max-repair-ops`; default 4, `0` selects the default | `repairIOLimiter` | Each anti-entropy blob read/write waits for a permit; cancellation rejects the waiter. `repair_io_ops_*` metrics show pressure without labels. |
 | Per-peer repair queue | One running continuation and at most `MaxKeys` pending keys per peer | `repairContinuationScheduler` | New unique keys beyond the queue cap are dropped and counted; disconnect or shutdown discards the entry. |
 | Reconnect delay | 500 ms minimum, 30 s maximum by CLI defaults | `peerReconnector` | Failed static targets back off exponentially and stop on context cancellation. |
@@ -67,13 +70,16 @@ uses `max_ops=1`, holds the only permit with one peer, queues a healthy peer, an
 verifies that the healthy operation completes after release. This is an admission and
 progress measurement, not a throughput claim. Existing frame, storage, anti-entropy,
 fairness, and Docker demos should be read alongside it for latency and recovery
-behavior. The inventory benchmark is intentionally a scaling measurement. On one Apple
-M1 sample after the MemoryStore index change, 4,096 keys took about 0.09 ms and 131 KB
-for full `ListKeys`, versus 0.17 ms and 144 KB for indexed pages. At 65,536 keys, full
-listing took about 2.22 ms and 2.54 MB, versus 2.40 ms and 2.65 MB for indexed pages.
-The pre-index repeated-scan page path took about 824.5 ms and 9.4 MB at 65,536 keys.
-These are local signals, not portable latency promises; FileStore still has the
-bounded repeated-scan tradeoff until a durable ordered index is designed.
+behavior. The inventory benchmark is intentionally a scaling and startup-budget
+measurement. On one Apple M1 sample, MemoryStore took about 0.095 ms and 131 KB for a
+4,096-key full listing versus 0.092 ms and 144 KB for indexed pages; at 65,536 keys the
+figures were 1.54 ms and 2.54 MB versus 1.80 ms and 2.65 MB. FileStore took about
+0.089 ms and 164 KB versus 0.133 ms and 182 KB at 4,096 keys, and 1.76 ms and 2.62 MB
+versus 7.57 ms and 2.82 MB at 65,536 keys. Its lazy index build measured about 3.2 ms
+and 0.85 MB at 4,096 keys, and 75.1 ms and 13.3 MB at 65,536 keys. The pre-index
+MemoryStore repeated-scan page path took about 824.5 ms and 9.4 MB at 65,536 keys.
+These are local signals, not portable latency promises; the rebuild budget is explicit
+and the durable file format remains unchanged.
 
 Run the comparison with:
 
@@ -93,9 +99,9 @@ make bench-inventory
   across peers. Waiters observe `replication_repair_io_ops_queued`, and canceled waiters
   increment `replication_repair_io_ops_rejected`.
 - **Inventory pressure:** native `BlobKeyPager` stores enumerate only a bounded page
-  before outbound `blob.has` frame paging. MemoryStore seeks through its ordered index,
-  while FileStore rescans directory entries between pages and trades CPU for bounded
-  live page state. Legacy `BlobKeyLister` implementations may still materialize the
+  before outbound `blob.has` frame paging. Both native stores seek through ordered
+  indexes; FileStore pays a one-time O(N) key/index rebuild after startup or an external
+  directory mutation. Legacy `BlobKeyLister` implementations may still materialize the
   complete store and should be migrated when their ownership is known.
 - **Shutdown:** transport shutdown cancels peer handlers; the scheduler forgets pending
   continuations and leaves the gauges at zero. In-flight file operations observe the
@@ -108,6 +114,9 @@ make bench-inventory
 1. Revisit a safe finite default for `-max-peers` after the representative workload
    and deployment topology are defined. Until then, production operators should set it
    explicitly and alert on `peers_rejected`.
+2. Revisit a durable FileStore manifest only after a workload justifies its crash,
+   rebuild, and multi-process ownership rules; the current process-local index keeps
+   the durable hex-file format small and recoverable.
 
 These changes are deliberately separate from the wire protocol and can be implemented
 independently.
