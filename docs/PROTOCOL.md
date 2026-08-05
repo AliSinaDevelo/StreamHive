@@ -125,6 +125,13 @@ Peer auth failures, frame decode errors, message validation errors, and peer wri
 stop the current peer loop. Auth failures happen before peer registration; later frame
 failures unregister the peer and update metrics.
 
+Malformed frames are rejected before payload allocation when their magic or declared
+length is invalid. Malformed JSON, base64 fields, unknown message types, empty keys,
+oversized keys/data, and overfull key lists are rejected by `replication.Decode` with a
+validation error; they are not applied to storage. The bounded `FuzzReadFrame`,
+`FuzzDecode`, and round-trip fuzz targets exercise these boundaries in the CI
+`protocol-fuzz` smoke job, while longer fuzzing remains a manual or scheduled activity.
+
 When answering `blob.missing` or `blob.get`, StreamHive treats each requested key as an
 independent send unit until bytes are written to the peer. If one key is unreadable or
 cannot be encoded under the configured limits, that key is skipped, `replication_send_errors`

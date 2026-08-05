@@ -7,6 +7,7 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 ### Added
 
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
+- **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
 
 ## [0.11.0] — 2026-08-05
 
