@@ -40,6 +40,7 @@ and [memberlist configuration](https://github.com/hashicorp/memberlist/blob/mast
 | Global repair I/O operations | CLI `-max-repair-ops`; default 4, `0` selects the default | `repairIOLimiter` | Each anti-entropy blob read/write waits for a permit; cancellation rejects the waiter. `repair_io_ops_*` metrics show pressure without labels. |
 | Per-peer repair queue | One running continuation and at most `MaxKeys` pending keys per peer | `repairContinuationScheduler` | New unique keys beyond the queue cap are dropped and counted; disconnect or shutdown discards the entry. |
 | Reconnect delay | 500 ms minimum, 30 s maximum by CLI defaults | `peerReconnector` | Failed static targets back off exponentially and stop on context cancellation. |
+| TLS handshake | `DefaultTLSHandshakeTimeout`: 5 s; library override `TLSHandshakeTimeout` | `p2p.TCPTransport` | Inbound certificate verification completes before peer registration; timeout or certificate failure closes the connection and increments aggregate TLS failure metrics. |
 | Auth handshake | 5 s default timeout, 128-byte identity limit | `p2p` handshake | Invalid or late auth closes the connection before peer registration. |
 
 `replication_inventory_exchanges_dropped` counts canceled or failed inventory scheduler

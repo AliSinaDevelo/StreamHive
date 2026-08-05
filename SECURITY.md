@@ -23,6 +23,11 @@ Library users can configure `p2p.TCPTransport.TLSServerConfig` and
 `p2p.TCPTransport.TLSClientConfig` directly. Use `tls.Config.ClientAuth`,
 `ClientCAs`, and client certificates when you need mTLS.
 
+Inbound library TLS handshakes complete before peer registration and are bounded by
+`TCPTransport.TLSHandshakeTimeout` (default `p2p.DefaultTLSHandshakeTimeout`). Aggregate
+`tls_handshake_success` and `tls_handshake_failures` metrics expose the result without certificate
+or remote-address labels. The real-TCP proof is `make test-mtls`.
+
 TLS protects the TCP channel and, when configured with CA verification, authenticates the
 certificate presented by the peer.
 

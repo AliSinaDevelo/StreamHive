@@ -57,9 +57,16 @@ certificate verification and is not part of the acceptance path.
 The CLI currently exposes server certificates and outbound server verification. Library users who
 need mutual certificate authentication configure `p2p.TCPTransport.TLSServerConfig` and
 `TLSClientConfig` directly, including `tls.Config.ClientAuth`, `ClientCAs`, and client
-certificates. The application token and identity allowlist remain useful as a separate policy
-layer; neither one is a substitute for certificate verification, and replication messages are not
-individually signed.
+certificates. The transport completes an inbound TLS handshake before application auth, peer-cap
+admission, `OnPeer`, or frame handling. `TLSHandshakeTimeout` bounds that work and defaults to
+`DefaultTLSHandshakeTimeout` when unset. The application token and identity allowlist remain useful
+as a separate policy layer; neither one is a substitute for certificate verification, and
+replication messages are not individually signed.
+
+`tls_handshake_success` and `tls_handshake_failures` are aggregate local transport counters with
+no certificate or address labels. An outbound `Dial` reports its local TLS result; mTLS has no
+remote-admission acknowledgment at the transport API, so a server-side certificate rejection is
+observed by the outbound peer as a connection close and `OnPeerDisconnected` callback.
 
 ## Acceptance Evidence
 
@@ -76,6 +83,17 @@ The target repeats the following under the race detector:
   and checks `/peers` plus JSON/Prometheus metrics.
 - `TestRun_tlsVerificationRejectsBeforePeerAdmission` checks wrong-CA and wrong-server-name paths;
   both fail before application auth succeeds or a blob is stored.
+
+The library target is:
+
+```bash
+make test-mtls
+```
+
+`TestTCPTransport_mutualTLSAdmitsVerifiedClient` configures `ClientAuth:
+tls.RequireAndVerifyClientCert`, exchanges a frame, and checks the handshake metrics. The rejection
+test covers a missing and an unrelated client certificate; the server records a TLS failure without
+calling `OnPeer` or the frame handler, and the client observes the resulting disconnect.
 
 ## Research Sources
 

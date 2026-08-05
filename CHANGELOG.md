@@ -24,6 +24,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Tests**: real-TCP TLS acceptance coverage generates ephemeral certificates, proves hostname and CA verification plus exact application identity admission, and checks wrong-CA and wrong-hostname failures before peer registration.
 - **CI**: `make test-tls-auth` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
 - **Docs**: `docs/TLS_AUTH.md` defines the transport certificate, shared-token, identity-allowlist, and library mTLS boundaries.
+- **`p2p`**: inbound TLS handshakes complete before peer registration, `OnPeer`, and frame handling, with a bounded `TLSHandshakeTimeout`.
+- **Metrics**: aggregate `tls_handshake_success` and `tls_handshake_failures` expose local TLS handshake outcomes without certificate or address labels.
+- **Tests**: library mTLS acceptance coverage proves verified frame exchange and pre-registration rejection for missing or unrelated client certificates.
+- **CI**: `make test-mtls` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.

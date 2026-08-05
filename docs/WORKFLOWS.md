@@ -88,6 +88,16 @@ It generates temporary certificates, proves CA and server-name verification befo
 application identity admission, replicates a content-addressed blob over the resulting connection,
 and checks wrong-CA and wrong-hostname failures before peer registration.
 
+The library mTLS acceptance target is:
+
+```bash
+make test-mtls
+```
+
+It runs three race-enabled repetitions with an ephemeral CA, server certificate, client certificate,
+and unrelated client certificate. It proves a verified client exchanges a frame, while missing or
+untrusted client certificates fail before the server calls `OnPeer` or its frame handler.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -164,6 +174,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-inventory-consistency` to repeat periodic repair after a behind-cursor mutation under the race detector
 - `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
 - `make test-tls-auth` to repeat TLS certificate verification, application identity admission, and pre-registration certificate failures under the race detector
+- `make test-mtls` to repeat library mTLS admission, bounded TLS failure handling, and frame exchange under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 
