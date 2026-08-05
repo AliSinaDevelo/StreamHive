@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -166,3 +167,51 @@ func (s *FileStore) ListKeys(ctx context.Context) ([][]byte, error) {
 
 var _ BlobStore = (*FileStore)(nil)
 var _ BlobKeyLister = (*FileStore)(nil)
+var _ BlobKeyPager = (*FileStore)(nil)
+
+// ListKeyPage returns the smallest keys strictly after after, bounded by limit.
+// Directory entries are scanned in chunks so the process does not materialize
+// the complete inventory just to send one bounded replication page.
+func (s *FileStore) ListKeyPage(ctx context.Context, after []byte, limit int) ([][]byte, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	limit = normalizeKeyPageLimit(limit)
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer dir.Close()
+
+	var page [][]byte
+	for {
+		entries, readErr := dir.Readdir(128)
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".streamhive-") {
+				continue
+			}
+			key, err := hex.DecodeString(entry.Name())
+			if err != nil {
+				return nil, nil, err
+			}
+			page = insertKeyPage(page, key, after, limit)
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, nil, readErr
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(page) == 0 {
+		return nil, nil, nil
+	}
+	next := append([]byte(nil), page[len(page)-1]...)
+	return page, next, nil
+}

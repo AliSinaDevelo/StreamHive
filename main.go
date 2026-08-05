@@ -761,17 +761,52 @@ func sendBlobAck(
 }
 
 func sendBlobHas(ctx context.Context, peer p2p.Peer, lister storage.BlobKeyLister, limits replication.Limits, maxFrameBytes int, metrics *replicationMetrics) error {
+	if pager, ok := lister.(storage.BlobKeyPager); ok {
+		return sendPagedBlobHas(ctx, peer, pager, limits, maxFrameBytes, metrics)
+	}
 	keys, err := lister.ListKeys(ctx)
 	if err != nil {
 		return err
 	}
+	return sendBlobHasKeys(ctx, peer, keys, limits, maxFrameBytes, metrics)
+}
+
+func sendPagedBlobHas(ctx context.Context, peer p2p.Peer, pager storage.BlobKeyPager, limits replication.Limits, maxFrameBytes int, metrics *replicationMetrics) error {
+	pageSize := inventoryBatchSize(limits)
+	var cursor []byte
+	for {
+		keys, next, err := pager.ListKeyPage(ctx, cursor, pageSize)
+		if err != nil {
+			return err
+		}
+		if len(keys) == 0 {
+			return nil
+		}
+		if len(next) == 0 || !bytes.Equal(next, keys[len(keys)-1]) {
+			return errors.New("replication: blob key page cursor must be last key")
+		}
+		if len(cursor) > 0 && bytes.Compare(next, cursor) <= 0 {
+			return errors.New("replication: blob key page cursor did not advance")
+		}
+		if err := sendBlobHasKeys(ctx, peer, keys, limits, maxFrameBytes, metrics); err != nil {
+			return err
+		}
+		cursor = append(cursor[:0], next...)
+	}
+}
+
+func inventoryBatchSize(limits replication.Limits) int {
+	if limits.MaxKeys > 0 {
+		return limits.MaxKeys
+	}
+	return replication.DefaultMaxKeys
+}
+
+func sendBlobHasKeys(ctx context.Context, peer p2p.Peer, keys [][]byte, limits replication.Limits, maxFrameBytes int, metrics *replicationMetrics) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	batchSize := replication.DefaultMaxKeys
-	if limits.MaxKeys > 0 {
-		batchSize = limits.MaxKeys
-	}
+	batchSize := inventoryBatchSize(limits)
 	maxPayload := maxFrameBytes
 	if maxPayload <= 0 {
 		maxPayload = p2p.DefaultMaxFrameBytes

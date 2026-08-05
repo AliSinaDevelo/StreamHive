@@ -14,3 +14,11 @@ type BlobStore interface {
 type BlobKeyLister interface {
 	ListKeys(ctx context.Context) ([][]byte, error)
 }
+
+// BlobKeyPager returns at most limit keys strictly greater than after in bytewise
+// order. The returned cursor is the last returned key; a zero-length key slice
+// means enumeration is complete. Implementations should honor context cancellation
+// while scanning and may reflect store mutations between page calls.
+type BlobKeyPager interface {
+	ListKeyPage(ctx context.Context, after []byte, limit int) (keys [][]byte, next []byte, err error)
+}

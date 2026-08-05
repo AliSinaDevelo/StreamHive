@@ -74,6 +74,38 @@ func (s *cancelAfterGetStore) Get(ctx context.Context, key []byte) ([]byte, erro
 	return data, err
 }
 
+type pagerProbeLister struct {
+	store     *storage.MemoryStore
+	pageCalls atomic.Int32
+}
+
+func (l *pagerProbeLister) ListKeys(context.Context) ([][]byte, error) {
+	return nil, errors.New("legacy inventory path should not be called")
+}
+
+func (l *pagerProbeLister) ListKeyPage(ctx context.Context, after []byte, limit int) ([][]byte, []byte, error) {
+	l.pageCalls.Add(1)
+	return l.store.ListKeyPage(ctx, after, limit)
+}
+
+type legacyKeyLister struct {
+	keys [][]byte
+}
+
+func (l legacyKeyLister) ListKeys(context.Context) ([][]byte, error) {
+	return l.keys, nil
+}
+
+type invalidCursorPager struct{}
+
+func (invalidCursorPager) ListKeys(context.Context) ([][]byte, error) {
+	return nil, errors.New("legacy inventory path should not be called")
+}
+
+func (invalidCursorPager) ListKeyPage(context.Context, []byte, int) ([][]byte, []byte, error) {
+	return [][]byte{[]byte("a")}, []byte("b"), nil
+}
+
 func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
 	if p.err != nil {
 		return p.err
@@ -1409,6 +1441,43 @@ func TestSendBlobHasBatchesAtConfiguredKeyLimit(t *testing.T) {
 	}
 	assert.Equal(t, keys, advertised)
 	assert.Equal(t, uint64(3), metrics.InventoryAdvertisements.Load())
+}
+
+func TestSendBlobHasUsesPagedInventory(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("value")))
+	}
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	lister := &pagerProbeLister{store: store}
+
+	require.NoError(t, sendBlobHas(ctx, peer, lister, replication.Limits{MaxKeys: 2}, 0, metrics))
+	assert.Equal(t, int32(3), lister.pageCalls.Load())
+	assert.Len(t, peer.payloads, 2)
+	assert.Equal(t, uint64(2), metrics.InventoryAdvertisements.Load())
+}
+
+func TestSendBlobHasFallsBackToLegacyLister(t *testing.T) {
+	ctx := context.Background()
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	lister := legacyKeyLister{keys: [][]byte{[]byte("a"), []byte("b")}}
+
+	require.NoError(t, sendBlobHas(ctx, peer, lister, replication.Limits{MaxKeys: 1}, 0, metrics))
+	assert.Len(t, peer.payloads, 2)
+	assert.Equal(t, uint64(2), metrics.InventoryAdvertisements.Load())
+}
+
+func TestSendBlobHasRejectsInvalidPageCursor(t *testing.T) {
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	err := sendBlobHas(context.Background(), peer, invalidCursorPager{}, replication.Limits{}, 0, metrics)
+	assert.EqualError(t, err, "replication: blob key page cursor must be last key")
+	assert.Empty(t, peer.payloads)
+	assert.Equal(t, uint64(0), metrics.InventoryAdvertisements.Load())
 }
 
 func TestSendBlobHasSplitsAtFrameLimit(t *testing.T) {

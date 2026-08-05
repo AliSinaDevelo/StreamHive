@@ -156,6 +156,54 @@ func TestFileStore_ListKeysContextDeadline(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestFileStore_ListKeyPageRestart(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+	for _, key := range []string{"d", "b", "a", "c"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("value")))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".streamhive-temp"), []byte("tmp"), 0o600))
+
+	reopened, err := NewFileStore(dir)
+	require.NoError(t, err)
+	page, next, err := reopened.ListKeyPage(ctx, nil, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("a"), []byte("b")}, page)
+	assert.Equal(t, []byte("b"), next)
+
+	page, next, err = reopened.ListKeyPage(ctx, next, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("c"), []byte("d")}, page)
+	assert.Equal(t, []byte("d"), next)
+
+	page, next, err = reopened.ListKeyPage(ctx, next, 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Empty(t, next)
+}
+
+func TestFileStore_ListKeyPageContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	store, err := NewFileStore(t.TempDir())
+	require.NoError(t, err)
+
+	_, _, err = store.ListKeyPage(ctx, nil, 2)
+	assert.Error(t, err)
+}
+
+func TestFileStore_ListKeyPageEmpty(t *testing.T) {
+	store, err := NewFileStore(t.TempDir())
+	require.NoError(t, err)
+
+	page, next, err := store.ListKeyPage(context.Background(), nil, 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Empty(t, next)
+}
+
 func TestNewFileStore_EmptyDirectory(t *testing.T) {
 	_, err := NewFileStore("")
 	require.Error(t, err)

@@ -117,3 +117,55 @@ func TestMemoryStore_ListKeysContextDeadline(t *testing.T) {
 	_, err := s.ListKeys(ctx)
 	assert.Error(t, err)
 }
+
+func TestMemoryStore_ListKeyPage(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	for _, key := range []string{"d", "b", "a", "c"} {
+		require.NoError(t, s.Put(ctx, []byte(key), []byte("value")))
+	}
+
+	page, next, err := s.ListKeyPage(ctx, nil, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("a"), []byte("b")}, page)
+	assert.Equal(t, []byte("b"), next)
+
+	page, next, err = s.ListKeyPage(ctx, next, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("c"), []byte("d")}, page)
+	assert.Equal(t, []byte("d"), next)
+
+	page, next, err = s.ListKeyPage(ctx, next, 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Empty(t, next)
+}
+
+func TestMemoryStore_ListKeyPageUsesDefaultLimit(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	for i := 0; i < DefaultKeyPageSize+1; i++ {
+		require.NoError(t, s.Put(ctx, []byte{byte(i >> 8), byte(i)}, []byte("value")))
+	}
+
+	page, next, err := s.ListKeyPage(ctx, nil, 0)
+	require.NoError(t, err)
+	assert.Len(t, page, DefaultKeyPageSize)
+	assert.Equal(t, page[len(page)-1], next)
+}
+
+func TestMemoryStore_ListKeyPageContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	s := NewMemoryStore()
+
+	_, _, err := s.ListKeyPage(ctx, nil, 2)
+	assert.Error(t, err)
+}
+
+func TestMemoryStore_ListKeyPageEmpty(t *testing.T) {
+	page, next, err := NewMemoryStore().ListKeyPage(context.Background(), nil, 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Empty(t, next)
+}

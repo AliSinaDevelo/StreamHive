@@ -132,3 +132,30 @@ func (m *MemoryStore) ListKeys(ctx context.Context) ([][]byte, error) {
 }
 
 var _ BlobKeyLister = (*MemoryStore)(nil)
+var _ BlobKeyPager = (*MemoryStore)(nil)
+
+// ListKeyPage returns the smallest keys strictly after after, bounded by limit.
+func (m *MemoryStore) ListKeyPage(ctx context.Context, after []byte, limit int) ([][]byte, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	limit = normalizeKeyPageLimit(limit)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var page [][]byte
+	for key := range m.data {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		page = insertKeyPage(page, []byte(key), after, limit)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(page) == 0 {
+		return nil, nil, nil
+	}
+	next := append([]byte(nil), page[len(page)-1]...)
+	return page, next, nil
+}
