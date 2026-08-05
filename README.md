@@ -172,6 +172,17 @@ the process is stopped, restarts it with `-sync-interval 0s`, and verifies the e
 return with zero active inventory work. It proves local object repair, not distributed logical
 deletion.
 
+To verify a configured peer admission cap over real TCP:
+
+```bash
+make test-peer-admission
+```
+
+This race-enabled target caps a server at one peer, opens two clients, and checks that one remains
+active while the rejected connection increments `peers_rejected`. The default `-max-peers 0`
+remains unlimited for compatibility; production nodes should set a finite value. See
+[docs/PEER_ADMISSION.md](docs/PEER_ADMISSION.md).
+
 For a longer-lived node with static peers, use `-peers` and reconnect backoff:
 
 ```bash

@@ -69,6 +69,15 @@ target's local content-addressed blob, restarts with `-sync-interval 0s`, and ve
 bytes return through startup inventory with no active exchange left behind. This is local
 eviction rehydration, not a claim that `Delete` is a distributed logical revoke.
 
+The real-TCP peer admission acceptance target is:
+
+```bash
+make test-peer-admission
+```
+
+It runs three race-enabled repetitions with a one-peer server cap and two clients, and checks
+that the cap rejects exactly the excess connection while the admitted peer remains active.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -143,6 +152,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-inventory-fairness` to repeat the multi-peer mutation/reconnect convergence proof under the race detector
 - `make test-eviction-repair` to repeat startup-only rehydration after local durable eviction under the race detector
 - `make test-inventory-consistency` to repeat periodic repair after a behind-cursor mutation under the race detector
+- `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

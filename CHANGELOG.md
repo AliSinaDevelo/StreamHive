@@ -18,6 +18,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Tests**: live-cursor acceptance coverage proves a key inserted behind an active cursor is repaired by the next periodic inventory pass.
 - **CI**: `make test-inventory-consistency` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
 - **Docs**: `docs/INVENTORY_CONSISTENCY.md` defines live cursor versus snapshot semantics and records the periodic fallback research boundary.
+- **Tests**: real-TCP peer admission coverage proves a one-peer cap rejects an excess client while the admitted peer remains active.
+- **CI**: `make test-peer-admission` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
+- **Docs**: `docs/PEER_ADMISSION.md` defines the explicit finite production cap and preserves the unlimited compatibility default.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.

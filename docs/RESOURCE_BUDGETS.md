@@ -145,3 +145,7 @@ unchanged, while each native pager call holds only one bounded page at a time.
 
 These changes are deliberately separate from the wire protocol and can be implemented
 independently.
+
+Peer admission details and the real-TCP saturation proof are documented in
+[PEER_ADMISSION.md](PEER_ADMISSION.md). The v0.12 decision keeps `-max-peers 0` unlimited for
+compatibility while requiring a finite setting for production deployments.
