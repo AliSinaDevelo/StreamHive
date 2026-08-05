@@ -70,6 +70,17 @@ make demo-failure
 
 The failure demo starts the same 3-node cluster, seeds a blob, stops node2, deletes node2's durable blob file while the process is down, restarts node2, waits for `/peers` to show an active connection, and verifies periodic anti-entropy restores the key.
 
+For a startup-only contract check that does not rely on periodic inventory, run:
+
+```bash
+make test-eviction-repair
+```
+
+The acceptance path first converges a durable target, evicts its local content-addressed blob
+while stopped, restarts with `-sync-interval 0s`, and verifies startup anti-entropy restores the
+exact bytes. A successful repair means local eviction is rehydratable; it does not make
+`FileStore.Delete` a distributed logical deletion.
+
 Run the bounded continuation demo:
 
 ```bash

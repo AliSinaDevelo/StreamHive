@@ -94,6 +94,9 @@ Before implementation, model these transitions:
 The current acceptance contract is intentionally narrower and is covered by
 TestRun_budgetedInventoryConvergesAcrossPeersAndSourceMutation: deleting a source key before
 it is advertised is valid, while deleting an already-advertised key is not claimed to propagate.
+The dedicated `make test-eviction-repair` acceptance target separately proves that deleting an
+already-replicated blob from one stopped local store is rehydrated by startup anti-entropy when a
+peer still owns the immutable content. It does not add or imply a logical delete operation.
 
 ## Mixed-Version Contract
 

@@ -47,6 +47,17 @@ between bounded pages, disconnects one target while the other converges, and che
 key sets. The mutation deletes only a not-yet-advertised key because the current replication
 protocol has no tombstone message.
 
+The local eviction and startup-only repair acceptance target is:
+
+```bash
+make test-eviction-repair
+```
+
+It runs five race-enabled repetitions, converges a durable target, stops it, deletes only the
+target's local content-addressed blob, restarts with `-sync-interval 0s`, and verifies the exact
+bytes return through startup inventory with no active exchange left behind. This is local
+eviction rehydration, not a claim that `Delete` is a distributed logical revoke.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -119,6 +130,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make demo-continuation` to force an 8-byte repair budget and verify deferred delivery through continuation counters without periodic inventory
 - `make demo-inventory-budget` to force one-key/128-byte startup inventory continuations, interrupt a real TCP target, restart its durable store, and verify complete convergence plus JSON/Prometheus counters
 - `make test-inventory-fairness` to repeat the multi-peer mutation/reconnect convergence proof under the race detector
+- `make test-eviction-repair` to repeat startup-only rehydration after local durable eviction under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

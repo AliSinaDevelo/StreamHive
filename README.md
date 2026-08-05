@@ -151,6 +151,17 @@ may rehydrate that blob through the current add-only anti-entropy path; distribu
 deletion is deferred to a separate versioned namespace design. See
 [docs/DELETION_SEMANTICS.md](docs/DELETION_SEMANTICS.md).
 
+To prove that local eviction is rehydrated by startup anti-entropy alone:
+
+```bash
+make test-eviction-repair
+```
+
+This race-enabled acceptance target first converges a durable target, evicts its local blob while
+the process is stopped, restarts it with `-sync-interval 0s`, and verifies the exact SHA-256 bytes
+return with zero active inventory work. It proves local object repair, not distributed logical
+deletion.
+
 For a longer-lived node with static peers, use `-peers` and reconnect backoff:
 
 ```bash
