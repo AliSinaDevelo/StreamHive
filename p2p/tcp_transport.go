@@ -121,6 +121,8 @@ type TCPTransport struct {
 	// PeerAuthAllowedIdentities restricts inbound shared-token peers to these application identities.
 	// An empty list disables identity authorization while retaining token-only compatibility.
 	PeerAuthAllowedIdentities []string
+	// TLSHandshakeTimeout bounds TLS handshakes before peer registration (0 = DefaultTLSHandshakeTimeout).
+	TLSHandshakeTimeout time.Duration
 
 	TLSServerConfig *tls.Config
 	TLSClientConfig *tls.Config
@@ -288,6 +290,18 @@ func (t *TCPTransport) acceptLoop() {
 
 func (t *TCPTransport) handleAcceptedConn(conn net.Conn) {
 	tp := NewTCPPeer(conn, false)
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		handshakeCtx, cancel := t.tlsHandshakeContext(t.shutdownCtx)
+		err := tlsConn.HandshakeContext(handshakeCtx)
+		cancel()
+		if err != nil {
+			t.metrics.TLSHandshakeFailures.Add(1)
+			t.logger().Warn("tls handshake rejected", "remote", tp.RemoteAddr().String(), "err", err)
+			_ = tp.Close()
+			return
+		}
+		t.metrics.TLSHandshakeSuccess.Add(1)
+	}
 	if err := t.authenticateInbound(t.shutdownCtx, tp); err != nil {
 		t.metrics.PeerAuthFailures.Add(1)
 		t.logger().Warn("peer auth rejected", "remote", tp.RemoteAddr().String(), "err", err)
@@ -420,11 +434,16 @@ func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
 
 	if t.TLSClientConfig != nil {
 		tlsConn := tls.Client(conn, t.TLSClientConfig)
-		if err := tlsConn.HandshakeContext(dialCtx); err != nil {
+		handshakeCtx, cancelHandshake := t.tlsHandshakeContext(dialCtx)
+		err := tlsConn.HandshakeContext(handshakeCtx)
+		cancelHandshake()
+		if err != nil {
 			_ = tlsConn.Close()
+			t.metrics.TLSHandshakeFailures.Add(1)
 			t.metrics.DialErrors.Add(1)
 			return err
 		}
+		t.metrics.TLSHandshakeSuccess.Add(1)
 		conn = tlsConn
 	}
 
@@ -475,6 +494,14 @@ func (t *TCPTransport) withPeerAuthDeadline(ctx context.Context, conn net.Conn) 
 	return func() {
 		_ = conn.SetDeadline(time.Time{})
 	}
+}
+
+func (t *TCPTransport) tlsHandshakeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := t.TLSHandshakeTimeout
+	if timeout <= 0 {
+		timeout = DefaultTLSHandshakeTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (t *TCPTransport) authenticateInbound(ctx context.Context, tp *TCPPeer) error {

@@ -13,6 +13,8 @@ type TransportMetrics struct {
 	ActivePeers                atomic.Int64
 	FramesHandled              atomic.Uint64
 	FrameHandlerErrs           atomic.Uint64
+	TLSHandshakeSuccess        atomic.Uint64
+	TLSHandshakeFailures       atomic.Uint64
 	PeerAuthSuccess            atomic.Uint64
 	PeerAuthFailures           atomic.Uint64
 	PeerAuthIdentityRejections atomic.Uint64
@@ -38,6 +40,8 @@ func (m *TransportMetrics) Snapshot() map[string]int64 {
 		"active_peers":                  m.ActivePeers.Load(),
 		"frames_handled":                int64(m.FramesHandled.Load()),
 		"frame_handler_errors":          int64(m.FrameHandlerErrs.Load()),
+		"tls_handshake_success":         int64(m.TLSHandshakeSuccess.Load()),
+		"tls_handshake_failures":        int64(m.TLSHandshakeFailures.Load()),
 		"peer_auth_success":             int64(m.PeerAuthSuccess.Load()),
 		"peer_auth_failures":            int64(m.PeerAuthFailures.Load()),
 		"peer_auth_identity_rejections": int64(m.PeerAuthIdentityRejections.Load()),

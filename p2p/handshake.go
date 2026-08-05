@@ -19,6 +19,9 @@ const (
 // DefaultPeerAuthTimeout bounds optional application-level peer auth handshakes.
 const DefaultPeerAuthTimeout = 5 * time.Second
 
+// DefaultTLSHandshakeTimeout bounds TLS handshakes before peer registration.
+const DefaultTLSHandshakeTimeout = 5 * time.Second
+
 // MaxPeerAuthIdentityBytes bounds the application identity carried in auth frames.
 const MaxPeerAuthIdentityBytes = 128
 
