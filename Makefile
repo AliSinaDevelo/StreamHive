@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
+.PHONY: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-peer-admission test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -24,6 +24,9 @@ test-eviction-repair:
 
 test-inventory-consistency:
 	@go test -race -count=3 -run '^TestRun_periodicInventoryRepairsKeyAddedBehindLiveCursor$$' ./...
+
+test-peer-admission:
+	@go test -race -count=3 -run '^TestRun_maxPeersRejectsSecondRealTCPPeer$$' ./...
 
 test-fuzz:
 	@go test -run '^$$' -fuzz=FuzzDecode -fuzztime=3s ./replication
@@ -77,4 +80,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
+	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-peer-admission test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"

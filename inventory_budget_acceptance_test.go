@@ -37,6 +37,10 @@ func startInventoryBudgetNode(t *testing.T, storeDir, dial string) *inventoryBud
 }
 
 func startInventoryBudgetNodeWithInterval(t *testing.T, storeDir, dial, syncInterval string) *inventoryBudgetNode {
+	return startInventoryBudgetNodeWithConfig(t, storeDir, dial, syncInterval, 0)
+}
+
+func startInventoryBudgetNodeWithConfig(t *testing.T, storeDir, dial, syncInterval string, maxPeers int) *inventoryBudgetNode {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	node := &inventoryBudgetNode{
@@ -51,6 +55,9 @@ func startInventoryBudgetNodeWithInterval(t *testing.T, storeDir, dial, syncInte
 		"-sync-interval", syncInterval,
 		"-max-inventory-bytes", budgetedInventoryBytes,
 		"-max-inventory-keys", budgetedInventoryKeys,
+	}
+	if maxPeers > 0 {
+		args = append(args, "-max-peers", fmt.Sprintf("%d", maxPeers))
 	}
 	if dial != "" {
 		args = append(args, "-dial", dial)
