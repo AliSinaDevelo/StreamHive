@@ -9,6 +9,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Replication**: bounded anti-entropy repair responses with `-max-repair-bytes` and later-inventory recovery for deferred keys.
 - **Replication**: one bounded delayed continuation merges deferred repair keys per peer while preserving periodic inventory as the fallback.
 - **Metrics**: `replication_repair_blobs_deferred` counts keys held back by the per-response repair budget.
+- **Metrics**: continuation scheduling, completion, and dropped-work counters are exposed through JSON and Prometheus health endpoints.
+- **Demo**: `make demo-continuation` forces a small repair budget and proves continuation delivery without periodic inventory.
 
 ## [0.10.0] — 2026-08-04
 

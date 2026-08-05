@@ -49,6 +49,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make demo-auth` to verify authenticated peer identities, allowlist and token rejection before blob storage, and restart repair in one acceptance path
 - `make demo-repair` to verify periodic repair after local durable corruption and observe a positive repair-delivery counter
 - `make demo-failure` to verify peer reconnect plus repair after a node restart
+- `make demo-continuation` to force an 8-byte repair budget and verify deferred delivery through continuation counters without periodic inventory
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

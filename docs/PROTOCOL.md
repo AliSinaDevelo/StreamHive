@@ -180,7 +180,10 @@ Aggregate anti-entropy counters make that control loop visible without peer labe
 `replication_missing_keys_requested` counts keys in `blob.missing` messages, and
 `replication_repair_blobs_sent` counts successful repair `blob.put` frames, while
 `replication_repair_blobs_deferred` counts requested keys held back by the per-response
-repair budget. Repair
+repair budget. `replication_repair_continuations_scheduled`,
+`replication_repair_continuations_completed`, and
+`replication_repair_continuations_dropped` count delayed continuation batches without peer
+labels. Repair
 delivery logs use `delivery=anti-entropy`; one-shot CLI deliveries use
 `delivery=one-shot`. Requested-blob delivery checks cancellation between store reads,
 encoding, and frame writes, so shutdown stops a long repair pass at the next safe

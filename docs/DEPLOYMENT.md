@@ -70,6 +70,16 @@ make demo-failure
 
 The failure demo starts the same 3-node cluster, seeds a blob, stops node2, deletes node2's durable blob file while the process is down, restarts node2, waits for `/peers` to show an active connection, and verifies periodic anti-entropy restores the key.
 
+Run the bounded continuation demo:
+
+```bash
+make demo-continuation
+```
+
+This starts two local processes, seeds three 4-byte blobs, limits the source to 8 repair
+bytes per response, leaves periodic inventory disabled, and checks that the continuation
+counters and target storage prove the deferred blob arrived.
+
 Health endpoints are exposed on:
 
 - **node1**: <http://127.0.0.1:18081>
@@ -126,3 +136,8 @@ Define error budgets once you expose a workload to users. Baseline probes:
 - **Readiness**: `/readyz` reflects listener bound (`TCPTransport.Ready`).
 - **Peer visibility**: `/peers` returns active connected peers with remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 - **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, `replication_blob_write_errors`, `replication_inventory_advertisements`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, and `replication_repair_blobs_deferred`, or Prometheus samples from `/metrics/prometheus`. The anti-entropy counters are aggregate: advertisements count successful `blob.has` frames, missing-key requests count keys in `blob.missing` messages, repair sends count successful repair `blob.put` frames, and deferred counts keys held back by the per-response repair budget.
+
+Continuation counters are also aggregate: `replication_repair_continuations_scheduled`,
+`replication_repair_continuations_completed`, and
+`replication_repair_continuations_dropped` count queued, executed, and discarded
+continuation batches without peer labels.

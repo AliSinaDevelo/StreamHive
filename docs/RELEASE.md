@@ -17,6 +17,7 @@ make demo-compose
 make demo-auth
 make demo-repair
 make demo-failure
+make demo-continuation
 go run . -version  # expected: 0.10.0
 ```
 
@@ -57,8 +58,10 @@ Highlight:
 - Exact inbound identity allowlists via `PeerAuthAllowedIdentities` and `-peer-allow-ids`, with `peer_auth_identity_rejections` metrics.
 - Authenticated Compose evidence for healthy identities, unlisted identity rejection, and tokenless demo compatibility.
 - Aggregate anti-entropy counters for inventory advertisements, missing-key requests, and repair blob deliveries.
+- Aggregate continuation counters for scheduled, completed, and dropped deferred repair work.
 - Delivery logs distinguish `delivery=one-shot` from `delivery=anti-entropy` without high-cardinality metric labels.
 - Authenticated restart/repair and duplicate-safe replay acceptance coverage.
 - Repair demos that require a positive `replication_repair_blobs_sent` outcome.
+- Bounded continuation demo evidence with periodic inventory disabled.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.

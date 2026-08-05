@@ -52,6 +52,10 @@ curl -s http://127.0.0.1:8080/peers
 
 Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`), auth, and transport frame counters such as `peer_auth_identity_rejections`. The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 
+Continuation operations add the aggregate `replication_repair_continuations_scheduled`,
+`replication_repair_continuations_completed`, and
+`replication_repair_continuations_dropped` counters to both health formats.
+
 Or run the whole flow:
 
 ```bash
@@ -89,6 +93,15 @@ For a reconnect/failure demo that stops node2, deletes its durable blob while do
 ```bash
 make demo-failure
 ```
+
+To force and observe a bounded repair continuation without periodic inventory:
+
+```bash
+make demo-continuation
+```
+
+This local two-node demo seeds three 4-byte blobs, caps one repair response at 8 bytes,
+and verifies the delayed continuation delivers the remaining blob.
 
 For a longer-lived node with static peers, use `-peers` and reconnect backoff:
 

@@ -151,7 +151,7 @@ Implemented:
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, connection age, and `auth_method`.
 - Optional `auth_identity` values in peer snapshots and structured connection logs.
 - Optional inbound identity allowlists with `peer_auth_identity_rejections` metrics.
-- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, anti-entropy inventory/missing/repair outcomes, and replication errors.
+- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, anti-entropy inventory/missing/repair outcomes, continuation scheduling/completion/drop outcomes, and replication errors; the same aggregate values are available from `/metrics/prometheus`.
 
 Not implemented yet:
 
