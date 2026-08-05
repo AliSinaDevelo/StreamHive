@@ -135,6 +135,17 @@ bytes and one key, stops the target while the source cursor is active, restarts 
 checks all keys plus JSON and Prometheus inventory counters. It leaves periodic inventory off so
 the result comes from startup exchange continuation and reconnect cleanup.
 
+For repeatable multi-peer cursor and mutation coverage:
+
+```bash
+make test-inventory-fairness
+```
+
+This race-enabled acceptance target runs one source and two durable targets, mutates the source
+between bounded pages, disconnects one target while the other continues, and verifies both final
+key sets. Deletions are only exercised before advertisement because the current add/repair wire
+protocol has no tombstone message.
+
 For a longer-lived node with static peers, use `-peers` and reconnect backoff:
 
 ```bash

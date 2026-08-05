@@ -159,6 +159,19 @@ inventory work. The acceptance test also checks the limited, completed, keys-sen
 dropped counters in JSON and the corresponding Prometheus text samples. This establishes the
 current convergence and cleanup behavior before any digest or range protocol is considered.
 
+The follow-up multi-peer mutation check is:
+
+```bash
+make test-inventory-fairness
+```
+
+It repeats a one-source/two-target real-TCP exchange under the same small budgets, mutates the
+source between pages, disconnects one target while the other remains active, and requires both
+targets to match the final content-addressed key set. The mutation removes only a key that has
+not yet been advertised. That is deliberate: the current `blob.has`/`blob.missing`/`blob.put`
+contract repairs additions but does not encode tombstones, so true delete propagation needs a
+separate protocol design rather than an implicit anti-entropy promise.
+
 ## Research Sources
 
 - [Dynamo: Amazon's highly available key-value store](https://www.amazon.science/publications/dynamo-amazons-highly-available-key-value-store)

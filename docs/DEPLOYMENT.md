@@ -92,6 +92,16 @@ the source has a pending cursor, restarts the target, and verifies every key plu
 Prometheus counters. The demo is cleanup-safe and accepts `P2P_ADDR`, `HEALTH_ADDR`,
 `TARGET_P2P_ADDR`, `TARGET_HEALTH_ADDR`, and `STREAMHIVE_DATA_DIR` overrides.
 
+For a multi-peer fairness check that also exercises source mutation, run:
+
+```bash
+make test-inventory-fairness
+```
+
+This uses temporary durable stores and five race-enabled repetitions. It disconnects one target
+while a second target continues, and deletes only a source key that has not been advertised yet;
+deletion propagation remains out of scope until the protocol has an explicit tombstone message.
+
 Health endpoints are exposed on:
 
 - **node1**: <http://127.0.0.1:18081>

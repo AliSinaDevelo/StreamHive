@@ -11,6 +11,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Tests**: deterministic inventory budget tests cover byte/key saturation, cursor continuation, cancellation, peer independence, and budgeted end-to-end benchmarks.
 - **Tests**: real-TCP budgeted inventory acceptance coverage proves eight content-addressed blobs converge after a target disconnect and durable restart, with JSON and Prometheus counter assertions.
 - **Demo**: `make demo-inventory-budget` reproduces the interrupted startup exchange with cleanup-safe local processes and fixed-port CI defaults.
+- **Tests**: multi-peer mutation coverage exercises two durable targets, exclusive cursor refresh after a source mutation, disconnect fairness, and exact final key sets under five race-enabled repetitions.
+- **CI**: `make test-inventory-fairness` runs as a dedicated Go 1.23.x pipeline job.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
 - **Storage**: durable 32-byte SHA-256 keys are verified on read and inventory; corrupted content is observable and repairable through anti-entropy.

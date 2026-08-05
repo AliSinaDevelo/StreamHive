@@ -36,6 +36,17 @@ It seeds eight content-addressed blobs, forces one-key inventory continuations o
 disconnects the target while a source cursor is active, restarts the durable target, and checks
 convergence plus JSON and Prometheus exchange counters with no active cursor left behind.
 
+The multi-peer mutation and fairness acceptance target is:
+
+```bash
+make test-inventory-fairness
+```
+
+It runs five race-enabled repetitions with one source and two durable targets, mutates the source
+between bounded pages, disconnects one target while the other converges, and checks exact final
+key sets. The mutation deletes only a not-yet-advertised key because the current replication
+protocol has no tombstone message.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -107,6 +118,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make demo-failure` to verify peer reconnect plus repair after a node restart
 - `make demo-continuation` to force an 8-byte repair budget and verify deferred delivery through continuation counters without periodic inventory
 - `make demo-inventory-budget` to force one-key/128-byte startup inventory continuations, interrupt a real TCP target, restart its durable store, and verify complete convergence plus JSON/Prometheus counters
+- `make test-inventory-fairness` to repeat the multi-peer mutation/reconnect convergence proof under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 
