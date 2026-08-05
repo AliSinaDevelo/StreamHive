@@ -23,7 +23,8 @@ go test . -run '^TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob$'
 ```
 
 It authenticates bounded peer identities, repairs a deleted content-addressed blob after
-the target process restarts, and verifies that an exact replay is acknowledged as a duplicate.
+the target process restarts, repairs a deliberately corrupted content-addressed file,
+and verifies that an exact replay is acknowledged as a duplicate.
 
 ## Benchmarks
 
@@ -58,7 +59,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make demo-replication` with fixed localhost ports
 - `make demo-compose` to verify 3-node durable rehydration
 - `make demo-auth` to verify authenticated peer identities, allowlist and token rejection before blob storage, and restart repair in one acceptance path
-- `make demo-repair` to verify periodic repair after local durable corruption and observe a positive repair-delivery counter
+- `make demo-repair` to overwrite durable content, observe `replication_corrupt_blobs_detected`, and verify a positive `replication_repair_blobs_sent` outcome plus recovered SHA-256 bytes
 - `make demo-failure` to verify peer reconnect plus repair after a node restart
 - `make demo-continuation` to force an 8-byte repair budget and verify deferred delivery through continuation counters without periodic inventory
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)

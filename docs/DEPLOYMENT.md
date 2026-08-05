@@ -60,7 +60,7 @@ Run the corruption repair demo:
 make demo-repair
 ```
 
-The repair demo starts the same 3-node cluster, seeds one content-addressed blob, deletes node3's durable blob file, and verifies periodic anti-entropy restores the exact key.
+The repair demo starts the same 3-node cluster, seeds one content-addressed blob, overwrites node3's durable bytes, and verifies FileStore detects the mismatch and periodic anti-entropy restores the exact SHA-256 content.
 
 Run the reconnect/failure demo:
 
@@ -135,7 +135,7 @@ Define error budgets once you expose a workload to users. Baseline probes:
 - **Availability**: `/livez` success rate.
 - **Readiness**: `/readyz` reflects listener bound (`TCPTransport.Ready`).
 - **Peer visibility**: `/peers` returns active connected peers with remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
-- **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, `replication_blob_write_errors`, `replication_inventory_advertisements`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, and `replication_repair_blobs_deferred`, or Prometheus samples from `/metrics/prometheus`. The anti-entropy counters are aggregate: advertisements count successful `blob.has` frames, missing-key requests count keys in `blob.missing` messages, repair sends count successful repair `blob.put` frames, and deferred counts keys held back by the per-response repair budget.
+- **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, `replication_blob_write_errors`, `replication_inventory_advertisements`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`, and `replication_corrupt_blobs_detected`, or Prometheus samples from `/metrics/prometheus`. The anti-entropy counters are aggregate: advertisements count successful `blob.has` frames, missing-key requests count keys in `blob.missing` messages, repair sends count successful repair `blob.put` frames, deferred counts keys held back by the per-response repair budget, and corruption counts damaged content-addressed files replaced by a verified repair.
 
 Continuation counters are also aggregate: `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and

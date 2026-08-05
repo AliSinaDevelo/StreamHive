@@ -187,7 +187,9 @@ Aggregate anti-entropy counters make that control loop visible without peer labe
 `replication_missing_keys_requested` counts keys in `blob.missing` messages, and
 `replication_repair_blobs_sent` counts successful repair `blob.put` frames, while
 `replication_repair_blobs_deferred` counts requested keys held back by the per-response
-repair budget. `replication_repair_continuations_scheduled`,
+repair budget. `replication_corrupt_blobs_detected` counts damaged content-addressed
+files observed while accepting a verified repair and replacing the bad bytes.
+`replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` count delayed continuation batches without peer
 labels. `replication_repair_continuations_active` counts scheduled or running per-peer

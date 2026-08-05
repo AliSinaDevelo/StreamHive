@@ -71,6 +71,24 @@ func TestFileStore_NotFoundAndHas(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestFileStore_ContentKeyDetectsCorruption(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+
+	data := []byte("durable content")
+	key := SHA256Key(data)
+	require.NoError(t, store.Put(ctx, key, data))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, SHA256KeyHex(data)), []byte("tampered"), 0o600))
+
+	has, err := store.Has(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, has)
+	_, err = store.Get(ctx, key)
+	assert.ErrorIs(t, err, ErrSHA256Mismatch)
+}
+
 func TestFileStore_Delete(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewFileStore(t.TempDir())

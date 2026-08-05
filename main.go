@@ -657,7 +657,10 @@ func handleReplicationMessage(
 			return err
 		}
 		existing, err := store.Get(ctx, msg.Key)
-		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, storage.ErrSHA256Mismatch) {
+			metrics.CorruptBlobsDetected.Add(1)
+			log.Warn("replicated blob corruption detected", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(msg.Key), "delivery", "anti-entropy")
+		} else if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 		if err == nil && bytes.Equal(existing, msg.Data) {
@@ -1415,6 +1418,7 @@ type replicationMetrics struct {
 	MissingKeysRequested          atomic.Uint64
 	RepairBlobsSent               atomic.Uint64
 	RepairBlobsDeferred           atomic.Uint64
+	CorruptBlobsDetected          atomic.Uint64
 	RepairContinuationsScheduled  atomic.Uint64
 	RepairContinuationsCompleted  atomic.Uint64
 	RepairContinuationsDropped    atomic.Uint64
@@ -1451,6 +1455,7 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_missing_keys_requested":           int64(m.MissingKeysRequested.Load()),
 		"replication_repair_blobs_sent":                int64(m.RepairBlobsSent.Load()),
 		"replication_repair_blobs_deferred":            int64(m.RepairBlobsDeferred.Load()),
+		"replication_corrupt_blobs_detected":           int64(m.CorruptBlobsDetected.Load()),
 		"replication_repair_continuations_scheduled":   int64(m.RepairContinuationsScheduled.Load()),
 		"replication_repair_continuations_completed":   int64(m.RepairContinuationsCompleted.Load()),
 		"replication_repair_continuations_dropped":     int64(m.RepairContinuationsDropped.Load()),

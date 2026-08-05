@@ -88,6 +88,9 @@ func (s *FileStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := VerifySHA256Key(key, data); err != nil && !errors.Is(err, ErrInvalidSHA256Key) {
+		return nil, err
+	}
 	return data, nil
 }
 
@@ -99,6 +102,16 @@ func (s *FileStore) Has(ctx context.Context, key []byte) (bool, error) {
 	path, err := s.pathFor(key)
 	if err != nil {
 		return false, err
+	}
+	if len(key) == SHA256KeyBytes {
+		data, readErr := os.ReadFile(path)
+		if os.IsNotExist(readErr) {
+			return false, nil
+		}
+		if readErr != nil {
+			return false, readErr
+		}
+		return VerifySHA256Key(key, data) == nil, nil
 	}
 	_, err = os.Stat(path)
 	if os.IsNotExist(err) {

@@ -77,16 +77,23 @@ wait_ready node3 http://127.0.0.1:18083
 $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm seed
 wait_key_present node3
 
-rm -f "$DATA_DIR/node3/$EXPECTED_KEY"
-if [ -f "$DATA_DIR/node3/$EXPECTED_KEY" ]; then
-	echo "node3 still had expected key after local deletion" >&2
+printf '%s' "tampered" > "$DATA_DIR/node3/$EXPECTED_KEY"
+if [ ! -f "$DATA_DIR/node3/$EXPECTED_KEY" ]; then
+	echo "node3 did not retain expected key after local corruption" >&2
 	exit 1
 fi
 
 wait_key_present node3
+wait_metric node3 http://127.0.0.1:18083 replication_corrupt_blobs_detected
 wait_metric node1 http://127.0.0.1:18081 replication_repair_blobs_sent
 
-echo "3-node repair demo passed: node3 repaired deleted blob"
+repaired_hash="$($COMPOSE -f "$ROOT_DIR/docker-compose.yml" exec -T node3 sha256sum "/data/$EXPECTED_KEY" | awk '{print $1}')"
+if [ "$repaired_hash" != "$EXPECTED_KEY" ]; then
+	echo "node3 content hash did not recover after corruption: $repaired_hash" >&2
+	exit 1
+fi
+
+echo "3-node repair demo passed: node3 detected and repaired corrupted blob"
 echo "repaired key: $EXPECTED_KEY"
 curl -fsS http://127.0.0.1:18083/metrics
 echo

@@ -147,7 +147,7 @@ Implemented:
 - Per-key `blob.ack` responses plus bounded ACK-driven retries for one-shot CLI puts.
 - Delivery outcome logs and aggregate accepted/failure/write-error counters for one-shot CLI puts.
 - Startup anti-entropy for connected `-replicate` peers.
-- Receiver-side storage via `storage.MemoryStore` or durable `storage.FileStore` with `-store-dir`.
+- Receiver-side storage via `storage.MemoryStore` or durable `storage.FileStore` with `-store-dir`; FileStore validates 32-byte SHA-256 content keys on `Get` and `Has`, and a verified repair replaces damaged bytes atomically.
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, connection age, and `auth_method`.
 - Optional `auth_identity` values in peer snapshots and structured connection logs.
 - Optional inbound identity allowlists with `peer_auth_identity_rejections` metrics.

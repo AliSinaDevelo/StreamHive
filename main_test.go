@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -225,6 +227,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_missing_keys_requested")
 	assert.Contains(t, metrics, "replication_repair_blobs_sent")
 	assert.Contains(t, metrics, "replication_repair_blobs_deferred")
+	assert.Contains(t, metrics, "replication_corrupt_blobs_detected")
 	assert.Contains(t, metrics, "replication_repair_continuations_scheduled")
 	assert.Contains(t, metrics, "replication_repair_continuations_completed")
 	assert.Contains(t, metrics, "replication_repair_continuations_dropped")
@@ -233,6 +236,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Zero(t, metrics["replication_repair_continuations_scheduled"])
 	assert.Zero(t, metrics["replication_repair_continuations_completed"])
 	assert.Zero(t, metrics["replication_repair_continuations_dropped"])
+	assert.Zero(t, metrics["replication_corrupt_blobs_detected"])
 	assert.Zero(t, metrics["replication_repair_continuations_active"])
 	assert.Zero(t, metrics["replication_repair_continuation_keys_pending"])
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
@@ -250,6 +254,7 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_missing_keys_requested")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_sent")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_deferred")
+	assert.Contains(t, string(body), "streamhive_replication_corrupt_blobs_detected")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_scheduled")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_completed")
 	assert.Contains(t, string(body), "streamhive_replication_repair_continuations_dropped")
@@ -940,6 +945,33 @@ func TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob(t *testing.T)
 		return err == nil && bytes.Equal(got, data)
 	}, 3*time.Second, 20*time.Millisecond, "source logs=%q target logs=%q", sourceErr.String(), targetErr.String())
 
+	require.NoError(t, os.WriteFile(filepath.Join(targetDir, storage.SHA256KeyHex(data)), []byte("tampered"), 0o600))
+	hasKey, err = targetStore.Has(ctx, key)
+	require.NoError(t, err)
+	require.False(t, hasKey)
+	_, err = targetStore.Get(ctx, key)
+	require.ErrorIs(t, err, storage.ErrSHA256Mismatch)
+	require.Eventually(t, func() bool {
+		store, err := storage.NewFileStore(targetDir)
+		if err != nil {
+			return false
+		}
+		got, err := store.Get(ctx, key)
+		if err != nil || !bytes.Equal(got, data) {
+			return false
+		}
+		resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + healthAddr + "/metrics")
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var metrics map[string]int64
+		if err := json.NewDecoder(resp.Body).Decode(&metrics); err != nil {
+			return false
+		}
+		return metrics["replication_corrupt_blobs_detected"] >= 1
+	}, 3*time.Second, 20*time.Millisecond, "source logs=%q target logs=%q", sourceErr.String(), targetErr.String())
+
 	var senderErr safeBuffer
 	err = run(ctx, []string{
 		"-listen", "127.0.0.1:0",
@@ -1244,6 +1276,33 @@ func TestHandleReplicationMessageRejectsSHA256Mismatch(t *testing.T) {
 	err := handleReplicationMessage(ctx, testPeer{}, store, nil, msg, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), store)
 	assert.ErrorIs(t, err, storage.ErrSHA256Mismatch)
 	assert.Equal(t, uint64(0), metrics.BlobsStored.Load())
+}
+
+func TestHandleReplicationMessageReplacesCorruptFileStoreContentBlob(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := storage.NewFileStore(dir)
+	require.NoError(t, err)
+	data := []byte("repairable content")
+	key := storage.SHA256Key(data)
+	require.NoError(t, store.Put(ctx, key, data))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, storage.SHA256KeyHex(data)), []byte("tampered"), 0o600))
+
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+	err = handleReplicationMessage(ctx, peer, store, nil, replication.Message{
+		Type: replication.MessageTypeBlobPut,
+		Key:  key,
+		Data: data,
+	}, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	require.NoError(t, err)
+
+	got, err := store.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+	assert.Equal(t, uint64(1), metrics.CorruptBlobsDetected.Load())
+	assert.Equal(t, uint64(1), metrics.BlobsStored.Load())
+	assert.Equal(t, uint64(1), metrics.BlobAcksSent.Load())
 }
 
 func TestHandleReplicationMessageAllowsOpaqueKeyReplace(t *testing.T) {
