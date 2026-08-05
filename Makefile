@@ -1,4 +1,4 @@
-.PHONY: build run test test-race vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci help
+.PHONY: build run test test-race test-fairness vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -12,6 +12,9 @@ test:
 
 test-race:
 	@go test -race -count=1 ./...
+
+test-fairness:
+	@go test -race -count=20 -run '^TestRepairContinuationSchedulerKeepsPeersIndependent$$' ./...
 
 vet:
 	@go vet ./...
@@ -47,4 +50,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci"
+	@echo "Targets: build run test test-race test-fairness vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci"
