@@ -181,7 +181,9 @@ func (s *FileStore) ListKeyPage(ctx context.Context, after []byte, limit int) ([
 	if err != nil {
 		return nil, nil, err
 	}
-	defer dir.Close()
+	defer func() {
+		_ = dir.Close()
+	}()
 
 	var page [][]byte
 	for {
