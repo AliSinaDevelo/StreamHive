@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-fairness test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
+.PHONY: build run test test-race test-fairness test-inventory-fairness test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -15,6 +15,9 @@ test-race:
 
 test-fairness:
 	@go test -race -count=20 -run '^TestRepairContinuationSchedulerKeepsPeersIndependent$$' ./...
+
+test-inventory-fairness:
+	@go test -race -count=5 -run '^TestRun_budgetedInventoryConvergesAcrossPeersAndSourceMutation$$' ./...
 
 test-fuzz:
 	@go test -run '^$$' -fuzz=FuzzDecode -fuzztime=3s ./replication
@@ -68,4 +71,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race test-fairness test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
+	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
