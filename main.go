@@ -30,12 +30,14 @@ import (
 )
 
 const (
-	defaultPutAckTimeout = time.Second
-	defaultPutRetries    = 2
-	defaultPutRetryDelay = 100 * time.Millisecond
-	maxPutRetries        = 10
-	maxPutRetryDelay     = 500 * time.Millisecond
-	maxDuration          = time.Duration(1<<63 - 1)
+	defaultPutAckTimeout          = time.Second
+	defaultPutRetries             = 2
+	defaultPutRetryDelay          = 100 * time.Millisecond
+	maxPutRetries                 = 10
+	maxPutRetryDelay              = 500 * time.Millisecond
+	repairContinuationDelay       = 100 * time.Millisecond
+	maxRepairContinuationAttempts = 1
+	maxDuration                   = time.Duration(1<<63 - 1)
 )
 
 var errBlobAckTimeout = errors.New("replication: timed out waiting for blob acknowledgment")
@@ -269,6 +271,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
+	var repairScheduler *repairContinuationScheduler
+	if blobStore != nil {
+		repairScheduler = newRepairContinuationScheduler(ctx, blobStore, replLimits, tr.MaxFrameBytes, replMetrics, log, repairContinuationDelay)
+		replMetrics.repairScheduler = repairScheduler
+	}
 	if blobStore != nil || putTracker != nil {
 		tr.FrameHandler = func(ctx context.Context, peer p2p.Peer, payload []byte) error {
 			msg, err := replication.Decode(payload, replLimits)
@@ -289,7 +296,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var reconnector *peerReconnector
 	if *peerReconnect {
 		reconnector = newPeerReconnector(ctx, tr, peerList, *peerReconnectMin, *peerReconnectMax, log)
-		tr.OnPeerDisconnected = reconnector.OnPeerDisconnected
+	}
+	if repairScheduler != nil || reconnector != nil {
+		tr.OnPeerDisconnected = func(peer p2p.Peer) {
+			if repairScheduler != nil {
+				repairScheduler.Forget(peer)
+			}
+			if reconnector != nil {
+				reconnector.OnPeerDisconnected(peer)
+			}
+		}
 	}
 
 	if *tlsCert != "" || *tlsKey != "" {
@@ -693,7 +709,11 @@ func handleReplicationMessage(
 		log.Info("replication missing sent", "remote", peer.RemoteAddr().String(), "keys", len(missing))
 		return nil
 	case replication.MessageTypeBlobMissing:
-		return sendRequestedBlobs(ctx, peer, store, msg.Keys, limits, maxFrameBytes, metrics, log, true)
+		deferred, err := sendRequestedBlobsResult(ctx, peer, store, msg.Keys, limits, maxFrameBytes, metrics, log, true)
+		if err == nil && len(deferred) > 0 && metrics.repairScheduler != nil {
+			metrics.repairScheduler.Schedule(peer, deferred)
+		}
+		return err
 	case replication.MessageTypeBlobGet:
 		return sendRequestedBlobs(ctx, peer, store, [][]byte{msg.Key}, limits, maxFrameBytes, metrics, log, false)
 	case replication.MessageTypeBlobAck:
@@ -819,6 +839,21 @@ func sendRequestedBlobs(
 	log *slog.Logger,
 	repair bool,
 ) error {
+	_, err := sendRequestedBlobsResult(ctx, peer, store, keys, limits, maxFrameBytes, metrics, log, repair)
+	return err
+}
+
+func sendRequestedBlobsResult(
+	ctx context.Context,
+	peer p2p.Peer,
+	store storage.BlobStore,
+	keys [][]byte,
+	limits replication.Limits,
+	maxFrameBytes int,
+	metrics *replicationMetrics,
+	log *slog.Logger,
+	repair bool,
+) ([][]byte, error) {
 	repairBudget := replication.DefaultMaxRepairBytes
 	if limits.MaxRepairBytes > 0 {
 		repairBudget = limits.MaxRepairBytes
@@ -826,7 +861,7 @@ func sendRequestedBlobs(
 	var repairBytes int
 	for i, key := range keys {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		data, err := store.Get(ctx, key)
 		if errors.Is(err, storage.ErrNotFound) {
@@ -834,10 +869,10 @@ func sendRequestedBlobs(
 		}
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+				return nil, ctxErr
 			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
+				return nil, err
 			}
 			metrics.SendErrors.Add(1)
 			metrics.BlobsSkipped.Add(1)
@@ -845,13 +880,13 @@ func sendRequestedBlobs(
 			continue
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if repair && repairBytes > 0 && repairBytes+len(data) > repairBudget {
 			deferred := len(keys) - i
 			metrics.RepairBlobsDeferred.Add(uint64(deferred))
 			log.Warn("replication repair deferred", "remote", peer.RemoteAddr().String(), "keys", deferred, "bytes_sent", repairBytes, "budget_bytes", repairBudget, "delivery", "anti-entropy")
-			return nil
+			return cloneBlobKeys(keys[i:]), nil
 		}
 		payload, err := replication.EncodeBlobPut(key, data, limits)
 		if err != nil {
@@ -861,11 +896,11 @@ func sendRequestedBlobs(
 			continue
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if err := writePeerFrame(peer, payload, maxFrameBytes); err != nil {
 			metrics.SendErrors.Add(1)
-			return err
+			return nil, err
 		}
 		metrics.BlobsSent.Add(1)
 		metrics.BytesSent.Add(uint64(len(data)))
@@ -877,7 +912,201 @@ func sendRequestedBlobs(
 			log.Info("replicated blob sent", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "bytes", len(data), "delivery", "request")
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+type repairContinuationScheduler struct {
+	ctx           context.Context
+	store         storage.BlobStore
+	limits        replication.Limits
+	maxKeys       int
+	maxFrameBytes int
+	metrics       *replicationMetrics
+	log           *slog.Logger
+	delay         time.Duration
+
+	mu      sync.Mutex
+	entries map[string]*repairContinuationEntry
+}
+
+type repairContinuationEntry struct {
+	peer      p2p.Peer
+	pending   map[string][]byte
+	attempt   int
+	running   bool
+	scheduled bool
+}
+
+func newRepairContinuationScheduler(
+	ctx context.Context,
+	store storage.BlobStore,
+	limits replication.Limits,
+	maxFrameBytes int,
+	metrics *replicationMetrics,
+	log *slog.Logger,
+	delay time.Duration,
+) *repairContinuationScheduler {
+	if delay <= 0 {
+		delay = repairContinuationDelay
+	}
+	maxKeys := limits.MaxKeys
+	if maxKeys <= 0 {
+		maxKeys = replication.DefaultMaxKeys
+	}
+	return &repairContinuationScheduler{
+		ctx:           ctx,
+		store:         store,
+		limits:        limits,
+		maxKeys:       maxKeys,
+		maxFrameBytes: maxFrameBytes,
+		metrics:       metrics,
+		log:           log,
+		delay:         delay,
+		entries:       make(map[string]*repairContinuationEntry),
+	}
+}
+
+func (s *repairContinuationScheduler) Schedule(peer p2p.Peer, keys [][]byte) {
+	if s == nil || len(keys) == 0 || s.ctx.Err() != nil {
+		return
+	}
+	id := repairPeerKey(peer)
+	launch := false
+	s.mu.Lock()
+	entry := s.entries[id]
+	if entry == nil {
+		entry = &repairContinuationEntry{
+			peer:    peer,
+			pending: make(map[string][]byte),
+		}
+		s.entries[id] = entry
+	}
+	entry.peer = peer
+	mergeRepairContinuationKeys(entry.pending, keys, s.maxKeys)
+	if entry.running {
+		entry.attempt = 0
+	} else if !entry.scheduled {
+		entry.attempt = 0
+		entry.scheduled = true
+		launch = true
+	}
+	s.mu.Unlock()
+
+	if launch {
+		s.log.Info("replication repair continuation scheduled", "remote", peer.RemoteAddr().String(), "keys", len(keys), "delivery", "anti-entropy")
+		go s.wait(id)
+	}
+}
+
+func (s *repairContinuationScheduler) Forget(peer p2p.Peer) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.entries, repairPeerKey(peer))
+	s.mu.Unlock()
+}
+
+func (s *repairContinuationScheduler) wait(id string) {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-s.ctx.Done():
+		s.forgetID(id)
+	case <-timer.C:
+		s.run(id)
+	}
+}
+
+func (s *repairContinuationScheduler) run(id string) {
+	s.mu.Lock()
+	entry := s.entries[id]
+	if entry == nil {
+		s.mu.Unlock()
+		return
+	}
+	entry.scheduled = false
+	entry.running = true
+	keys := repairContinuationKeys(entry.pending)
+	entry.pending = make(map[string][]byte)
+	attempt := entry.attempt
+	peer := entry.peer
+	s.mu.Unlock()
+
+	deferred, err := sendRequestedBlobsResult(s.ctx, peer, s.store, keys, s.limits, s.maxFrameBytes, s.metrics, s.log, true)
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		s.log.Warn("replication repair continuation failed", "remote", peer.RemoteAddr().String(), "err", err, "delivery", "anti-entropy")
+	}
+
+	launch := false
+	s.mu.Lock()
+	entry = s.entries[id]
+	if entry == nil {
+		s.mu.Unlock()
+		return
+	}
+	entry.running = false
+	if err == nil && len(deferred) > 0 && attempt < maxRepairContinuationAttempts {
+		mergeRepairContinuationKeys(entry.pending, deferred, s.maxKeys)
+		entry.attempt = attempt + 1
+	}
+	if len(entry.pending) > 0 {
+		entry.scheduled = true
+		launch = true
+	} else {
+		delete(s.entries, id)
+	}
+	s.mu.Unlock()
+
+	if launch {
+		go s.wait(id)
+	}
+}
+
+func (s *repairContinuationScheduler) forgetID(id string) {
+	s.mu.Lock()
+	delete(s.entries, id)
+	s.mu.Unlock()
+}
+
+func mergeRepairContinuationKeys(dst map[string][]byte, keys [][]byte, maxKeys int) {
+	if maxKeys <= 0 {
+		maxKeys = replication.DefaultMaxKeys
+	}
+	for _, key := range keys {
+		if _, ok := dst[string(key)]; ok {
+			continue
+		}
+		if len(dst) >= maxKeys {
+			return
+		}
+		dst[string(key)] = append([]byte(nil), key...)
+	}
+}
+
+func repairContinuationKeys(pending map[string][]byte) [][]byte {
+	keys := make([][]byte, 0, len(pending))
+	for _, key := range pending {
+		keys = append(keys, append([]byte(nil), key...))
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return string(keys[i]) < string(keys[j])
+	})
+	return keys
+}
+
+func repairPeerKey(peer p2p.Peer) string {
+	local := ""
+	if localPeer, ok := peer.(interface{ LocalAddr() net.Addr }); ok {
+		if addr := localPeer.LocalAddr(); addr != nil {
+			local = addr.String()
+		}
+	}
+	direction := "inbound"
+	if peer.IsOutbound() {
+		direction = "outbound"
+	}
+	return local + "\x00" + peer.RemoteAddr().String() + "\x00" + direction
 }
 
 func resolvePutKey(key string, data []byte, contentKey bool) ([]byte, string) {
@@ -927,6 +1156,17 @@ func missingKeys(remoteKeys, localKeys [][]byte) [][]byte {
 		missing = append(missing, append([]byte(nil), key...))
 	}
 	return missing
+}
+
+func cloneBlobKeys(keys [][]byte) [][]byte {
+	if keys == nil {
+		return nil
+	}
+	cloned := make([][]byte, len(keys))
+	for i, key := range keys {
+		cloned[i] = append([]byte(nil), key...)
+	}
+	return cloned
 }
 
 func missingKeysFromStore(ctx context.Context, store storage.BlobStore, remoteKeys [][]byte) ([][]byte, error) {
@@ -1131,6 +1371,7 @@ type replicationMetrics struct {
 	RepairBlobsSent         atomic.Uint64
 	RepairBlobsDeferred     atomic.Uint64
 	ackTracker              *putAckTracker
+	repairScheduler         *repairContinuationScheduler
 }
 
 func (m *replicationMetrics) Snapshot() map[string]int64 {

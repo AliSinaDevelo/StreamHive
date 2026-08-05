@@ -41,6 +41,12 @@ type capturePeer struct {
 	payloads [][]byte
 }
 
+type asyncCapturePeer struct {
+	testPeer
+	mu       sync.Mutex
+	payloads [][]byte
+}
+
 type hasProbeStore struct {
 	storage.BlobStore
 	hasCalls atomic.Int32
@@ -68,6 +74,29 @@ func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
 	}
 	p.payloads = append(p.payloads, append([]byte(nil), payload...))
 	return nil
+}
+
+func (p *asyncCapturePeer) WriteFrame(payload []byte, _ int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.payloads = append(p.payloads, append([]byte(nil), payload...))
+	return nil
+}
+
+func (p *asyncCapturePeer) Len() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.payloads)
+}
+
+func (p *asyncCapturePeer) Payloads() [][]byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	payloads := make([][]byte, len(p.payloads))
+	for i, payload := range p.payloads {
+		payloads[i] = append([]byte(nil), payload...)
+	}
+	return payloads
 }
 
 type retryPeer struct {
@@ -1416,6 +1445,114 @@ func TestSendRequestedBlobsDefersAfterRepairByteBudgetAndRecovers(t *testing.T) 
 	assert.Len(t, peer.payloads, 3)
 	assert.Equal(t, uint64(3), metrics.RepairBlobsSent.Load())
 	assert.Equal(t, uint64(1), metrics.RepairBlobsDeferred.Load())
+}
+
+func TestRepairContinuationSchedulerDeduplicatesAndCompletes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("data")))
+	}
+	limits := replication.Limits{MaxDataBytes: 16, MaxRepairBytes: 8}
+	metrics := &replicationMetrics{}
+	peer := &asyncCapturePeer{}
+	scheduler := newRepairContinuationScheduler(ctx, store, limits, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), 100*time.Millisecond)
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+
+	scheduler.Schedule(peer, keys)
+	scheduler.Schedule(peer, keys)
+
+	require.Eventually(t, func() bool { return peer.Len() == 3 }, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		scheduler.mu.Lock()
+		defer scheduler.mu.Unlock()
+		return len(scheduler.entries) == 0
+	}, time.Second, 5*time.Millisecond)
+
+	payloads := peer.Payloads()
+	gotKeys := make([][]byte, 0, len(payloads))
+	for _, payload := range payloads {
+		msg, err := replication.Decode(payload, limits)
+		require.NoError(t, err)
+		gotKeys = append(gotKeys, msg.Key)
+	}
+	assert.Equal(t, keys, gotKeys)
+	assert.Equal(t, uint64(3), metrics.RepairBlobsSent.Load())
+	assert.Equal(t, uint64(1), metrics.RepairBlobsDeferred.Load())
+}
+
+func TestHandleReplicationMessageSchedulesRepairContinuation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("data")))
+	}
+	limits := replication.Limits{MaxDataBytes: 16, MaxRepairBytes: 8}
+	metrics := &replicationMetrics{}
+	peer := &asyncCapturePeer{}
+	scheduler := newRepairContinuationScheduler(ctx, store, limits, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), 100*time.Millisecond)
+	metrics.repairScheduler = scheduler
+
+	require.NoError(t, handleReplicationMessage(
+		ctx,
+		peer,
+		store,
+		nil,
+		replication.Message{
+			Type: replication.MessageTypeBlobMissing,
+			Keys: [][]byte{[]byte("a"), []byte("b"), []byte("c")},
+		},
+		limits,
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		store,
+	))
+
+	require.Eventually(t, func() bool { return peer.Len() == 3 }, 2*time.Second, 5*time.Millisecond)
+	assert.Equal(t, uint64(3), metrics.RepairBlobsSent.Load())
+	assert.Equal(t, uint64(1), metrics.RepairBlobsDeferred.Load())
+}
+
+func TestRepairContinuationSchedulerForgetsDisconnectedPeer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(ctx, []byte("a"), []byte("data")))
+	metrics := &replicationMetrics{}
+	peer := &asyncCapturePeer{}
+	scheduler := newRepairContinuationScheduler(ctx, store, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), 100*time.Millisecond)
+
+	scheduler.Schedule(peer, [][]byte{[]byte("a")})
+	scheduler.Forget(peer)
+	time.Sleep(2 * scheduler.delay)
+
+	assert.Zero(t, peer.Len())
+	scheduler.mu.Lock()
+	assert.Empty(t, scheduler.entries)
+	scheduler.mu.Unlock()
+}
+
+func TestRepairContinuationSchedulerStopsOnShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := storage.NewMemoryStore()
+	require.NoError(t, store.Put(context.Background(), []byte("a"), []byte("data")))
+	metrics := &replicationMetrics{}
+	peer := &asyncCapturePeer{}
+	scheduler := newRepairContinuationScheduler(ctx, store, replication.Limits{}, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), 100*time.Millisecond)
+
+	scheduler.Schedule(peer, [][]byte{[]byte("a")})
+	cancel()
+	require.Eventually(t, func() bool {
+		scheduler.mu.Lock()
+		defer scheduler.mu.Unlock()
+		return len(scheduler.entries) == 0
+	}, time.Second, 5*time.Millisecond)
+	time.Sleep(2 * scheduler.delay)
+
+	assert.Zero(t, peer.Len())
 }
 
 func TestSendRequestedBlobsStopsWhenContextCancelsAfterRead(t *testing.T) {
