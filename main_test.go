@@ -256,6 +256,8 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_blob_put_failures")
 	assert.Contains(t, metrics, "replication_blob_write_errors")
 	assert.Contains(t, metrics, "replication_inventory_advertisements")
+	assert.Contains(t, metrics, "replication_inventory_bytes_sent")
+	assert.Contains(t, metrics, "replication_inventory_keys_probed")
 	assert.Contains(t, metrics, "replication_missing_keys_requested")
 	assert.Contains(t, metrics, "replication_repair_blobs_sent")
 	assert.Contains(t, metrics, "replication_repair_blobs_deferred")
@@ -295,6 +297,8 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_blobs_stored")
 	assert.Contains(t, string(body), "streamhive_replication_blob_puts_accepted")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_advertisements")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_bytes_sent")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_keys_probed")
 	assert.Contains(t, string(body), "streamhive_replication_missing_keys_requested")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_sent")
 	assert.Contains(t, string(body), "streamhive_replication_repair_blobs_deferred")
@@ -1418,6 +1422,7 @@ func TestSendBlobHasCountsInventoryAdvertisement(t *testing.T) {
 	assert.Equal(t, replication.MessageTypeBlobHas, msg.Type)
 	assert.Equal(t, [][]byte{[]byte("inventory-key")}, msg.Keys)
 	assert.Equal(t, uint64(1), metrics.InventoryAdvertisements.Load())
+	assert.Equal(t, uint64(len(peer.payloads[0])), metrics.InventoryBytesSent.Load())
 }
 
 func TestSendBlobHasBatchesAtConfiguredKeyLimit(t *testing.T) {
@@ -1533,6 +1538,7 @@ func TestHandleReplicationMessageCountsMissingKeysRequested(t *testing.T) {
 	assert.Equal(t, replication.MessageTypeBlobMissing, missing.Type)
 	assert.Equal(t, [][]byte{[]byte("needs-repair")}, missing.Keys)
 	assert.Equal(t, uint64(1), metrics.MissingKeysRequested.Load())
+	assert.Equal(t, uint64(2), metrics.InventoryKeysProbed.Load())
 }
 
 func TestHandleReplicationMessageChecksAdvertisedKeysWithoutLister(t *testing.T) {
@@ -1554,6 +1560,7 @@ func TestHandleReplicationMessageChecksAdvertisedKeysWithoutLister(t *testing.T)
 	assert.Equal(t, replication.MessageTypeBlobMissing, missing.Type)
 	assert.Equal(t, [][]byte{[]byte("needs-repair")}, missing.Keys)
 	assert.Equal(t, int32(2), store.hasCalls.Load())
+	assert.Equal(t, uint64(2), metrics.InventoryKeysProbed.Load())
 	assert.Equal(t, uint64(1), metrics.MissingKeysRequested.Load())
 }
 

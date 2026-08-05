@@ -690,6 +690,7 @@ func handleReplicationMessage(
 		var missing [][]byte
 		var err error
 		if store != nil {
+			metrics.InventoryKeysProbed.Add(uint64(len(msg.Keys)))
 			missing, err = missingKeysFromStore(ctx, store, msg.Keys)
 		} else if lister != nil {
 			var localKeys [][]byte
@@ -836,6 +837,7 @@ func sendBlobHasKeys(ctx context.Context, peer p2p.Peer, keys [][]byte, limits r
 			}
 			if metrics != nil {
 				metrics.InventoryAdvertisements.Add(1)
+				metrics.InventoryBytesSent.Add(uint64(len(payload)))
 			}
 			break
 		}
@@ -1553,6 +1555,8 @@ type replicationMetrics struct {
 	BlobWriteErrors               atomic.Uint64
 	SendErrors                    atomic.Uint64
 	InventoryAdvertisements       atomic.Uint64
+	InventoryBytesSent            atomic.Uint64
+	InventoryKeysProbed           atomic.Uint64
 	MissingKeysRequested          atomic.Uint64
 	RepairBlobsSent               atomic.Uint64
 	RepairBlobsDeferred           atomic.Uint64
@@ -1597,6 +1601,8 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		"replication_blob_write_errors":                int64(m.BlobWriteErrors.Load()),
 		"replication_send_errors":                      int64(m.SendErrors.Load()),
 		"replication_inventory_advertisements":         int64(m.InventoryAdvertisements.Load()),
+		"replication_inventory_bytes_sent":             int64(m.InventoryBytesSent.Load()),
+		"replication_inventory_keys_probed":            int64(m.InventoryKeysProbed.Load()),
 		"replication_missing_keys_requested":           int64(m.MissingKeysRequested.Load()),
 		"replication_repair_blobs_sent":                int64(m.RepairBlobsSent.Load()),
 		"replication_repair_blobs_deferred":            int64(m.RepairBlobsDeferred.Load()),

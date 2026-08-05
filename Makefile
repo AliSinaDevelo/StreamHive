@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-fairness test-fuzz test-budgets bench-inventory vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci help
+.PHONY: build run test test-race test-fairness test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -27,6 +27,9 @@ test-budgets:
 
 bench-inventory:
 	@go test -run '^$$' -bench '^Benchmark(MemoryStoreList(Keys|KeyPages)(4096|65536)|FileStore(ListKeys|ListKeyPages|BuildIndex)(4096|65536))$$' -benchmem -benchtime=100ms ./storage
+
+bench-inventory-wire:
+	@go test -run '^TestResearchInventoryWireFrameBudget$$' -bench '^BenchmarkResearchInventoryExchange$$' -benchmem -benchtime=100ms .
 
 vet:
 	@go vet ./...
@@ -62,4 +65,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race test-fairness test-fuzz test-budgets bench-inventory vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci"
+	@echo "Targets: build run test test-race test-fairness test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-status ci"
