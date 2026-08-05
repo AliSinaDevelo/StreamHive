@@ -1021,7 +1021,7 @@ func TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob(t *testing.T)
 	require.False(t, hasKey)
 
 	var targetListen, healthAddr string
-	targetCancel, targetErr, targetErrCh, _, healthAddr = startTarget()
+	targetCancel, targetErr, targetErrCh, _, _ = startTarget()
 	require.Eventually(t, func() bool {
 		store, err := storage.NewFileStore(targetDir)
 		if err != nil {
