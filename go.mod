@@ -2,7 +2,10 @@ module github.com/AliSinaDevelo/StreamHive
 
 go 1.22.1
 
-require github.com/stretchr/testify v1.11.1
+require (
+	github.com/google/btree v1.1.3
+	github.com/stretchr/testify v1.11.1
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

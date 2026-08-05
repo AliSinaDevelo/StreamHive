@@ -169,3 +169,30 @@ func TestMemoryStore_ListKeyPageEmpty(t *testing.T) {
 	assert.Empty(t, page)
 	assert.Empty(t, next)
 }
+
+func TestMemoryStore_ListKeyPageReflectsMutations(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+	for _, key := range []string{"a", "c", "d"} {
+		require.NoError(t, s.Put(ctx, []byte(key), []byte("value")))
+	}
+
+	page, next, err := s.ListKeyPage(ctx, nil, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("a"), []byte("c")}, page)
+	assert.Equal(t, []byte("c"), next)
+
+	require.NoError(t, s.Delete(ctx, []byte("d")))
+	require.NoError(t, s.Put(ctx, []byte("b"), []byte("value")))
+	cursor := next
+	page, next, err = s.ListKeyPage(ctx, cursor, 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
+	assert.Empty(t, next)
+
+	require.NoError(t, s.Put(ctx, []byte("e"), []byte("value")))
+	page, next, err = s.ListKeyPage(ctx, cursor, 2)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{[]byte("e")}, page)
+	assert.Equal(t, []byte("e"), next)
+}

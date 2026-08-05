@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sort"
 	"sync"
+
+	"github.com/google/btree"
 )
 
 var (
@@ -18,11 +20,28 @@ var (
 type MemoryStore struct {
 	mu   sync.RWMutex
 	data map[string][]byte
+	keys *btree.BTreeG[string]
 }
 
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{data: make(map[string][]byte)}
+	return &MemoryStore{
+		data: make(map[string][]byte),
+		keys: btree.NewOrderedG[string](32),
+	}
+}
+
+func (m *MemoryStore) ensureKeyIndexLocked() {
+	if m.data == nil {
+		m.data = make(map[string][]byte)
+	}
+	if m.keys != nil {
+		return
+	}
+	m.keys = btree.NewOrderedG[string](32)
+	for key := range m.data {
+		m.keys.ReplaceOrInsert(key)
+	}
 }
 
 func keyString(key []byte) (string, error) {
@@ -44,6 +63,10 @@ func (m *MemoryStore) Put(ctx context.Context, key []byte, data []byte) error {
 	cp := append([]byte(nil), data...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureKeyIndexLocked()
+	if _, exists := m.data[ks]; !exists {
+		m.keys.ReplaceOrInsert(ks)
+	}
 	m.data[ks] = cp
 	return nil
 }
@@ -92,7 +115,12 @@ func (m *MemoryStore) Delete(ctx context.Context, key []byte) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.data, ks)
+	if _, ok := m.data[ks]; ok {
+		delete(m.data, ks)
+		if m.keys != nil {
+			m.keys.Delete(ks)
+		}
+	}
 	return nil
 }
 
@@ -121,6 +149,22 @@ func (m *MemoryStore) ListKeys(ctx context.Context) ([][]byte, error) {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.keys != nil {
+		keys := make([][]byte, 0, m.keys.Len())
+		var ctxErr error
+		m.keys.Ascend(func(key string) bool {
+			if err := ctx.Err(); err != nil {
+				ctxErr = err
+				return false
+			}
+			keys = append(keys, []byte(key))
+			return true
+		})
+		if ctxErr != nil {
+			return nil, ctxErr
+		}
+		return keys, nil
+	}
 	keys := make([][]byte, 0, len(m.data))
 	for k := range m.data {
 		keys = append(keys, []byte(k))
@@ -142,6 +186,34 @@ func (m *MemoryStore) ListKeyPage(ctx context.Context, after []byte, limit int) 
 	limit = normalizeKeyPageLimit(limit)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.keys != nil {
+		capacity := limit
+		if capacity > m.keys.Len() {
+			capacity = m.keys.Len()
+		}
+		page := make([][]byte, 0, capacity)
+		var ctxErr error
+		pivot := string(after)
+		m.keys.AscendGreaterOrEqual(pivot, func(key string) bool {
+			if err := ctx.Err(); err != nil {
+				ctxErr = err
+				return false
+			}
+			if len(after) > 0 && key == pivot {
+				return true
+			}
+			page = append(page, []byte(key))
+			return len(page) < limit
+		})
+		if ctxErr != nil {
+			return nil, nil, ctxErr
+		}
+		if len(page) == 0 {
+			return nil, nil, nil
+		}
+		next := append([]byte(nil), page[len(page)-1]...)
+		return page, next, nil
+	}
 
 	var page [][]byte
 	for key := range m.data {
