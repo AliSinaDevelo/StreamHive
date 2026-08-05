@@ -44,11 +44,11 @@ func BenchmarkMemoryStoreGet1KB(b *testing.B) {
 	}
 }
 
-func benchmarkMemoryStore4096(b *testing.B) *MemoryStore {
+func benchmarkMemoryStore(b *testing.B, count int) *MemoryStore {
 	b.Helper()
 	store := NewMemoryStore()
 	ctx := context.Background()
-	for i := 0; i < 4096; i++ {
+	for i := 0; i < count; i++ {
 		key := []byte(fmt.Sprintf("key-%04d", i))
 		if err := store.Put(ctx, key, nil); err != nil {
 			b.Fatal(err)
@@ -58,7 +58,7 @@ func benchmarkMemoryStore4096(b *testing.B) *MemoryStore {
 }
 
 func BenchmarkMemoryStoreListKeys4096(b *testing.B) {
-	store := benchmarkMemoryStore4096(b)
+	store := benchmarkMemoryStore(b, 4096)
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -69,7 +69,37 @@ func BenchmarkMemoryStoreListKeys4096(b *testing.B) {
 }
 
 func BenchmarkMemoryStoreListKeyPages4096(b *testing.B) {
-	store := benchmarkMemoryStore4096(b)
+	store := benchmarkMemoryStore(b, 4096)
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var cursor []byte
+		for {
+			_, next, err := store.ListKeyPage(ctx, cursor, 256)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if len(next) == 0 {
+				break
+			}
+			cursor = next
+		}
+	}
+}
+
+func BenchmarkMemoryStoreListKeys65536(b *testing.B) {
+	store := benchmarkMemoryStore(b, 65536)
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := store.ListKeys(ctx); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkMemoryStoreListKeyPages65536(b *testing.B) {
+	store := benchmarkMemoryStore(b, 65536)
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

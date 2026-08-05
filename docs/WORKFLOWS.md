@@ -36,7 +36,8 @@ go test -bench=. -benchmem -run '^$' ./...
 
 The current benchmark coverage focuses on `SHV1` frame round-trips and `MemoryStore` `Put`/`Get` throughput. Treat results as local-machine signals, not portable service-level guarantees.
 
-Compare full inventory materialization with the bounded native pager:
+Compare full inventory materialization with the bounded native pager at 4,096 and
+65,536 keys:
 
 ```bash
 make bench-inventory
