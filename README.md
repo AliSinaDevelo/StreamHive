@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.10.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses with delayed continuation, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -98,7 +98,7 @@ go run . -listen 127.0.0.1:7071 -peers 127.0.0.1:7070,127.0.0.1:7072 -peer-recon
 
 `-peer-reconnect` retries only `-peers` targets. `-dial` stays a one-shot connection attempt for scripts and tests.
 
-When both sides run with `-replicate`, peers advertise local keys on connect and send missing blobs to each other. This startup anti-entropy path works with memory storage and durable `-store-dir` receivers.
+When both sides run with `-replicate`, peers advertise local keys on connect and send missing blobs to each other. A repair response that hits its byte budget gets one bounded delayed continuation; duplicate requests are merged per peer and periodic inventory remains the fallback. This startup anti-entropy path works with memory storage and durable `-store-dir` receivers.
 
 For long-running nodes, add periodic inventory sync:
 

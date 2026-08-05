@@ -90,7 +90,8 @@ The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 2. When `-sync-interval` is set, a peer advertises local keys periodically.
 3. A receiver computes which advertised keys it lacks and sends `blob.missing`.
 4. The owner answers with `blob.put` for keys it can still read.
-5. The receiver answers accepted `blob.put` messages with `blob.ack`.
+5. If the repair byte budget defers keys, the owner schedules one bounded continuation.
+6. The receiver answers accepted `blob.put` messages with `blob.ack`.
 
 ## Limits
 
@@ -133,10 +134,13 @@ same frame on a potentially partial stream.
 For anti-entropy `blob.missing` responses, the sender also bounds aggregate blob data per
 request with `MaxRepairBytes`. Once that budget is reached, the remaining requested keys
 are deferred, the connection stays healthy, and `replication_repair_blobs_deferred` is
-incremented. A later periodic inventory or reconnect requests those keys again. The first
-blob is allowed through when it alone exceeds a deliberately smaller budget so repair
-cannot be permanently wedged; operators should keep `MaxRepairBytes` at or above the
-maximum blob size when they need a strict aggregate cap.
+incremented. The sender then schedules one delayed continuation per peer, merging duplicate
+requests and capping pending keys at `MaxKeys`; pending work is dropped on disconnect or
+shutdown. A later periodic inventory or reconnect remains the fallback for keys that are
+still deferred or arrive after the bounded continuation. The first blob is allowed through
+when it alone exceeds a deliberately smaller budget so repair cannot be permanently wedged;
+operators should keep `MaxRepairBytes` at or above the maximum blob size when they need a
+strict aggregate cap.
 
 StreamHive sends `blob.ack` after a `blob.put` is stored or recognized as an exact
 duplicate. For one-shot CLI puts, the sender registers the `(peer, key)` pair before
@@ -159,9 +163,10 @@ peer addresses into metric labels: `replication_blob_puts_accepted`,
 closes the peer because the stream may contain a partial frame; it is never retried on
 that connection.
 
-Repair is driven by startup inventory, periodic inventory with `-sync-interval`, and
-reconnect behavior for static `-peers` when `-peer-reconnect` is enabled. If a blob send
-fails mid-sync, a later inventory pass or reconnect can request the missing key again.
+Repair is driven by startup inventory, one bounded delayed continuation after a repair
+budget hit, periodic inventory with `-sync-interval`, and reconnect behavior for static
+`-peers` when `-peer-reconnect` is enabled. If a blob send fails mid-sync, a later inventory
+pass or reconnect can request the missing key again.
 When a store contains more keys than one inventory message permits, the owner emits
 multiple bounded `blob.has` frames at the configured `MaxKeys` limit instead of failing
 the entire advertisement. Each frame must also fit the transport `MaxFrameBytes` limit;
