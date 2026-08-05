@@ -172,6 +172,10 @@ not yet been advertised. That is deliberate: the current `blob.has`/`blob.missin
 contract repairs additions but does not encode tombstones, so true delete propagation needs a
 separate protocol design rather than an implicit anti-entropy promise.
 
+The deletion decision is recorded in [DELETION_SEMANTICS.md](DELETION_SEMANTICS.md). For the
+current add-only contract, a local delete is an eviction that a peer may repair; a future logical
+delete must live in a separate versioned namespace with explicit retention and compaction rules.
+
 ## Research Sources
 
 - [Dynamo: Amazon's highly available key-value store](https://www.amazon.science/publications/dynamo-amazons-highly-available-key-value-store)

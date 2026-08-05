@@ -146,6 +146,11 @@ between bounded pages, disconnects one target while the other continues, and ver
 key sets. Deletions are only exercised before advertisement because the current add/repair wire
 protocol has no tombstone message.
 
+Deletion scope is explicit: `FileStore.Delete` is local eviction or garbage collection. A peer
+may rehydrate that blob through the current add-only anti-entropy path; distributed logical
+deletion is deferred to a separate versioned namespace design. See
+[docs/DELETION_SEMANTICS.md](docs/DELETION_SEMANTICS.md).
+
 For a longer-lived node with static peers, use `-peers` and reconnect backoff:
 
 ```bash

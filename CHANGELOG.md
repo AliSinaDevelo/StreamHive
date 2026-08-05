@@ -13,6 +13,7 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Demo**: `make demo-inventory-budget` reproduces the interrupted startup exchange with cleanup-safe local processes and fixed-port CI defaults.
 - **Tests**: multi-peer mutation coverage exercises two durable targets, exclusive cursor refresh after a source mutation, disconnect fairness, and exact final key sets under five race-enabled repetitions.
 - **CI**: `make test-inventory-fairness` runs as a dedicated Go 1.23.x pipeline job.
+- **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
 - **Storage**: durable 32-byte SHA-256 keys are verified on read and inventory; corrupted content is observable and repairable through anti-entropy.
