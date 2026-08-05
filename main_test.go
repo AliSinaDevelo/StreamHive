@@ -1030,12 +1030,18 @@ func TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob(t *testing.T)
 		return err == nil && bytes.Equal(got, data)
 	}, 3*time.Second, 20*time.Millisecond, "source logs=%q target logs=%q", sourceErr.String(), targetErr.String())
 
+	// Stop the periodic repair loop before tampering so the corrupted-state
+	// assertions cannot race a successful repair.
+	targetCancel()
+	require.NoError(t, <-targetErrCh)
 	require.NoError(t, os.WriteFile(filepath.Join(targetDir, storage.SHA256KeyHex(data)), []byte("tampered"), 0o600))
 	hasKey, err = targetStore.Has(ctx, key)
 	require.NoError(t, err)
 	require.False(t, hasKey)
 	_, err = targetStore.Get(ctx, key)
 	require.ErrorIs(t, err, storage.ErrSHA256Mismatch)
+
+	targetCancel, targetErr, targetErrCh, targetListen, healthAddr = startTarget()
 	require.Eventually(t, func() bool {
 		store, err := storage.NewFileStore(targetDir)
 		if err != nil {
