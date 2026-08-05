@@ -77,7 +77,7 @@ wait_ready node3 http://127.0.0.1:18083
 $COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm seed
 wait_key_present node3
 
-printf '%s' "tampered" > "$DATA_DIR/node3/$EXPECTED_KEY"
+$COMPOSE -f "$ROOT_DIR/docker-compose.yml" exec -T node3 sh -c "printf '%s' 'tampered' > '/data/$EXPECTED_KEY'"
 if [ ! -f "$DATA_DIR/node3/$EXPECTED_KEY" ]; then
 	echo "node3 did not retain expected key after local corruption" >&2
 	exit 1
