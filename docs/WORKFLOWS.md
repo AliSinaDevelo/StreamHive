@@ -36,6 +36,12 @@ go test -bench=. -benchmem -run '^$' ./...
 
 The current benchmark coverage focuses on `SHV1` frame round-trips and `MemoryStore` `Put`/`Get` throughput. Treat results as local-machine signals, not portable service-level guarantees.
 
+The resource-budget acceptance check is separate from throughput benchmarks:
+
+```bash
+make test-budgets
+```
+
 The anti-entropy inventory research benchmark is:
 
 ```bash
@@ -53,6 +59,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `go vet ./...`
 - `go test -race -count=1 ./...` on Go 1.22.x and 1.23.x
 - `make test-fairness` in a dedicated Go 1.22.x / 1.23.x matrix job to prove a blocked repair peer cannot serialize a healthy peer
+- `make test-budgets` in a dedicated Go 1.23.x job to prove the configured per-peer continuation queue saturates at `MaxKeys` and drops excess work
 - Real TCP lost-ACK acceptance coverage through the main test package
 - `golangci-lint` with `.golangci.yml`
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)

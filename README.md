@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.11.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses with delayed continuation, durable stores, self-repair demos, and Prometheus metrics are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses with delayed continuation, durable stores, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Global repair scheduling, streamed inventory enumeration, conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md).
 
 ## Prerequisites
 
@@ -175,7 +175,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-blob-bytes` | Cap replicated blob payload size |
 | `-max-repair-bytes` | Cap aggregate anti-entropy blob data per `blob.missing` response (0 = default) |
 
-See the [Makefile](Makefile) for `test-race`, `vet`, `cover`, `lint`, and demos.
+See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `vet`, `cover`, `lint`, and demos.
 
 ## Architecture (summary)
 
@@ -201,6 +201,7 @@ flowchart TB
 - [docs/WORKFLOWS.md](docs/WORKFLOWS.md) — local and CI expectations.
 - [docs/GOVERNANCE.md](docs/GOVERNANCE.md) — branch protection and release hygiene.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Docker and Kubernetes sketch.
+- [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md) — current admission, frame, blob, repair, and inventory budgets plus follow-ups.
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) — frame format, replication messages, limits, and repair behavior.
 - [docs/RELEASE.md](docs/RELEASE.md) — release checklist.
 
