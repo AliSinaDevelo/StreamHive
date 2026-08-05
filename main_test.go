@@ -43,8 +43,12 @@ type capturePeer struct {
 
 type asyncCapturePeer struct {
 	testPeer
-	mu       sync.Mutex
-	payloads [][]byte
+	addr           net.Addr
+	writeStarted   chan struct{}
+	writeRelease   <-chan struct{}
+	startWriteOnce sync.Once
+	mu             sync.Mutex
+	payloads       [][]byte
 }
 
 type hasProbeStore struct {
@@ -77,10 +81,23 @@ func (p *capturePeer) WriteFrame(payload []byte, _ int) error {
 }
 
 func (p *asyncCapturePeer) WriteFrame(payload []byte, _ int) error {
+	if p.writeStarted != nil {
+		p.startWriteOnce.Do(func() { close(p.writeStarted) })
+	}
+	if p.writeRelease != nil {
+		<-p.writeRelease
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.payloads = append(p.payloads, append([]byte(nil), payload...))
 	return nil
+}
+
+func (p *asyncCapturePeer) RemoteAddr() net.Addr {
+	if p.addr != nil {
+		return p.addr
+	}
+	return p.testPeer.RemoteAddr()
 }
 
 func (p *asyncCapturePeer) Len() int {
@@ -1492,6 +1509,62 @@ func TestRepairContinuationSchedulerDeduplicatesAndCompletes(t *testing.T) {
 	assert.Equal(t, uint64(2), metrics.RepairContinuationsScheduled.Load())
 	assert.Equal(t, uint64(2), metrics.RepairContinuationsCompleted.Load())
 	assert.Equal(t, uint64(0), metrics.RepairContinuationsDropped.Load())
+}
+
+func TestRepairContinuationSchedulerKeepsPeersIndependent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemoryStore()
+	for _, key := range []string{"a", "b", "c"} {
+		require.NoError(t, store.Put(ctx, []byte(key), []byte("data")))
+	}
+	limits := replication.Limits{MaxDataBytes: 16, MaxRepairBytes: 8}
+	metrics := &replicationMetrics{}
+	releaseSlow := make(chan struct{})
+	var releaseSlowOnce sync.Once
+	defer func() { releaseSlowOnce.Do(func() { close(releaseSlow) }) }()
+	slow := &asyncCapturePeer{
+		addr:         &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7071},
+		writeStarted: make(chan struct{}),
+		writeRelease: releaseSlow,
+	}
+	healthy := &asyncCapturePeer{
+		addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 7072},
+	}
+	scheduler := newRepairContinuationScheduler(ctx, store, limits, 0, metrics, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+
+	scheduler.Schedule(slow, keys)
+	select {
+	case <-slow.writeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow peer did not reach its gated write")
+	}
+
+	scheduler.Schedule(healthy, keys)
+	require.Eventually(t, func() bool {
+		return healthy.Len() == 3 && metrics.RepairContinuationsCompleted.Load() >= 2
+	}, 2*time.Second, 5*time.Millisecond)
+
+	scheduler.mu.Lock()
+	slowEntry := scheduler.entries[repairPeerKey(slow)]
+	assert.NotNil(t, slowEntry)
+	if slowEntry != nil {
+		assert.True(t, slowEntry.running)
+		assert.LessOrEqual(t, len(slowEntry.pending), scheduler.maxKeys)
+	}
+	scheduler.mu.Unlock()
+	assert.Zero(t, slow.Len())
+
+	releaseSlowOnce.Do(func() { close(releaseSlow) })
+	require.Eventually(t, func() bool {
+		return slow.Len() == 3 && metrics.RepairContinuationsCompleted.Load() == 4
+	}, 2*time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		scheduler.mu.Lock()
+		defer scheduler.mu.Unlock()
+		return len(scheduler.entries) == 0
+	}, time.Second, 5*time.Millisecond)
 }
 
 func TestHandleReplicationMessageSchedulesRepairContinuation(t *testing.T) {
