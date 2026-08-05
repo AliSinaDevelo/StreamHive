@@ -146,3 +146,10 @@ continuation entries, while `replication_repair_continuation_keys_pending` inclu
 queued and currently in-flight keys. Both gauges are zero when no continuation work is
 outstanding and remain bounded by the scheduler's per-peer queue limit plus the active
 batch.
+
+Set `-max-repair-ops` to cap concurrent anti-entropy blob reads/writes across all peers;
+the default is four and `0` selects that default. Observe the aggregate
+`replication_repair_io_ops_started`, `replication_repair_io_ops_completed`,
+`replication_repair_io_ops_waited`, `replication_repair_io_ops_rejected`,
+`replication_repair_io_ops_in_flight`, and `replication_repair_io_ops_queued` metrics.
+These metrics have no peer or blob labels.

@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.11.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses with delayed continuation, durable stores, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Global repair scheduling, streamed inventory enumeration, conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, bounded repair responses with delayed continuation, durable stores, self-repair demos, Prometheus metrics, and an explicit resource-budget envelope with global repair I/O admission are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`. Streamed inventory enumeration, conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md).
 
 ## Prerequisites
 
@@ -55,6 +55,12 @@ Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_bl
 Continuation operations add the aggregate `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` counters to both health formats.
+
+Anti-entropy storage admission adds aggregate
+`replication_repair_io_ops_started`, `replication_repair_io_ops_completed`,
+`replication_repair_io_ops_waited`, `replication_repair_io_ops_rejected`,
+`replication_repair_io_ops_in_flight`, and `replication_repair_io_ops_queued` metrics;
+`-max-repair-ops` defaults to four concurrent blob operations.
 
 Or run the whole flow:
 
@@ -174,6 +180,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-exit-after-put` | Wait for matching acknowledgments from all outbound peers, then exit |
 | `-max-blob-bytes` | Cap replicated blob payload size |
 | `-max-repair-bytes` | Cap aggregate anti-entropy blob data per `blob.missing` response (0 = default) |
+| `-max-repair-ops` | Cap concurrent anti-entropy blob reads/writes across peers (0 = default) |
 
 See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `vet`, `cover`, `lint`, and demos.
 

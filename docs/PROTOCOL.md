@@ -148,6 +148,9 @@ still deferred or arrive after the bounded continuation. The first blob is allow
 when it alone exceeds a deliberately smaller budget so repair cannot be permanently wedged;
 operators should keep `MaxRepairBytes` at or above the maximum blob size when they need a
 strict aggregate cap.
+Each anti-entropy blob read and frame write also acquires the process-wide
+`-max-repair-ops` budget (default four); queued and canceled operations are visible through
+the aggregate `replication_repair_io_ops_*` metrics without peer or blob labels.
 
 StreamHive sends `blob.ack` after a `blob.put` is stored or recognized as an exact
 duplicate. For one-shot CLI puts, the sender registers the `(peer, key)` pair before
