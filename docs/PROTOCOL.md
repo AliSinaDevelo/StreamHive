@@ -99,7 +99,11 @@ bytewise order, strictly after an exclusive cursor, and use the last returned ke
 the next cursor. `MemoryStore` and `FileStore` implement this bounded path; the sender
 falls back to `BlobKeyLister.ListKeys` for older stores. A page may reflect keys added
 or removed between calls, so the periodic inventory pass remains the convergence
-mechanism rather than a snapshot guarantee.
+mechanism rather than a snapshot guarantee. A key added at or before the live cursor can
+wait for that next pass; `-sync-interval 0s` is therefore startup-only and does not promise
+snapshot-consistent convergence under concurrent mutation. See
+[INVENTORY_CONSISTENCY.md](INVENTORY_CONSISTENCY.md) for the mutation matrix and acceptance
+evidence.
 
 The CLI scheduler keeps one cursor per peer across a bounded exchange. The aggregate
 `-max-inventory-bytes` budget defaults to 16 MiB of encoded inventory payload and

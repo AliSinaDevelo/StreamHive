@@ -47,6 +47,17 @@ between bounded pages, disconnects one target while the other converges, and che
 key sets. The mutation deletes only a not-yet-advertised key because the current replication
 protocol has no tombstone message.
 
+The live-cursor mutation fallback acceptance target is:
+
+```bash
+make test-inventory-consistency
+```
+
+It runs three race-enabled repetitions, inserts a content-addressed key behind an active
+one-key cursor, verifies the original exchange leaves it absent, and proves the next periodic
+inventory pass repairs it. This documents the live-cursor contract rather than adding snapshot
+state to the current protocol.
+
 The local eviction and startup-only repair acceptance target is:
 
 ```bash
@@ -131,6 +142,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make demo-inventory-budget` to force one-key/128-byte startup inventory continuations, interrupt a real TCP target, restart its durable store, and verify complete convergence plus JSON/Prometheus counters
 - `make test-inventory-fairness` to repeat the multi-peer mutation/reconnect convergence proof under the race detector
 - `make test-eviction-repair` to repeat startup-only rehydration after local durable eviction under the race detector
+- `make test-inventory-consistency` to repeat periodic repair after a behind-cursor mutation under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

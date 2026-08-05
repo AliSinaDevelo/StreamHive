@@ -146,6 +146,16 @@ between bounded pages, disconnects one target while the other continues, and ver
 key sets. Deletions are only exercised before advertisement because the current add/repair wire
 protocol has no tombstone message.
 
+To prove the live-cursor consistency boundary under a behind-cursor mutation:
+
+```bash
+make test-inventory-consistency
+```
+
+This race-enabled target inserts a new SHA-256 key behind an active bounded cursor, verifies that
+startup-only work does not pretend to be a snapshot, and proves the configured periodic pass
+repairs the key. See [docs/INVENTORY_CONSISTENCY.md](docs/INVENTORY_CONSISTENCY.md).
+
 Deletion scope is explicit: `FileStore.Delete` is local eviction or garbage collection. A peer
 may rehydrate that blob through the current add-only anti-entropy path; distributed logical
 deletion is deferred to a separate versioned namespace design. See

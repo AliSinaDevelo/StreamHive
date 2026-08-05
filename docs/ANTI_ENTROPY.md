@@ -176,6 +176,24 @@ The deletion decision is recorded in [DELETION_SEMANTICS.md](DELETION_SEMANTICS.
 current add-only contract, a local delete is an eviction that a peer may repair; a future logical
 delete must live in a separate versioned namespace with explicit retention and compaction rules.
 
+## v0.12 Live Cursor Consistency
+
+The inventory cursor is a live ordered-store cursor, not a snapshot. If a source mutation inserts
+a key at or before the cursor after a page has been sent, the current bounded exchange can finish
+without advertising that key. The configured periodic or reconnect exchange is the convergence
+backstop. `-sync-interval 0s` intentionally disables that fallback and should be used only when
+the source is quiescent or the caller accepts startup-only semantics.
+
+The focused acceptance target is:
+
+```bash
+make test-inventory-consistency
+```
+
+It inserts a SHA-256 key behind an active one-key cursor, verifies the initial exchange leaves the
+late key absent, and proves the next periodic pass repairs it. The full decision and research
+tradeoffs are in [INVENTORY_CONSISTENCY.md](INVENTORY_CONSISTENCY.md).
+
 ## Research Sources
 
 - [Dynamo: Amazon's highly available key-value store](https://www.amazon.science/publications/dynamo-amazons-highly-available-key-value-store)

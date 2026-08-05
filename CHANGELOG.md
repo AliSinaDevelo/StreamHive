@@ -15,6 +15,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **CI**: `make test-inventory-fairness` runs as a dedicated Go 1.23.x pipeline job.
 - **Tests**: startup-only local eviction acceptance coverage proves a durable target rehydrates an evicted SHA-256 blob without periodic inventory or a delete message.
 - **CI**: `make test-eviction-repair` runs five race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
+- **Tests**: live-cursor acceptance coverage proves a key inserted behind an active cursor is repaired by the next periodic inventory pass.
+- **CI**: `make test-inventory-consistency` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
+- **Docs**: `docs/INVENTORY_CONSISTENCY.md` defines live cursor versus snapshot semantics and records the periodic fallback research boundary.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
