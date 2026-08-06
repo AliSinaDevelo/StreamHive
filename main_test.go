@@ -291,6 +291,11 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Zero(t, metrics["replication_repair_io_ops_in_flight"])
 	assert.Zero(t, metrics["replication_repair_io_ops_queued"])
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
+	assert.Zero(t, metrics["tls_certificates_configured"])
+	assert.Zero(t, metrics["tls_certificate_expiry_timestamp_seconds"])
+	assert.Zero(t, metrics["tls_certificates_expired"])
+	assert.Zero(t, metrics["tls_certificates_not_yet_valid"])
+	assert.Zero(t, metrics["tls_certificates_expiring_soon"])
 
 	resp4, err := client.Get(base + "/metrics/prometheus")
 	require.NoError(t, err)
@@ -325,6 +330,8 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_in_flight")
 	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_queued")
 	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
+	assert.Contains(t, string(body), "streamhive_tls_certificates_configured 0\n")
+	assert.Contains(t, string(body), "streamhive_tls_certificate_expiry_timestamp_seconds 0\n")
 
 	resp5, err := client.Get(base + "/peers")
 	require.NoError(t, err)
