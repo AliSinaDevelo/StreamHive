@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -28,6 +29,8 @@ type tlsAcceptanceMaterial struct {
 	caPath         string
 	serverCertPath string
 	serverKeyPath  string
+	caCert         *x509.Certificate
+	caKey          *ecdsa.PrivateKey
 }
 
 func newTLSAcceptanceMaterial(t *testing.T) tlsAcceptanceMaterial {
@@ -70,11 +73,42 @@ func newTLSAcceptanceMaterial(t *testing.T) tlsAcceptanceMaterial {
 		caPath:         filepath.Join(dir, "ca.pem"),
 		serverCertPath: filepath.Join(dir, "server-cert.pem"),
 		serverKeyPath:  filepath.Join(dir, "server-key.pem"),
+		caCert:         caTemplate,
+		caKey:          caKey,
 	}
 	require.NoError(t, os.WriteFile(material.caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o644))
 	require.NoError(t, os.WriteFile(material.serverCertPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), 0o644))
 	require.NoError(t, os.WriteFile(material.serverKeyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: serverKeyDER}), 0o600))
 	return material
+}
+
+func writeTLSAcceptanceServerPair(t *testing.T, material tlsAcceptanceMaterial, serial int64) (string, string) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      pkix.Name{CommonName: "streamhive.test"},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+		DNSNames:     []string{"streamhive.test"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, material.caCert, &serverKey.PublicKey, material.caKey)
+	require.NoError(t, err)
+	serverKeyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
+	require.NoError(t, err)
+
+	dir := filepath.Dir(material.serverCertPath)
+	certPath := filepath.Join(dir, fmt.Sprintf("server-%d-cert.pem", serial))
+	keyPath := filepath.Join(dir, fmt.Sprintf("server-%d-key.pem", serial))
+	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), 0o644))
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: serverKeyDER}), 0o600))
+	return certPath, keyPath
 }
 
 func startTLSAcceptanceNode(t *testing.T, args ...string) *inventoryBudgetNode {

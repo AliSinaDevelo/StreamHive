@@ -1,6 +1,6 @@
 # TLS Certificate Rotation
 
-Status: v0.12 decision, tracked by issue #39.
+Status: v0.12 contract, researched in issue #39 and proven by issue #40.
 
 This document defines how StreamHive handles TLS and mTLS credential changes. It is deliberately
 about lifecycle behavior, not certificate issuance. The current contract is restart-first: a
@@ -112,6 +112,15 @@ The acceptance proof for the restart-only contract must use real TCP and cover:
 The test must not rely on a particular certificate serial number in metrics or logs. It should
 assert the externally visible outcomes: handshake, reconnect, readiness, peer admission, and
 blob convergence.
+
+The shipped real-TCP proof is:
+
+```bash
+make test-tls-rotation
+```
+
+It repeats the rotation, malformed-startup, rollback, certificate-replacement, reconnect, and
+aggregate-metric checks under the race detector.
 
 ## Non-goals
 
