@@ -6,6 +6,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ### Added
 
+- **CLI**: `-shutdown-grace` owns one finite deadline for health shutdown and P2P transport drain; application cancellation stops scheduler and reconnect admission before the staged drain.
+- **Tests**: CLI shutdown acceptance covers repeated cancellation, pending ACK cancellation, forced drain expiry, reconnect cancellation, and repair-continuation shutdown behavior.
+- **CI**: `make test-cli-shutdown` runs as a dedicated Go 1.23.x pipeline job.
+
 - **Replication**: aggregate `-max-inventory-bytes` and `-max-inventory-keys` budgets bound whole anti-entropy exchanges per peer; delayed continuations resume from an exclusive cursor without changing the flat `blob.has` wire format.
 - **Metrics**: inventory keys sent and exchange started/completed/limited/dropped/active counters expose aggregate scheduler pressure without peer, blob, or key labels.
 - **Tests**: deterministic inventory budget tests cover byte/key saturation, cursor continuation, cancellation, peer independence, and budgeted end-to-end benchmarks.

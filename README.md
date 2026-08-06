@@ -56,6 +56,13 @@ The optional health server bounds request headers to 1 MiB, reads and writes to 
 parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
 process context is canceled; see `make test-health-server` for the race-enabled proof.
 
+The CLI owns one finite shutdown deadline through `-shutdown-grace` (3 seconds by default). On
+application cancellation it stops scheduler and reconnect admission, shuts down health within
+the remaining deadline, and then calls `TCPTransport.Drain(ctx)`. Fatal startup errors and a
+successful `-exit-after-put` completion retain immediate cleanup; cancellation while waiting
+for a blob acknowledgment uses the bounded drain path. See `make test-cli-shutdown` for the
+race-enabled acceptance proof.
+
 For bounded P2P shutdown, call `TCPTransport.Drain(ctx)` with a finite deadline. It quiesces
 admissions, lets cooperative peer work finish, and force-closes remaining sockets at expiry;
 `Close()` remains the immediate hard-stop path. The lifecycle is local and does not add a wire

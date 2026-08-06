@@ -72,6 +72,13 @@ The optional health HTTP server uses a bounded resource envelope: 5 seconds for 
 server performs graceful shutdown when the process context is canceled; slow or oversized clients
 must not hold the health listener indefinitely.
 
+The CLI `-shutdown-grace` flag defaults to 3 seconds and is the single deadline owner for
+normal application shutdown. Cancellation stops new scheduler and reconnect work, health
+shutdown runs first within the remaining budget, and the P2P transport then drains cooperatively
+before force-closing at expiry. Use a larger value when frame handlers or health clients need
+more time; fatal startup failures and successful one-shot completion still use immediate cleanup.
+The acceptance target is `make test-cli-shutdown`.
+
 Run the corruption repair demo:
 
 ```bash
