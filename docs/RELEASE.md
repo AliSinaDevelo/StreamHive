@@ -1,16 +1,25 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.11.0`, the release with bounded repair continuations, multi-peer fairness evidence, dependency updates, and inventory scaling research.
+Use this checklist for StreamHive releases. The current target is `v0.12.0`, the release with bounded inventory exchange, authenticated TLS/mTLS admission, typed health exposition, bounded HTTP resources, and staged CLI-owned shutdown.
 
 ## Preflight
 
 ```bash
 listed=$(rg --files -g '*.go' | xargs gofmt -l); test -z "$listed"
 go test ./...
-go test -race ./...
+go test -race -count=1 ./...
 go vet ./...
 go test -bench=. -benchmem -run '^$' ./...
 make test-fairness
+make test-peer-drain
+make test-cli-shutdown
+make test-health-server
+make test-prometheus-format
+make test-tls-auth
+make test-mtls
+make test-mtls-cli
+make test-tls-rotation
+make test-tls-credential-health
 go test ./replication -run '^TestResearchInventoryEnvelopeSizes$' -count=1 -v
 go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
 go test . -run '^TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob$' -count=1 -v
@@ -20,7 +29,7 @@ make demo-auth
 make demo-repair
 make demo-failure
 make demo-continuation
-go run . -version  # expected: 0.11.0
+go run . -version  # expected: 0.12.0
 ```
 
 ## Version
@@ -31,21 +40,28 @@ go run . -version  # expected: 0.11.0
 
 ```bash
 git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
-git commit -m "chore: release v0.11.0"
+git commit -m "chore: release v0.12.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.11.0 -m "v0.11.0"
+git tag -a v0.12.0 -m "v0.12.0"
 git push origin main
-git push origin v0.11.0
+git push origin v0.12.0
 ```
 
 ## Release Notes
 
 Highlight:
 
+- Bounded whole-inventory anti-entropy exchanges with cursor continuations, indexed store paging, and live-cursor fallback coverage.
+- Aggregate inventory, repair, continuation, scheduler, and resource-budget metrics exposed through deterministic JSON and Prometheus health endpoints.
+- Finite peer admission and overload behavior, authenticated application identities, exact inbound identity allowlists, and tokenless compatibility.
+- Library and CLI TLS/mTLS admission with bounded handshakes, credential validity/expiry health, and restart-only certificate rotation semantics.
+- Typed Prometheus exposition with deterministic metadata, bounded health HTTP resources, and cancellation-safe graceful server shutdown.
+- Concrete staged `TCPTransport.Drain(ctx)` with admission quiescence, tracked-work joins, deadline force-close, and compatibility-preserving `Close()`.
+- CLI-owned `-shutdown-grace` coordination that stops new scheduler/reconnect work, shuts down health, and drains P2P transport without a new wire message.
 - `p2p.PeerSnapshots` and richer `/peers` metadata.
 - Protocol reference for SHV1 frames, replication messages, limits, and repair behavior.
 - TLS/mTLS identity guidance and explicit application-level auth gaps.

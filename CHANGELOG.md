@@ -4,6 +4,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+Future changes will be documented here.
+
+## [0.12.0] — 2026-08-06
+
 ### Added
 
 - **CLI**: `-shutdown-grace` owns one finite deadline for health shutdown and P2P transport drain; application cancellation stops scheduler and reconnect admission before the staged drain.
