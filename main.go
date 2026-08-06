@@ -40,6 +40,7 @@ const (
 	defaultHealthWriteTimeout      = 10 * time.Second
 	defaultHealthIdleTimeout       = 60 * time.Second
 	defaultHealthMaxHeaderBytes    = 1 << 20
+	defaultShutdownGrace           = 3 * time.Second
 	repairContinuationDelay        = 100 * time.Millisecond
 	maxRepairContinuationAttempts  = 1
 	defaultMaxRepairOps            = 4
@@ -78,6 +79,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	peerReconnectMax := fs.Duration("peer-reconnect-max", 30*time.Second, "maximum reconnect backoff for -peer-reconnect")
 	syncInterval := fs.Duration("sync-interval", 0, "periodically advertise local blob keys to connected peers (0 = startup only)")
 	health := fs.String("health", "", "optional HTTP listen addr for /livez /readyz /peers /metrics (e.g. :8080)")
+	shutdownGrace := fs.Duration("shutdown-grace", defaultShutdownGrace, "bounded graceful shutdown deadline for health and P2P drain")
 	maxPeers := fs.Int("max-peers", 0, "max simultaneous peers (0 = unlimited)")
 	peerAuthToken := fs.String("peer-auth-token", "", "optional shared token required before peer registration")
 	peerAuthTimeout := fs.Duration("peer-auth-timeout", p2p.DefaultPeerAuthTimeout, "timeout for optional peer auth handshake")
@@ -176,6 +178,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *syncInterval < 0 {
 		return fmt.Errorf("replication: -sync-interval must be zero or greater")
 	}
+	if *shutdownGrace <= 0 {
+		return fmt.Errorf("shutdown: -shutdown-grace must be greater than zero")
+	}
 	if *peerAuthTimeout < 0 {
 		return fmt.Errorf("peers: -peer-auth-timeout must be zero or greater")
 	}
@@ -262,6 +267,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		inventoryScheduler = newInventoryExchangeScheduler(ctx, keyLister, replLimits, tr.MaxFrameBytes, inventoryBudget, replMetrics, log, repairContinuationDelay)
 	}
 	tr.OnPeer = func(peer p2p.Peer) {
+		if ctx.Err() != nil {
+			_ = peer.Close()
+			return
+		}
 		log.Info("peer", "remote", peer.RemoteAddr().String(), "outbound", peer.IsOutbound(), "auth_method", authMethodForPeer(peer), "auth_identity", authIdentityForPeer(peer))
 		if putPayload != nil && peer.IsOutbound() {
 			go func() {
@@ -306,7 +315,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		replMetrics.repairScheduler = repairScheduler
 	}
 	if blobStore != nil || putTracker != nil {
-		tr.FrameHandler = func(ctx context.Context, peer p2p.Peer, payload []byte) error {
+		tr.FrameHandler = func(frameCtx context.Context, peer p2p.Peer, payload []byte) error {
 			msg, err := replication.Decode(payload, replLimits)
 			if err != nil {
 				replMetrics.ApplyErrors.Add(1)
@@ -315,7 +324,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			if blobStore == nil && msg.Type != replication.MessageTypeBlobAck {
 				return nil
 			}
-			if err := handleReplicationMessage(ctx, peer, blobStore, keyLister, msg, replLimits, tr.MaxFrameBytes, replMetrics, log, memoryStore); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := handleReplicationMessage(frameCtx, peer, blobStore, keyLister, msg, replLimits, tr.MaxFrameBytes, replMetrics, log, memoryStore); err != nil {
 				replMetrics.ApplyErrors.Add(1)
 				return err
 			}
@@ -427,11 +439,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	var hsrv *http.Server
+	gracefulShutdown := false
+	requestShutdown := func() {
+		gracefulShutdown = true
+		if err := shutdownApplication(*shutdownGrace, hsrv, tr, log); err != nil {
+			log.Warn("shutdown completed with errors", "err", err)
+		}
+	}
+
 	if err := tr.ListenAndAccept(ctx); err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer func() {
-		_ = tr.Close()
+		if !gracefulShutdown {
+			_ = tr.Close()
+		}
 	}()
 	if keyLister != nil && *syncInterval > 0 {
 		startPeriodicBlobHas(ctx, tr, inventoryScheduler, *syncInterval)
@@ -464,10 +487,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		for range peerTargets {
 			select {
 			case err := <-putResult:
+				if ctx.Err() != nil {
+					requestShutdown()
+					if errors.Is(ctx.Err(), context.Canceled) {
+						return nil
+					}
+					return ctx.Err()
+				}
 				if err != nil {
 					return fmt.Errorf("replication: send blob: %w", err)
 				}
 			case <-ctx.Done():
+				requestShutdown()
 				if errors.Is(ctx.Err(), context.Canceled) {
 					return nil
 				}
@@ -479,25 +510,50 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	var hsrv *http.Server
 	if *health != "" {
 		var err error
 		hsrv, err = startHealth(*health, tr, replMetrics, tlsHealth, log)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
-		defer func() {
-			shctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			_ = hsrv.Shutdown(shctx)
-		}()
 	}
 
 	<-ctx.Done()
+	requestShutdown()
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil
 	}
 	return ctx.Err()
+}
+
+func shutdownApplication(grace time.Duration, hsrv *http.Server, tr *p2p.TCPTransport, log *slog.Logger) error {
+	if grace <= 0 {
+		return fmt.Errorf("shutdown: grace period must be greater than zero")
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	log.Info("shutdown started", "grace", grace, "health", hsrv != nil)
+
+	var shutdownErr error
+	if hsrv != nil {
+		if err := hsrv.Shutdown(shutdownCtx); err != nil {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("health shutdown: %w", err))
+		}
+	}
+	if err := tr.Drain(shutdownCtx); err != nil {
+		shutdownErr = errors.Join(shutdownErr, fmt.Errorf("transport drain: %w", err))
+	}
+
+	snapshot := tr.Metrics().Snapshot()
+	log.Info("shutdown complete",
+		"shutdown_state", snapshot["shutdown_state"],
+		"shutdown_tracked_peers", snapshot["shutdown_tracked_peers"],
+		"shutdown_tracked_goroutines", snapshot["shutdown_tracked_goroutines"],
+	)
+	return shutdownErr
 }
 
 func reportPutResult(ch chan<- error, err error) {
@@ -1492,6 +1548,9 @@ func (r *peerReconnector) OnPeerDisconnected(peer p2p.Peer) {
 }
 
 func (r *peerReconnector) schedule(target string, initialDelay time.Duration) {
+	if r.ctx.Err() != nil {
+		return
+	}
 	r.mu.Lock()
 	if r.dialing[target] {
 		r.mu.Unlock()
