@@ -128,6 +128,16 @@ It runs three race-enabled repetitions covering aggregate server/client identity
 warning suppression, expired and not-yet-valid startup rejection, Prometheus output, and
 readiness behavior.
 
+The health HTTP resource acceptance target is:
+
+```bash
+make test-health-server
+```
+
+It runs three race-enabled repetitions, rejects an oversized request header within the configured
+limit, serves normal liveness traffic, and verifies context cancellation closes the health listener
+across repeated starts.
+
 The Prometheus exposition acceptance target is:
 
 ```bash
@@ -219,6 +229,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-tls-rotation` to repeat restart-only certificate rotation, bounded static-peer reconnect, malformed startup rejection, and rollback under the race detector
 - `make test-tls-credential-health` to repeat aggregate TLS identity validity, expiry warning, startup rejection, and readiness checks under the race detector
 - `make test-prometheus-format` to repeat typed, sorted, label-free `HELP`/`TYPE` health exposition checks under the race detector
+- `make test-health-server` to repeat bounded health HTTP request and graceful-shutdown checks under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

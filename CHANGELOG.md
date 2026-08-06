@@ -40,6 +40,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Metrics**: `/metrics/prometheus` now emits deterministic `# HELP` and `# TYPE` metadata for every label-free health sample while preserving existing names and values.
 - **Tests**: `make test-prometheus-format` parses the complete transport/replication/TLS exposition and verifies metadata pairing, safe names, ordering, and counter/gauge classification.
 - **CI**: `make test-prometheus-format` runs as a dedicated Go 1.23.x pipeline job.
+- **Health HTTP**: the optional health server now sets explicit 5-second header, 10-second read/write, 60-second idle, and 1 MiB header bounds and shuts down gracefully with process cancellation.
+- **Tests**: `make test-health-server` covers oversized requests, normal liveness, and repeated listener shutdown under the race detector.
+- **CI**: `make test-health-server` runs as a dedicated Go 1.23.x pipeline job.
 - **Docs**: `docs/TLS_ROTATION.md` defines restart-only certificate rotation, session-resumption boundaries, rollback, observability, and the focused follow-up acceptance plan.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.

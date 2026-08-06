@@ -269,3 +269,8 @@ credential-health values are `gauge` families, including `active_peers`,
 `replication_blob_acks_pending`, inventory/repair active or pending values, repair I/O in-flight
 or queued values, and the `tls_certificate_*` / `tls_certificates_*` values. There are no labels,
 exemplars, peer addresses, blob keys, or certificate metadata.
+
+The optional HTTP health server also uses fixed bounds rather than unbounded request handling:
+5-second header reads, 10-second request reads, 10-second response writes, 60-second idle
+connections, and 1 MiB maximum headers. Process cancellation gracefully shuts down the server;
+the P2P wire protocol and endpoint paths are unchanged.

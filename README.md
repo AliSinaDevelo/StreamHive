@@ -52,6 +52,10 @@ curl -s http://127.0.0.1:8080/peers
 
 Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_sent`, `replication_inventory_keys_probed`, `replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`, `replication_inventory_exchanges_active`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`), auth, transport frame counters such as `peer_auth_identity_rejections`, and TLS identity health (`tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, `tls_certificates_expiring_soon`). The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for sorted Prometheus text with `# HELP`/`# TYPE` metadata and no labels, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 
+The optional health server bounds request headers to 1 MiB, reads and writes to 10 seconds, header
+parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
+process context is canceled; see `make test-health-server` for the race-enabled proof.
+
 Continuation operations add the aggregate `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` counters to both health formats.
@@ -265,7 +269,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
 | `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
-See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `vet`, `cover`, `lint`, and demos.
+See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
 
 ## Architecture (summary)
 
