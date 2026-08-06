@@ -31,6 +31,7 @@ const (
 	transportStateOpen transportLifecycleState = iota
 	transportStateDraining
 	transportStateClosed
+	transportDrainJoinGrace = 250 * time.Millisecond
 )
 
 // TCPPeer is a TCP-backed Peer.
@@ -822,7 +823,7 @@ func (t *TCPTransport) drain(ctx context.Context) error {
 		if forced := t.closeConnections(append(pending, active...)); forced > 0 {
 			t.metrics.ShutdownForcedCloses.Add(uint64(forced))
 		}
-		joinCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		joinCtx, cancel := context.WithTimeout(context.Background(), transportDrainJoinGrace)
 		joinErr := t.waitForWork(joinCtx)
 		cancel()
 		if joinErr != nil {
