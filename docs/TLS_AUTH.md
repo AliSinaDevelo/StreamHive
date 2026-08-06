@@ -1,15 +1,17 @@
 # TLS And Application Auth
 
-Status: v0.12 acceptance contract, tracked by issue #37.
+Status: v0.12 acceptance contract, tracked by issues #37, #38, and #41.
 
 ## Contract
 
-StreamHive has two distinct admission layers:
+StreamHive has three distinct admission layers:
 
 1. TLS protects the TCP channel and verifies the listener certificate for outbound CLI peers.
-2. The shared-token handshake authenticates the StreamHive application peer.
-3. `-peer-allow-ids` applies exact inbound authorization to the bounded application identity.
-4. Only after those checks does the transport register the peer and apply `-max-peers`.
+2. When enabled, mTLS verifies the inbound client certificate against `-tls-client-ca` and
+   presents `-tls-client-cert` / `-tls-client-key` on outbound dials.
+3. The shared-token handshake authenticates the StreamHive application peer.
+4. `-peer-allow-ids` applies exact inbound authorization to the bounded application identity.
+5. Only after those checks does the transport register the peer and apply `-max-peers`.
 
 The positive CLI path uses `-tls-ca` and `-tls-server-name`. It does not use
 `-tls-insecure-skip-verify`. A failed CA or hostname check fails the dial before the peer is
@@ -52,10 +54,38 @@ allowlist keeps token-only compatibility; an exact allowlist is the stronger app
 Use `-tls-insecure-skip-verify` only for local development experiments. It disables normal
 certificate verification and is not part of the acceptance path.
 
+## CLI mTLS Boundary
+
+The listener enables strict client-certificate verification with a server certificate, a client
+CA bundle, and the explicit requirement flag:
+
+```bash
+go run . \
+  -listen 0.0.0.0:7070 \
+  -tls-cert ./server-cert.pem -tls-key ./server-key.pem \
+  -tls-client-ca ./client-ca.pem -tls-require-client-cert
+```
+
+The outbound peer presents its client certificate while continuing to verify the server with
+`-tls-ca` and `-tls-server-name`:
+
+```bash
+go run . \
+  -listen 127.0.0.1:0 -dial 127.0.0.1:7070 \
+  -tls-ca ./server-ca.pem -tls-server-name streamhive.example \
+  -tls-client-cert ./client-cert.pem -tls-client-key ./client-key.pem
+```
+
+`-tls-ca` is outbound server trust. `-tls-client-ca` is inbound client trust. The client
+certificate and key must be supplied together; `-tls-client-ca` must be paired with
+`-tls-require-client-cert`; and all configured PEM/key material is loaded before listener
+readiness. A missing, malformed, or untrusted client certificate fails TLS before application
+auth, peer registration, `OnPeer`, or replication frames.
+
 ## Library mTLS Boundary
 
-The CLI currently exposes server certificates and outbound server verification. Library users who
-need mutual certificate authentication configure `p2p.TCPTransport.TLSServerConfig` and
+The CLI and library both expose mutual certificate authentication. Library users who need custom
+policies configure `p2p.TCPTransport.TLSServerConfig` and
 `TLSClientConfig` directly, including `tls.Config.ClientAuth`, `ClientCAs`, and client
 certificates. The transport completes an inbound TLS handshake before application auth, peer-cap
 admission, `OnPeer`, or frame handling. `TLSHandshakeTimeout` bounds that work and defaults to
@@ -94,6 +124,17 @@ make test-mtls
 tls.RequireAndVerifyClientCert`, exchanges a frame, and checks the handshake metrics. The rejection
 test covers a missing and an unrelated client certificate; the server records a TLS failure without
 calling `OnPeer` or the frame handler, and the client observes the resulting disconnect.
+
+The CLI mTLS target is:
+
+```bash
+make test-mtls-cli
+```
+
+`TestRun_tlsMutualTLSClientCertificateAdmission` proves a trusted CLI client certificate reaches
+application admission. `TestRun_tlsMutualTLSRejectsBeforePeerAdmission` proves missing and
+untrusted client certificates fail before application auth. The flag validation test covers
+incomplete and ambiguous mTLS configurations.
 
 Certificate lifecycle and restart-only rotation are defined in
 [TLS_ROTATION.md](TLS_ROTATION.md). Replacing files on disk does not change active connections;

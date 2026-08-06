@@ -246,6 +246,8 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-read-idle-timeout` | Peer read deadline refresh |
 | `-tls-cert` / `-tls-key` | Server TLS certificate and private key |
 | `-tls-ca` / `-tls-server-name` | Client CA trust and verified server name |
+| `-tls-client-cert` / `-tls-client-key` | Outbound mTLS client certificate and private key |
+| `-tls-client-ca` / `-tls-require-client-cert` | Strict inbound mTLS client verification |
 | `-tls-insecure-skip-verify` | Development-only client TLS bypass |
 | `-replicate` | Enable blob replication from framed peers |
 | `-store-dir` | Persist replicated blobs with `storage.FileStore` |

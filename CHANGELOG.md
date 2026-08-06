@@ -30,6 +30,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **CI**: `make test-mtls` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
 - **Tests**: restart-only TLS rotation coverage proves certificate replacement, static-peer reconnect, malformed startup rejection, rollback, and aggregate metrics over real TCP.
 - **CI**: `make test-tls-rotation` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
+- **CLI**: `-tls-client-cert` / `-tls-client-key` present outbound client certificates, while `-tls-client-ca` / `-tls-require-client-cert` enable strict inbound mTLS verification with startup validation.
+- **Tests**: CLI mTLS acceptance coverage proves trusted client admission, missing/untrusted rejection before peer registration, and fail-closed flag validation.
+- **CI**: `make test-mtls-cli` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
 - **Docs**: `docs/TLS_ROTATION.md` defines restart-only certificate rotation, session-resumption boundaries, rollback, observability, and the focused follow-up acceptance plan.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.

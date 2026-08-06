@@ -17,6 +17,8 @@ StreamHive can wrap peer connections in TLS:
 
 - `-tls-cert` and `-tls-key` enable TLS on the listener.
 - `-tls-ca` and `-tls-server-name` enable outbound certificate verification.
+- `-tls-client-cert` and `-tls-client-key` present a client certificate on outbound dials.
+- `-tls-client-ca` with `-tls-require-client-cert` enables strict inbound client verification.
 - `-tls-insecure-skip-verify` is for local development only.
 
 Library users can configure `p2p.TCPTransport.TLSServerConfig` and
@@ -26,7 +28,8 @@ Library users can configure `p2p.TCPTransport.TLSServerConfig` and
 Inbound library TLS handshakes complete before peer registration and are bounded by
 `TCPTransport.TLSHandshakeTimeout` (default `p2p.DefaultTLSHandshakeTimeout`). Aggregate
 `tls_handshake_success` and `tls_handshake_failures` metrics expose the result without certificate
-or remote-address labels. The real-TCP proof is `make test-mtls`.
+or remote-address labels. The real-TCP library proof is `make test-mtls`; the CLI proof is
+`make test-mtls-cli`.
 
 TLS protects the TCP channel and, when configured with CA verification, authenticates the
 certificate presented by the peer.
