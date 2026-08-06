@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.11.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, and an explicit resource-budget envelope with global repair I/O admission are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/INVENTORY_ITERATORS.md](docs/INVENTORY_ITERATORS.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
 
 ## Prerequisites
 
@@ -55,6 +55,13 @@ Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_bl
 The optional health server bounds request headers to 1 MiB, reads and writes to 10 seconds, header
 parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
 process context is canceled; see `make test-health-server` for the race-enabled proof.
+
+For bounded P2P shutdown, call `TCPTransport.Drain(ctx)` with a finite deadline. It quiesces
+admissions, lets cooperative peer work finish, and force-closes remaining sockets at expiry;
+`Close()` remains the immediate hard-stop path. The lifecycle is local and does not add a wire
+shutdown message. Health metrics include `shutdown_state`, `shutdown_tracked_peers`,
+`shutdown_tracked_goroutines`, `shutdown_forced_closes`, and `shutdown_deadline_expiries`.
+Use `make test-peer-drain` for the real-TCP race-enabled acceptance target.
 
 Continuation operations add the aggregate `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and

@@ -1,10 +1,10 @@
 # Graceful P2P Peer Drain
 
-Status: v0.12 design decision, researched in issue #45. This note describes the
-follow-up contract; the current shutdown behavior remains unchanged until an
-implementation issue is completed.
+Status: v0.12 implementation contract, researched in issue #45 and implemented
+in issue #46. The transport core now implements the local lifecycle described
+here; CLI scheduler integration remains a separate follow-up.
 
-## Current behavior
+## Behavior before #46
 
 `p2p.TCPTransport` has a local shutdown context and an idempotent `Close` method.
 `Close` currently:
@@ -27,15 +27,22 @@ inventory/repair schedulers, and reconnect backoff observe that application
 cancellation. The existing fallback for interrupted replication is a later
 inventory pass or reconnect; there is no remote shutdown message.
 
-## Decision
+## Decision and implementation
 
 Use a staged, local, bounded drain. Do not add a shutdown message to the
 replication protocol.
 
-The smallest compatible API is a concrete `TCPTransport.Drain(ctx)` method. Keep
-the public `Transport` interface unchanged so existing custom implementations do
-not break. Keep `Close()` as the immediate, idempotent hard-stop path for callers
-that need the current behavior. Both methods share one lifecycle state machine.
+The smallest compatible API is the concrete `TCPTransport.Drain(ctx)` method.
+The public `Transport` interface remains unchanged so existing custom
+implementations do not break. `Close()` remains the immediate, idempotent
+hard-stop path. Both methods share one lifecycle state machine.
+
+`Drain` requires a context with a finite deadline and returns
+`ErrDrainDeadlineRequired` without changing state when the deadline is absent.
+Before the deadline it waits for tracked work to exit cooperatively. At expiry it
+closes remaining sockets, waits up to 250 milliseconds for tracked work to join,
+and returns the caller context error. An uncooperative user callback can outlive
+that bounded return; the transport logs the remaining tracked-work count.
 
 The caller owns the ordering between application work and transport work:
 
@@ -52,16 +59,16 @@ mechanisms for work that was not acknowledged before shutdown.
 
 ## Lifecycle contract
 
-The follow-up implementation should expose three internal states:
+The implementation exposes three internal states:
 
 | State | New inbound admission | New outbound admission | Existing work |
 | --- | --- | --- | --- |
 | Open | Allowed | Allowed | Runs normally |
 | Draining | Rejected and closed before registration | Rejected with `ErrTransportClosed` | Receives cancellation and may finish before the deadline |
-| Closed | Rejected and closed | Rejected with `ErrTransportClosed` | No tracked work remains |
+| Closed | Rejected and closed | Rejected with `ErrTransportClosed` | Cooperative work has joined; an uncooperative callback may remain only for the bounded warning path |
 
-The transition to `Draining` must happen before the listener is closed and before
-the active-peer snapshot is taken. The implementation must:
+The transition to `Draining` happens before the listener is closed and before the
+active-peer snapshot is taken. The implementation:
 
 - reject a connection that completes authentication after draining begins;
 - reject an outbound dial that completes after draining begins;
@@ -71,8 +78,8 @@ the active-peer snapshot is taken. The implementation must:
 - close the listener before waiting for tracked work;
 - allow cooperative handlers and serialized frame writers to finish until the
   caller context expires; and
-- force-close remaining peers at expiry, then wait until tracked goroutines have
-  exited before returning.
+- force-closes remaining peers at expiry, then joins tracked goroutines within
+  the bounded post-deadline grace window before returning.
 
 Repeated `Drain` and `Close` calls are safe. The first transition owns teardown;
 later calls wait for the same terminal state and return the same recorded close
@@ -96,7 +103,7 @@ observable as a bounded drain expiry, not as an unbounded wait.
 
 ## Observability
 
-The implementation should add aggregate transport lifecycle values without peer,
+The implementation exposes aggregate transport lifecycle values without peer,
 address, blob, or certificate labels:
 
 - a current shutdown-state gauge (`open`, `draining`, or `closed` represented by
@@ -141,22 +148,25 @@ graceful path needs a caller-owned deadline and a force-close fallback.
 - `Transport` remains source-compatible with existing implementations.
 - No peer discovery, delivery guarantee, distributed transaction, or remote drain
   acknowledgment is introduced.
-- This note does not change shutdown behavior, add metrics, or add a CLI flag by
-  itself. Those belong in the implementation issue after the contract is reviewed.
+- CLI scheduler integration is intentionally separate: the application still
+  owns cancellation for ACK, inventory, repair, and reconnect workers before it
+  calls the transport drain.
 
 ## Verification plan
 
-The implementation issue should add focused real-TCP coverage for:
+The #46 acceptance target now includes focused real-TCP coverage for:
 
 1. a handler that finishes during the drain window;
-2. a handler or write that exceeds the deadline and is force-closed;
-3. inbound authentication and outbound `Dial` racing with the draining transition;
-4. repeated and concurrent `Drain`/`Close` calls with one listener close and one
-   disconnect callback per registered peer;
-5. a delayed one-shot ACK, pending repair continuation, and reconnect backoff after
-   application cancellation; and
-6. zero active peers and zero tracked goroutines after return, under `-race` and a
-   leak check suitable for the repository's dependency policy.
+2. a handler that exceeds the deadline and is force-closed within the bounded
+   join grace;
+3. pending inbound authentication and new inbound/outbound admissions after drain;
+4. repeated and concurrent `Drain` calls with one listener close and one
+   disconnect callback per registered peer; and
+5. zero active peers and zero tracked goroutines after cooperative return, under
+   `-race`.
+
+The follow-up CLI integration should add delayed one-shot ACK, pending repair
+continuation, and reconnect-backoff coverage after application cancellation.
 
 The existing full matrix, TLS/mTLS, replication, fuzz, demo, vulnerability, and
 SBOM checks remain required for every implementation slice.

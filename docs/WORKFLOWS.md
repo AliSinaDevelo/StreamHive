@@ -138,6 +138,16 @@ It runs three race-enabled repetitions, rejects an oversized request header with
 limit, serves normal liveness traffic, and verifies context cancellation closes the health listener
 across repeated starts.
 
+The bounded P2P drain acceptance target is:
+
+```bash
+make test-peer-drain
+```
+
+It runs three race-enabled repetitions covering cooperative handler shutdown,
+pending authentication closure, deadline force-close, repeated drain calls, and
+rejection of new admissions after the transport enters its draining state.
+
 The Prometheus exposition acceptance target is:
 
 ```bash
@@ -230,6 +240,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-tls-credential-health` to repeat aggregate TLS identity validity, expiry warning, startup rejection, and readiness checks under the race detector
 - `make test-prometheus-format` to repeat typed, sorted, label-free `HELP`/`TYPE` health exposition checks under the race detector
 - `make test-health-server` to repeat bounded health HTTP request and graceful-shutdown checks under the race detector
+- `make test-peer-drain` to repeat bounded P2P drain, admission, and forced-close checks under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

@@ -43,6 +43,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Health HTTP**: the optional health server now sets explicit 5-second header, 10-second read/write, 60-second idle, and 1 MiB header bounds and shuts down gracefully with process cancellation.
 - **Tests**: `make test-health-server` covers oversized requests, normal liveness, and repeated listener shutdown under the race detector.
 - **CI**: `make test-health-server` runs as a dedicated Go 1.23.x pipeline job.
+- **`p2p`**: concrete `TCPTransport.Drain(ctx)` provides a finite-deadline staged shutdown while `Close()` remains the immediate hard-stop path; the public `Transport` interface and wire protocol are unchanged.
+- **Metrics**: transport shutdown state, tracked peers/goroutines, drained peers, forced closes, and deadline expiry are available as aggregate health values without labels.
+- **Tests**: `make test-peer-drain` covers cooperative drain, pending authentication closure, deadline force-close, repeated calls, and post-drain admission rejection under the race detector.
+- **CI**: `make test-peer-drain` runs as a dedicated Go 1.23.x pipeline job.
 - **Docs**: `docs/PEER_DRAIN.md` records the v0.12 local, bounded, staged peer-drain decision without adding a shutdown wire message.
 - **Docs**: `docs/TLS_ROTATION.md` defines restart-only certificate rotation, session-resumption boundaries, rollback, observability, and the focused follow-up acceptance plan.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.

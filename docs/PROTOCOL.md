@@ -283,7 +283,8 @@ remote peer observes an ordinary EOF or connection error. A close does not
 acknowledge or guarantee delivery of an in-flight blob. Reconnect and anti-entropy
 repair remain the recovery paths for work interrupted by shutdown.
 
-The v0.12 design direction is a local, staged, caller-bounded peer drain with no
-new frame type or mixed-version handshake. It will preserve SHV1 framing and the
+The v0.12 transport implements a local, staged, caller-bounded peer drain through
+`TCPTransport.Drain(ctx)`, with no new frame type or mixed-version handshake.
+`Close()` remains the immediate hard-stop path. Both preserve SHV1 framing and the
 existing replication messages. See [PEER_DRAIN.md](PEER_DRAIN.md) for the lifecycle
-contract, alternatives, and implementation test plan.
+contract, deadline semantics, and acceptance evidence.
