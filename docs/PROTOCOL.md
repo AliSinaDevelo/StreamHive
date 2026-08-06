@@ -274,3 +274,16 @@ The optional HTTP health server also uses fixed bounds rather than unbounded req
 5-second header reads, 10-second request reads, 10-second response writes, 60-second idle
 connections, and 1 MiB maximum headers. Process cancellation gracefully shuts down the server;
 the P2P wire protocol and endpoint paths are unchanged.
+
+## Shutdown and Drain
+
+There is no shutdown message in the StreamHive wire protocol. The current transport
+closes its listener, cancels local handlers, and closes the tracked TCP peers; a
+remote peer observes an ordinary EOF or connection error. A close does not
+acknowledge or guarantee delivery of an in-flight blob. Reconnect and anti-entropy
+repair remain the recovery paths for work interrupted by shutdown.
+
+The v0.12 design direction is a local, staged, caller-bounded peer drain with no
+new frame type or mixed-version handshake. It will preserve SHV1 framing and the
+existing replication messages. See [PEER_DRAIN.md](PEER_DRAIN.md) for the lifecycle
+contract, alternatives, and implementation test plan.
