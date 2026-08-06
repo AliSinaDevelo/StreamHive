@@ -38,6 +38,7 @@ const (
 	repairContinuationDelay       = 100 * time.Millisecond
 	maxRepairContinuationAttempts = 1
 	defaultMaxRepairOps           = 4
+	defaultTLSExpiryWarning       = 30 * 24 * time.Hour
 	maxDuration                   = time.Duration(1<<63 - 1)
 )
 
@@ -104,6 +105,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tlsClientKey := fs.String("tls-client-key", "", "path to PEM private key for -tls-client-cert")
 	tlsClientCA := fs.String("tls-client-ca", "", "path to PEM CA bundle for verifying inbound client certificates")
 	tlsRequireClientCert := fs.Bool("tls-require-client-cert", false, "require and verify client certificates on the TLS listener")
+	tlsExpiryWarning := fs.Duration("tls-expiry-warning", defaultTLSExpiryWarning, "warning window for configured TLS identities (0 = disabled)")
 	insecureSkip := fs.Bool("tls-insecure-skip-verify", false, "skip TLS verify on outbound (dev only)")
 
 	if err := fs.Parse(args); err != nil {
@@ -198,6 +200,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *maxInventoryKeys < 0 {
 		return fmt.Errorf("replication: -max-inventory-keys must be zero or greater")
+	}
+	if *tlsExpiryWarning < 0 {
+		return fmt.Errorf("tls: -tls-expiry-warning must be zero or greater")
 	}
 
 	replLimits := replication.Limits{MaxDataBytes: *maxBlobBytes, MaxRepairBytes: *maxRepairBytes}
@@ -369,6 +374,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
+	var serverCertificate *tls.Certificate
 	if *tlsCert != "" || *tlsKey != "" {
 		if *tlsCert == "" || *tlsKey == "" {
 			return fmt.Errorf("tls: both -tls-cert and -tls-key are required")
@@ -377,6 +383,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("tls: load server cert: %w", err)
 		}
+		serverCertificate = &cert
 		serverConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
@@ -403,6 +410,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			cfg.Certificates = []tls.Certificate{*clientCertificate}
 		}
 		tr.TLSClientConfig = cfg
+	}
+
+	tlsHealth, err := newTLSCredentialHealth(
+		time.Now().UTC(),
+		*tlsExpiryWarning,
+		tlsCredentialInput{flagName: "-tls-cert", certificate: serverCertificate},
+		tlsCredentialInput{flagName: "-tls-client-cert", certificate: clientCertificate},
+	)
+	if err != nil {
+		return err
 	}
 
 	if err := tr.ListenAndAccept(ctx); err != nil {
@@ -460,7 +477,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var hsrv *http.Server
 	if *health != "" {
 		var err error
-		hsrv, err = startHealth(*health, tr, replMetrics, log)
+		hsrv, err = startHealth(*health, tr, replMetrics, tlsHealth, log)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
@@ -1566,6 +1583,93 @@ func loadTLSCAPool(path, flagName string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
+type tlsCredentialInput struct {
+	flagName    string
+	certificate *tls.Certificate
+}
+
+type tlsCredentialValidity struct {
+	notBefore time.Time
+	notAfter  time.Time
+}
+
+type tlsCredentialHealth struct {
+	credentials   []tlsCredentialValidity
+	warningWindow time.Duration
+}
+
+func newTLSCredentialHealth(now time.Time, warningWindow time.Duration, inputs ...tlsCredentialInput) (*tlsCredentialHealth, error) {
+	health := &tlsCredentialHealth{warningWindow: warningWindow}
+	for _, input := range inputs {
+		if input.certificate == nil {
+			continue
+		}
+		if len(input.certificate.Certificate) == 0 {
+			return nil, fmt.Errorf("tls: %s certificate has no leaf", input.flagName)
+		}
+		leaf, err := x509.ParseCertificate(input.certificate.Certificate[0])
+		if err != nil {
+			return nil, fmt.Errorf("tls: parse %s certificate: %w", input.flagName, err)
+		}
+		if now.Before(leaf.NotBefore) {
+			return nil, fmt.Errorf("tls: %s certificate is not valid before %s", input.flagName, leaf.NotBefore.UTC().Format(time.RFC3339))
+		}
+		if !now.Before(leaf.NotAfter) {
+			return nil, fmt.Errorf("tls: %s certificate expired at %s", input.flagName, leaf.NotAfter.UTC().Format(time.RFC3339))
+		}
+		health.credentials = append(health.credentials, tlsCredentialValidity{
+			notBefore: leaf.NotBefore,
+			notAfter:  leaf.NotAfter,
+		})
+	}
+	return health, nil
+}
+
+func (h *tlsCredentialHealth) Snapshot(now time.Time) map[string]int64 {
+	if h == nil {
+		return map[string]int64{}
+	}
+	var earliestExpiry time.Time
+	var expired, notYetValid, expiringSoon int64
+	warningDeadline := now.Add(h.warningWindow)
+	for _, credential := range h.credentials {
+		if earliestExpiry.IsZero() || credential.notAfter.Before(earliestExpiry) {
+			earliestExpiry = credential.notAfter
+		}
+		switch {
+		case now.Before(credential.notBefore):
+			notYetValid++
+		case !now.Before(credential.notAfter):
+			expired++
+		case h.warningWindow > 0 && !credential.notAfter.After(warningDeadline):
+			expiringSoon++
+		}
+	}
+	var expiryTimestamp int64
+	if !earliestExpiry.IsZero() {
+		expiryTimestamp = earliestExpiry.Unix()
+	}
+	return map[string]int64{
+		"tls_certificates_configured":              int64(len(h.credentials)),
+		"tls_certificate_expiry_timestamp_seconds": expiryTimestamp,
+		"tls_certificates_expired":                 expired,
+		"tls_certificates_not_yet_valid":           notYetValid,
+		"tls_certificates_expiring_soon":           expiringSoon,
+	}
+}
+
+func (h *tlsCredentialHealth) Ready(now time.Time) bool {
+	if h == nil {
+		return true
+	}
+	for _, credential := range h.credentials {
+		if now.Before(credential.notBefore) || !now.Before(credential.notAfter) {
+			return false
+		}
+	}
+	return true
+}
+
 func parsePeerIdentityList(identities string) ([]string, error) {
 	if strings.TrimSpace(identities) == "" {
 		return nil, nil
@@ -1746,14 +1850,14 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 	}
 }
 
-func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, log *slog.Logger) (*http.Server, error) {
+func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, tlsHealth *tlsCredentialHealth, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if !tr.Ready() {
+		if !tr.Ready() || !tlsHealth.Ready(time.Now().UTC()) {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -1764,6 +1868,9 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		w.Header().Set("Content-Type", "application/json")
 		snapshot := tr.Metrics().Snapshot()
 		for key, value := range replMetrics.Snapshot() {
+			snapshot[key] = value
+		}
+		for key, value := range tlsHealth.Snapshot(time.Now().UTC()) {
 			snapshot[key] = value
 		}
 		enc := json.NewEncoder(w)
@@ -1780,6 +1887,9 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		snapshot := tr.Metrics().Snapshot()
 		for key, value := range replMetrics.Snapshot() {
+			snapshot[key] = value
+		}
+		for key, value := range tlsHealth.Snapshot(time.Now().UTC()) {
 			snapshot[key] = value
 		}
 		writePrometheusMetrics(w, snapshot)
