@@ -111,6 +111,33 @@ func writeTLSAcceptanceServerPair(t *testing.T, material tlsAcceptanceMaterial, 
 	return certPath, keyPath
 }
 
+func writeTLSAcceptanceClientPair(t *testing.T, material tlsAcceptanceMaterial, serial int64) (string, string) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      pkix.Name{CommonName: "streamhive-client"},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, material.caCert, &clientKey.PublicKey, material.caKey)
+	require.NoError(t, err)
+	clientKeyDER, err := x509.MarshalPKCS8PrivateKey(clientKey)
+	require.NoError(t, err)
+
+	dir := filepath.Dir(material.serverCertPath)
+	certPath := filepath.Join(dir, fmt.Sprintf("client-%d-cert.pem", serial))
+	keyPath := filepath.Join(dir, fmt.Sprintf("client-%d-key.pem", serial))
+	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER}), 0o644))
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: clientKeyDER}), 0o600))
+	return certPath, keyPath
+}
+
 func startTLSAcceptanceNode(t *testing.T, args ...string) *inventoryBudgetNode {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

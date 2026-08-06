@@ -100,6 +100,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tlsKey := fs.String("tls-key", "", "path to PEM private key for -tls-cert")
 	tlsCA := fs.String("tls-ca", "", "optional path to PEM CA bundle for outbound TLS")
 	tlsServerName := fs.String("tls-server-name", "", "SNI / cert verification name for outbound TLS")
+	tlsClientCert := fs.String("tls-client-cert", "", "path to PEM client certificate for outbound mTLS")
+	tlsClientKey := fs.String("tls-client-key", "", "path to PEM private key for -tls-client-cert")
+	tlsClientCA := fs.String("tls-client-ca", "", "path to PEM CA bundle for verifying inbound client certificates")
+	tlsRequireClientCert := fs.Bool("tls-require-client-cert", false, "require and verify client certificates on the TLS listener")
 	insecureSkip := fs.Bool("tls-insecure-skip-verify", false, "skip TLS verify on outbound (dev only)")
 
 	if err := fs.Parse(args); err != nil {
@@ -326,6 +330,45 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
+	if *tlsClientCert != "" || *tlsClientKey != "" {
+		if *tlsClientCert == "" || *tlsClientKey == "" {
+			return fmt.Errorf("tls: both -tls-client-cert and -tls-client-key are required")
+		}
+	}
+
+	var clientCertificate *tls.Certificate
+	if *tlsClientCert != "" {
+		cert, err := tls.LoadX509KeyPair(*tlsClientCert, *tlsClientKey)
+		if err != nil {
+			return fmt.Errorf("tls: load client cert: %w", err)
+		}
+		clientCertificate = &cert
+	}
+
+	if *tlsClientCA != "" && !*tlsRequireClientCert {
+		return fmt.Errorf("tls: -tls-client-ca requires -tls-require-client-cert")
+	}
+	if *tlsRequireClientCert && *tlsClientCA == "" {
+		return fmt.Errorf("tls: -tls-require-client-cert requires -tls-client-ca")
+	}
+	if *tlsRequireClientCert && (*tlsCert == "" || *tlsKey == "") {
+		return fmt.Errorf("tls: -tls-require-client-cert requires -tls-cert and -tls-key")
+	}
+	var clientCAPool *x509.CertPool
+	if *tlsClientCA != "" {
+		clientCAPool, err = loadTLSCAPool(*tlsClientCA, "-tls-client-ca")
+		if err != nil {
+			return err
+		}
+	}
+	var outboundCAPool *x509.CertPool
+	if *tlsCA != "" {
+		outboundCAPool, err = loadTLSCAPool(*tlsCA, "-tls-ca")
+		if err != nil {
+			return err
+		}
+	}
+
 	if *tlsCert != "" || *tlsKey != "" {
 		if *tlsCert == "" || *tlsKey == "" {
 			return fmt.Errorf("tls: both -tls-cert and -tls-key are required")
@@ -334,13 +377,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("tls: load server cert: %w", err)
 		}
-		tr.TLSServerConfig = &tls.Config{
+		serverConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
 		}
+		if *tlsRequireClientCert {
+			serverConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			serverConfig.ClientCAs = clientCAPool
+		}
+		tr.TLSServerConfig = serverConfig
 	}
 
-	if len(peerTargets) > 0 && (*tlsCA != "" || *insecureSkip || *tlsServerName != "") {
+	if len(peerTargets) > 0 && (*tlsCA != "" || *insecureSkip || *tlsServerName != "" || clientCertificate != nil) {
 		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 		if *insecureSkip {
 			cfg.InsecureSkipVerify = true
@@ -348,16 +396,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if *tlsServerName != "" {
 			cfg.ServerName = *tlsServerName
 		}
-		if *tlsCA != "" {
-			pool := x509.NewCertPool()
-			data, err := os.ReadFile(*tlsCA)
-			if err != nil {
-				return fmt.Errorf("tls: read ca: %w", err)
-			}
-			if !pool.AppendCertsFromPEM(data) {
-				return fmt.Errorf("tls: no certificates parsed from -tls-ca")
-			}
-			cfg.RootCAs = pool
+		if outboundCAPool != nil {
+			cfg.RootCAs = outboundCAPool
+		}
+		if clientCertificate != nil {
+			cfg.Certificates = []tls.Certificate{*clientCertificate}
 		}
 		tr.TLSClientConfig = cfg
 	}
@@ -1509,6 +1552,18 @@ func parsePeerList(peers string) ([]string, error) {
 		targets = append(targets, target)
 	}
 	return targets, nil
+}
+
+func loadTLSCAPool(path, flagName string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("tls: read %s: %w", strings.TrimPrefix(flagName, "-tls-"), err)
+	}
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("tls: no certificates parsed from %s", flagName)
+	}
+	return pool, nil
 }
 
 func parsePeerIdentityList(identities string) ([]string, error) {
