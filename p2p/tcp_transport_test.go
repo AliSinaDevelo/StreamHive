@@ -553,6 +553,160 @@ func TestClose_underConcurrentDial(t *testing.T) {
 	wg.Wait()
 }
 
+func TestDrain_closesTrackedPeerAndJoins(t *testing.T) {
+	ctx := context.Background()
+	handlerStarted := make(chan struct{})
+	handlerExited := make(chan struct{})
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.FrameHandler = func(ctx context.Context, _ Peer, _ []byte) error {
+		close(handlerStarted)
+		<-ctx.Done()
+		close(handlerExited)
+		return nil
+	}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	require.Eventually(t, func() bool { return len(server.Peers()) == 1 }, time.Second, 5*time.Millisecond)
+
+	clientPeer, ok := client.Peers()[0].(*TCPPeer)
+	require.True(t, ok)
+	require.NoError(t, clientPeer.WriteFrame([]byte("drain"), 1024))
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("frame handler did not start")
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, server.Drain(drainCtx))
+	select {
+	case <-handlerExited:
+	case <-time.After(time.Second):
+		t.Fatal("frame handler did not exit")
+	}
+
+	assert.False(t, server.Ready())
+	assert.Empty(t, server.Peers())
+	assert.Zero(t, server.Metrics().ActivePeers.Load())
+	assert.Zero(t, server.Metrics().ShutdownTrackedGoroutines.Load())
+	assert.Equal(t, uint64(1), server.Metrics().ShutdownsStarted.Load())
+	assert.Equal(t, uint64(1), server.Metrics().ShutdownPeersDrained.Load())
+	assert.Zero(t, server.Metrics().ShutdownForcedCloses.Load())
+	assert.Equal(t, int64(2), server.Metrics().Snapshot()["shutdown_state"])
+}
+
+func TestDrain_closesPendingAdmission(t *testing.T) {
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	require.NoError(t, server.ListenAndAccept(context.Background()))
+	defer func() { _ = server.Close() }()
+
+	conn, err := net.Dial("tcp", server.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.Eventually(t, func() bool {
+		return server.Metrics().ShutdownTrackedGoroutines.Load() >= 2
+	}, time.Second, 5*time.Millisecond)
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, server.Drain(drainCtx))
+	assert.Zero(t, server.Metrics().ShutdownTrackedGoroutines.Load())
+	assert.Zero(t, server.Metrics().ActivePeers.Load())
+	assert.Zero(t, server.Metrics().ShutdownPeersDrained.Load())
+	assert.Equal(t, uint64(1), server.Metrics().ShutdownForcedCloses.Load())
+}
+
+func TestDrain_isIdempotentUnderConcurrentCalls(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, tr.ListenAndAccept(context.Background()))
+
+	const callers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			errs <- tr.Drain(drainCtx)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	assert.False(t, tr.Ready())
+	assert.Equal(t, uint64(1), tr.Metrics().ShutdownsStarted.Load())
+	assert.Zero(t, tr.Metrics().ShutdownForcedCloses.Load())
+	assert.Zero(t, tr.Metrics().ShutdownTrackedGoroutines.Load())
+}
+
+func TestDrain_forceClosesUncooperativeHandlerWithinBound(t *testing.T) {
+	release := make(chan struct{})
+	handlerStarted := make(chan struct{})
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.FrameHandler = func(context.Context, Peer, []byte) error {
+		close(handlerStarted)
+		<-release
+		return nil
+	}
+	require.NoError(t, server.ListenAndAccept(context.Background()))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, client.ListenAndAccept(context.Background()))
+	defer func() { _ = client.Close() }()
+	require.NoError(t, client.Dial(context.Background(), server.Addr().String()))
+	require.Eventually(t, func() bool { return len(server.Peers()) == 1 }, time.Second, 5*time.Millisecond)
+	clientPeer, ok := client.Peers()[0].(*TCPPeer)
+	require.True(t, ok)
+	require.NoError(t, clientPeer.WriteFrame([]byte("blocked"), 1024))
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("frame handler did not start")
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := server.Drain(drainCtx)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(started), 2*time.Second)
+	assert.GreaterOrEqual(t, server.Metrics().ShutdownForcedCloses.Load(), uint64(1))
+
+	close(release)
+	require.Eventually(t, func() bool {
+		return server.Metrics().ShutdownTrackedGoroutines.Load() == 0
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestDrain_requiresDeadline(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, tr.ListenAndAccept(context.Background()))
+	defer func() { _ = tr.Close() }()
+
+	assert.ErrorIs(t, tr.Drain(context.Background()), ErrDrainDeadlineRequired)
+	assert.True(t, tr.Ready())
+}
+
 func TestTCPPeer_Close(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
