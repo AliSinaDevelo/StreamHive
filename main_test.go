@@ -2157,7 +2157,7 @@ func TestWritePrometheusMetrics(t *testing.T) {
 		"z_metric": 2,
 		"a_metric": 1,
 	})
-	assert.Equal(t, "streamhive_a_metric 1\nstreamhive_z_metric 2\n", out.String())
+	assert.Equal(t, "# HELP streamhive_a_metric StreamHive a metric.\n# TYPE streamhive_a_metric counter\nstreamhive_a_metric 1\n# HELP streamhive_z_metric StreamHive z metric.\n# TYPE streamhive_z_metric counter\nstreamhive_z_metric 2\n", out.String())
 }
 
 func TestSnapshotPeersSortsByAddress(t *testing.T) {

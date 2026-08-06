@@ -1920,6 +1920,29 @@ func writePrometheusMetrics(w io.Writer, snapshot map[string]int64) {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		_, _ = fmt.Fprintf(w, "streamhive_%s %d\n", key, snapshot[key])
+		metricName := "streamhive_" + key
+		_, _ = fmt.Fprintf(w, "# HELP %s StreamHive %s.\n# TYPE %s %s\n%s %d\n", metricName, strings.ReplaceAll(key, "_", " "), metricName, prometheusMetricType(key), metricName, snapshot[key])
 	}
+}
+
+var prometheusGaugeMetrics = map[string]struct{}{
+	"active_peers":                                 {},
+	"replication_blob_acks_pending":                {},
+	"replication_inventory_exchanges_active":       {},
+	"replication_repair_continuations_active":      {},
+	"replication_repair_continuation_keys_pending": {},
+	"replication_repair_io_ops_in_flight":          {},
+	"replication_repair_io_ops_queued":             {},
+	"tls_certificate_expiry_timestamp_seconds":     {},
+	"tls_certificates_configured":                  {},
+	"tls_certificates_expired":                     {},
+	"tls_certificates_expiring_soon":               {},
+	"tls_certificates_not_yet_valid":               {},
+}
+
+func prometheusMetricType(key string) string {
+	if _, ok := prometheusGaugeMetrics[key]; ok {
+		return "gauge"
+	}
+	return "counter"
 }
