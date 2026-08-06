@@ -707,6 +707,19 @@ func TestDrain_requiresDeadline(t *testing.T) {
 	assert.True(t, tr.Ready())
 }
 
+func TestDrain_rejectsNewAdmissions(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, tr.ListenAndAccept(context.Background()))
+	addr := tr.Addr().String()
+	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, tr.Drain(drainCtx))
+
+	assert.ErrorIs(t, tr.ListenAndAccept(context.Background()), ErrTransportClosed)
+	assert.ErrorIs(t, tr.Dial(context.Background(), addr), ErrTransportClosed)
+}
+
 func TestTCPPeer_Close(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close() }()
