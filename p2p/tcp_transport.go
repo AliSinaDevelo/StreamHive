@@ -22,6 +22,17 @@ var ErrAlreadyListening = errors.New("p2p: already listening")
 // ErrTransportClosed is returned when Dial is used after Close.
 var ErrTransportClosed = errors.New("p2p: transport closed")
 
+// ErrDrainDeadlineRequired is returned when Drain is called without a deadline.
+var ErrDrainDeadlineRequired = errors.New("p2p: drain deadline is required")
+
+type transportLifecycleState int64
+
+const (
+	transportStateOpen transportLifecycleState = iota
+	transportStateDraining
+	transportStateClosed
+)
+
 // TCPPeer is a TCP-backed Peer.
 type TCPPeer struct {
 	conn         net.Conn
@@ -127,26 +138,34 @@ type TCPTransport struct {
 	TLSServerConfig *tls.Config
 	TLSClientConfig *tls.Config
 
-	mu      sync.RWMutex
-	peers   map[string]Peer
-	metrics *TransportMetrics
+	mu          sync.RWMutex
+	peers       map[string]Peer
+	connections map[*TCPPeer]struct{}
+	metrics     *TransportMetrics
+	workDone    chan struct{}
+	workCount   int
 
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 
-	acceptWg  sync.WaitGroup
 	closeOnce sync.Once
 	closeErr  error
-	closed    atomic.Bool
+	state     atomic.Int64
 }
 
 // NewTCPTransport constructs a transport; ListenAddress must be non-empty before ListenAndAccept.
 func NewTCPTransport(listenAddr string) *TCPTransport {
 	ctx, cancel := context.WithCancel(context.Background())
+	workDone := make(chan struct{})
+	close(workDone)
+	metrics := NewTransportMetrics()
+	metrics.ShutdownState.Store(int64(transportStateOpen))
 	return &TCPTransport{
 		ListenAddress:  listenAddr,
 		peers:          make(map[string]Peer),
-		metrics:        NewTransportMetrics(),
+		connections:    make(map[*TCPPeer]struct{}),
+		metrics:        metrics,
+		workDone:       workDone,
 		shutdownCtx:    ctx,
 		shutdownCancel: cancel,
 	}
@@ -203,6 +222,104 @@ func (t *TCPTransport) maxFrame() int {
 	return DefaultMaxFrameBytes
 }
 
+func (t *TCPTransport) lifecycleState() transportLifecycleState {
+	return transportLifecycleState(t.state.Load())
+}
+
+func (t *TCPTransport) startWorkLocked() bool {
+	if t.lifecycleState() != transportStateOpen {
+		return false
+	}
+	if t.workCount == 0 {
+		t.workDone = make(chan struct{})
+	}
+	t.workCount++
+	t.metrics.ShutdownTrackedGoroutines.Add(1)
+	return true
+}
+
+func (t *TCPTransport) beginWork() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.startWorkLocked()
+}
+
+func (t *TCPTransport) finishWork() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.workCount == 0 {
+		return
+	}
+	t.workCount--
+	t.metrics.ShutdownTrackedGoroutines.Add(-1)
+	if t.workCount == 0 {
+		close(t.workDone)
+	}
+}
+
+func (t *TCPTransport) trackConnection(tp *TCPPeer) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.lifecycleState() != transportStateOpen {
+		return false
+	}
+	t.connections[tp] = struct{}{}
+	return true
+}
+
+func (t *TCPTransport) removeConnection(tp *TCPPeer) {
+	t.mu.Lock()
+	delete(t.connections, tp)
+	t.mu.Unlock()
+}
+
+func (t *TCPTransport) registeredConnectionLocked(tp *TCPPeer) bool {
+	peer, ok := t.peers[tp.RemoteAddr().String()]
+	return ok && peer == tp
+}
+
+func (t *TCPTransport) snapshotConnections() (pending, active []*TCPPeer) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for tp := range t.connections {
+		if t.registeredConnectionLocked(tp) {
+			active = append(active, tp)
+		} else {
+			pending = append(pending, tp)
+		}
+	}
+	return pending, active
+}
+
+func (t *TCPTransport) closeConnections(peers []*TCPPeer) int {
+	closed := 0
+	for _, peer := range peers {
+		if peer == nil {
+			continue
+		}
+		_ = peer.Close()
+		closed++
+	}
+	return closed
+}
+
+func (t *TCPTransport) waitForWork(ctx context.Context) error {
+	t.mu.RLock()
+	done := t.workDone
+	t.mu.RUnlock()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (t *TCPTransport) markClosed() {
+	t.state.Store(int64(transportStateClosed))
+	t.metrics.ShutdownState.Store(int64(transportStateClosed))
+}
+
 // Ready reports whether the transport has a bound listener.
 func (t *TCPTransport) Ready() bool {
 	t.mu.RLock()
@@ -225,6 +342,10 @@ func (t *TCPTransport) ListenAndAccept(ctx context.Context) error {
 	}
 
 	t.mu.Lock()
+	if t.lifecycleState() != transportStateOpen {
+		t.mu.Unlock()
+		return ErrTransportClosed
+	}
 	if t.Listener != nil {
 		t.mu.Unlock()
 		return ErrAlreadyListening
@@ -249,21 +370,31 @@ func (t *TCPTransport) ListenAndAccept(ctx context.Context) error {
 	}
 
 	t.mu.Lock()
+	if t.lifecycleState() != transportStateOpen {
+		t.mu.Unlock()
+		_ = ln.Close()
+		return ErrTransportClosed
+	}
 	if t.Listener != nil {
 		t.mu.Unlock()
 		_ = ln.Close()
 		return ErrAlreadyListening
 	}
 	t.Listener = ln
+	if !t.startWorkLocked() {
+		t.Listener = nil
+		t.mu.Unlock()
+		_ = ln.Close()
+		return ErrTransportClosed
+	}
 	t.mu.Unlock()
 
-	t.acceptWg.Add(1)
 	go t.acceptLoop()
 	return nil
 }
 
 func (t *TCPTransport) acceptLoop() {
-	defer t.acceptWg.Done()
+	defer t.finishWork()
 
 	for {
 		t.mu.RLock()
@@ -284,13 +415,31 @@ func (t *TCPTransport) acceptLoop() {
 			_ = tc.SetKeepAlive(true)
 		}
 
-		go t.handleAcceptedConn(conn)
+		tp := NewTCPPeer(conn, false)
+		t.mu.Lock()
+		admitted := t.lifecycleState() == transportStateOpen && t.startWorkLocked()
+		if admitted {
+			t.connections[tp] = struct{}{}
+		}
+		t.mu.Unlock()
+		if !admitted {
+			_ = tp.Close()
+			continue
+		}
+		go t.handleAcceptedConn(tp)
 	}
 }
 
-func (t *TCPTransport) handleAcceptedConn(conn net.Conn) {
-	tp := NewTCPPeer(conn, false)
-	if tlsConn, ok := conn.(*tls.Conn); ok {
+func (t *TCPTransport) handleAcceptedConn(tp *TCPPeer) {
+	registered := false
+	defer func() {
+		if !registered {
+			t.removeConnection(tp)
+		}
+		t.finishWork()
+	}()
+
+	if tlsConn, ok := tp.Conn().(*tls.Conn); ok {
 		handshakeCtx, cancel := t.tlsHandshakeContext(t.shutdownCtx)
 		err := tlsConn.HandshakeContext(handshakeCtx)
 		cancel()
@@ -308,29 +457,41 @@ func (t *TCPTransport) handleAcceptedConn(conn net.Conn) {
 		_ = tp.Close()
 		return
 	}
-	t.handlePeer(tp)
+	registered, _ = t.handlePeer(tp)
+	if !registered {
+		_ = tp.Close()
+	}
 }
 
-func (t *TCPTransport) handlePeer(tp *TCPPeer) {
+func (t *TCPTransport) handlePeer(tp *TCPPeer) (bool, error) {
 	key := tp.RemoteAddr().String()
 	if t.peerAuthEnabled() {
 		tp.authMethod = PeerAuthMethodSharedToken
 	}
 
 	t.mu.Lock()
+	if t.lifecycleState() != transportStateOpen {
+		t.mu.Unlock()
+		return false, ErrTransportClosed
+	}
 	if _, dup := t.peers[key]; dup {
 		t.mu.Unlock()
 		_ = tp.Close()
-		return
+		return false, nil
 	}
 	if t.MaxPeers > 0 && len(t.peers) >= t.MaxPeers {
 		t.mu.Unlock()
 		t.metrics.PeersRejected.Add(1)
 		_ = tp.Close()
-		return
+		return false, nil
+	}
+	if !t.startWorkLocked() {
+		t.mu.Unlock()
+		return false, ErrTransportClosed
 	}
 	t.peers[key] = tp
 	t.metrics.ActivePeers.Add(1)
+	t.metrics.ShutdownTrackedPeers.Add(1)
 	t.mu.Unlock()
 
 	if !tp.outbound {
@@ -344,6 +505,7 @@ func (t *TCPTransport) handlePeer(tp *TCPPeer) {
 	}
 
 	go t.peerServe(tp)
+	return true, nil
 }
 
 func (t *TCPTransport) unregisterPeer(p Peer) {
@@ -352,8 +514,12 @@ func (t *TCPTransport) unregisterPeer(p Peer) {
 	if _, ok := t.peers[key]; ok {
 		delete(t.peers, key)
 		t.metrics.ActivePeers.Add(-1)
+		t.metrics.ShutdownTrackedPeers.Add(-1)
 	}
 	t.mu.Unlock()
+	if tp, ok := p.(*TCPPeer); ok {
+		t.removeConnection(tp)
+	}
 
 	if t.OnPeerDisconnected != nil {
 		t.OnPeerDisconnected(p)
@@ -361,6 +527,7 @@ func (t *TCPTransport) unregisterPeer(p Peer) {
 }
 
 func (t *TCPTransport) peerServe(tp *TCPPeer) {
+	defer t.finishWork()
 	defer t.unregisterPeer(tp)
 
 	conn := tp.Conn()
@@ -412,25 +579,44 @@ func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
 	if err := t.validatePeerAuthConfig(); err != nil {
 		return err
 	}
-	if t.closed.Load() {
+	if !t.beginWork() {
 		return ErrTransportClosed
 	}
+	defer t.finishWork()
 
 	t.metrics.DialAttempts.Add(1)
 
-	dialCtx := ctx
-	var cancel context.CancelFunc
+	dialCtx, cancel := context.WithCancel(ctx)
+	stopShutdown := context.AfterFunc(t.shutdownCtx, cancel)
+	defer stopShutdown()
+	defer cancel()
 	if t.DialTimeout > 0 {
-		dialCtx, cancel = context.WithTimeout(ctx, t.DialTimeout)
-		defer cancel()
+		var timeoutCancel context.CancelFunc
+		dialCtx, timeoutCancel = context.WithTimeout(dialCtx, t.DialTimeout)
+		defer timeoutCancel()
 	}
 
 	var d net.Dialer
 	conn, err := d.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		t.metrics.DialErrors.Add(1)
+		if t.lifecycleState() != transportStateOpen {
+			return ErrTransportClosed
+		}
 		return err
 	}
+	tp := NewTCPPeer(conn, true)
+	if !t.trackConnection(tp) {
+		_ = tp.Close()
+		t.metrics.DialErrors.Add(1)
+		return ErrTransportClosed
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			t.removeConnection(tp)
+		}
+	}()
 
 	if t.TLSClientConfig != nil {
 		tlsConn := tls.Client(conn, t.TLSClientConfig)
@@ -444,10 +630,10 @@ func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
 			return err
 		}
 		t.metrics.TLSHandshakeSuccess.Add(1)
-		conn = tlsConn
+		tp.conn = tlsConn
+		tp.reader = bufio.NewReader(tlsConn)
 	}
 
-	tp := NewTCPPeer(conn, true)
 	if err := t.authenticateOutbound(dialCtx, tp); err != nil {
 		_ = tp.Close()
 		t.metrics.PeerAuthFailures.Add(1)
@@ -456,7 +642,16 @@ func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
 	}
 
 	t.metrics.DialSuccess.Add(1)
-	go t.handlePeer(tp)
+	registered, err := t.handlePeer(tp)
+	if err != nil {
+		_ = tp.Close()
+		t.metrics.DialErrors.Add(1)
+		return err
+	}
+	if !registered {
+		return nil
+	}
+	transferred = true
 	return nil
 }
 
@@ -574,30 +769,97 @@ func (t *TCPTransport) Addr() net.Addr {
 	return t.Listener.Addr()
 }
 
-// Close shuts down the listener, waits for the accept loop, and closes peers.
+func (t *TCPTransport) beginShutdown() (net.Listener, int, []*TCPPeer, []*TCPPeer) {
+	t.mu.Lock()
+	t.state.Store(int64(transportStateDraining))
+	t.metrics.ShutdownState.Store(int64(transportStateDraining))
+	t.metrics.ShutdownsStarted.Add(1)
+	t.shutdownCancel()
+
+	listener := t.Listener
+	t.Listener = nil
+	peerCount := len(t.peers)
+	var pending, active []*TCPPeer
+	for tp := range t.connections {
+		if t.registeredConnectionLocked(tp) {
+			active = append(active, tp)
+		} else {
+			pending = append(pending, tp)
+		}
+	}
+	t.mu.Unlock()
+	return listener, peerCount, pending, active
+}
+
+func (t *TCPTransport) completeShutdown(peerCount int) {
+	if peerCount > 0 {
+		t.metrics.ShutdownPeersDrained.Add(uint64(peerCount))
+	}
+	t.markClosed()
+}
+
+func (t *TCPTransport) drain(ctx context.Context) error {
+	listener, peerCount, pending, active := t.beginShutdown()
+	var listenerErr error
+	if listener != nil {
+		listenerErr = listener.Close()
+	}
+
+	if forced := t.closeConnections(pending); forced > 0 {
+		t.metrics.ShutdownForcedCloses.Add(uint64(forced))
+	}
+	deadline, _ := ctx.Deadline()
+	for _, peer := range active {
+		_ = peer.Conn().SetDeadline(deadline)
+	}
+
+	if err := t.waitForWork(ctx); err == nil {
+		t.completeShutdown(peerCount)
+		return listenerErr
+	} else {
+		t.metrics.ShutdownDeadlineExpiries.Add(1)
+		pending, active = t.snapshotConnections()
+		if forced := t.closeConnections(append(pending, active...)); forced > 0 {
+			t.metrics.ShutdownForcedCloses.Add(uint64(forced))
+		}
+		joinCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		joinErr := t.waitForWork(joinCtx)
+		cancel()
+		if joinErr != nil {
+			t.logger().Warn("transport drain deadline expired with tracked work", "err", joinErr, "tracked_goroutines", t.metrics.ShutdownTrackedGoroutines.Load())
+		}
+		t.completeShutdown(peerCount)
+		return errors.Join(listenerErr, err)
+	}
+}
+
+// Drain stops new admissions, gives cooperative peer work until ctx's deadline,
+// and force-closes remaining sockets when the deadline expires.
+func (t *TCPTransport) Drain(ctx context.Context) error {
+	if ctx == nil {
+		return ErrDrainDeadlineRequired
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return ErrDrainDeadlineRequired
+	}
+	t.closeOnce.Do(func() {
+		t.closeErr = t.drain(ctx)
+	})
+	return t.closeErr
+}
+
+// Close is the immediate, idempotent hard-stop path. Use Drain for a bounded
+// cooperative shutdown.
 func (t *TCPTransport) Close() error {
 	t.closeOnce.Do(func() {
-		t.closed.Store(true)
-		t.shutdownCancel()
-
-		t.mu.Lock()
-		peers := make([]Peer, 0, len(t.peers))
-		for _, p := range t.peers {
-			peers = append(peers, p)
+		listener, peerCount, pending, active := t.beginShutdown()
+		if listener != nil {
+			t.closeErr = listener.Close()
 		}
-		ln := t.Listener
-		t.Listener = nil
-		t.mu.Unlock()
-
-		if ln != nil {
-			t.closeErr = ln.Close()
+		if forced := t.closeConnections(append(pending, active...)); forced > 0 {
+			t.metrics.ShutdownForcedCloses.Add(uint64(forced))
 		}
-
-		t.acceptWg.Wait()
-
-		for _, p := range peers {
-			_ = p.Close()
-		}
+		t.completeShutdown(peerCount)
 	})
 	return t.closeErr
 }

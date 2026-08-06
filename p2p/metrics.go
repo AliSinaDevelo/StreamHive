@@ -18,6 +18,13 @@ type TransportMetrics struct {
 	PeerAuthSuccess            atomic.Uint64
 	PeerAuthFailures           atomic.Uint64
 	PeerAuthIdentityRejections atomic.Uint64
+	ShutdownState              atomic.Int64
+	ShutdownsStarted           atomic.Uint64
+	ShutdownPeersDrained       atomic.Uint64
+	ShutdownForcedCloses       atomic.Uint64
+	ShutdownDeadlineExpiries   atomic.Uint64
+	ShutdownTrackedPeers       atomic.Int64
+	ShutdownTrackedGoroutines  atomic.Int64
 }
 
 // NewTransportMetrics returns a zeroed metrics struct.
@@ -45,5 +52,12 @@ func (m *TransportMetrics) Snapshot() map[string]int64 {
 		"peer_auth_success":             int64(m.PeerAuthSuccess.Load()),
 		"peer_auth_failures":            int64(m.PeerAuthFailures.Load()),
 		"peer_auth_identity_rejections": int64(m.PeerAuthIdentityRejections.Load()),
+		"shutdown_state":                m.ShutdownState.Load(),
+		"shutdown_started":              int64(m.ShutdownsStarted.Load()),
+		"shutdown_peers_drained":        int64(m.ShutdownPeersDrained.Load()),
+		"shutdown_forced_closes":        int64(m.ShutdownForcedCloses.Load()),
+		"shutdown_deadline_expiries":    int64(m.ShutdownDeadlineExpiries.Load()),
+		"shutdown_tracked_peers":        m.ShutdownTrackedPeers.Load(),
+		"shutdown_tracked_goroutines":   m.ShutdownTrackedGoroutines.Load(),
 	}
 }
