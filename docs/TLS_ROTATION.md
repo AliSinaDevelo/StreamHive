@@ -12,7 +12,8 @@ and uses that immutable configuration for the lifetime of the process.
 ### CLI
 
 - `-tls-cert` and `-tls-key` are loaded once with `tls.LoadX509KeyPair` before
-  `TCPTransport.ListenAndAccept` binds the listener.
+  `TCPTransport.ListenAndAccept` binds the listener. The leaf certificate validity window is
+  checked at the same boundary; an expired or not-yet-valid identity cannot publish readiness.
 - `-tls-ca` is read once and parsed into the outbound `tls.Config` before the first dial.
 - The listener is a `tls.NewListener` around one TCP listener. Each accepted connection performs
   a bounded TLS handshake before application token auth, peer registration, `OnPeer`, or frame
@@ -91,7 +92,8 @@ run for every connection.
    old trust path available until every server has moved to the replacement certificate.
 5. Restart one node at a time. Wait for its health endpoint and `readyz`, then verify that its
    static peers reconnect before continuing. Keep the configured reconnect maximum bounded.
-6. Inspect aggregate `tls_handshake_success`, `tls_handshake_failures`, `dial_errors`, and
+6. Inspect aggregate `tls_handshake_success`, `tls_handshake_failures`,
+   `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `dial_errors`, and
    `active_peers` counters. Confirm a known content-addressed blob can still be read or repaired.
 7. If startup validation or readiness fails, restore the previous files and restart. Do not
    overwrite the last known-good material until the replacement has been observed healthy.
@@ -106,6 +108,8 @@ The acceptance proof for the restart-only contract must use real TCP and cover:
 - a failed replacement is rejected before listener readiness and does not publish a partial config;
 - restoring the old material permits a subsequent restart and reconnect;
 - mTLS still rejects a missing or unrelated client certificate before `OnPeer` and frame handling;
+- configured leaf identity health reports the earliest expiry without certificate labels, and
+  `/readyz` remains healthy until an identity is invalid;
 - handshake success/failure counters remain aggregate and contain no certificate, secret, or
   remote-address labels.
 

@@ -14,11 +14,14 @@ docker run --rm -p 7070:7070 -p 8080:8080 streamhive:local \
 - **7070** — P2P TCP listener (example).
 - **8080** — HTTP `/livez`, `/readyz`, `/peers` (JSON peer metadata), `/metrics` (JSON counters), `/metrics/prometheus` (Prometheus text).
 
-Use TLS flags (`-tls-cert`, `-tls-key`, `-tls-ca`, `-tls-server-name`) when exposing services beyond a lab network. The verified certificate and application-auth ordering is documented in [TLS_AUTH.md](TLS_AUTH.md) and exercised by `make test-tls-auth`. Reserve `-tls-insecure-skip-verify` for local development. For CLI mTLS, add `-tls-client-ca -tls-require-client-cert` on the listener and `-tls-client-cert -tls-client-key` on outbound peers. For custom trust policy, configure `p2p.TCPTransport.TLSServerConfig` and `TLSClientConfig` in library code.
+Use TLS flags (`-tls-cert`, `-tls-key`, `-tls-ca`, `-tls-server-name`) when exposing services beyond a lab network. The verified certificate and application-auth ordering is documented in [TLS_AUTH.md](TLS_AUTH.md) and exercised by `make test-tls-auth`. Reserve `-tls-insecure-skip-verify` for local development. For CLI mTLS, add `-tls-client-ca -tls-require-client-cert` on the listener and `-tls-client-cert -tls-client-key` on outbound peers. Use `-tls-expiry-warning` to set the aggregate short-lived-credential warning window (`720h` by default, `0` disables the warning). For custom trust policy, configure `p2p.TCPTransport.TLSServerConfig` and `TLSClientConfig` in library code.
 
 Certificate files are loaded at process startup. Use the [TLS rotation runbook](TLS_ROTATION.md)
 for replacement material, trust overlap, restart ordering, rollback, and reconnect checks.
 StreamHive does not promise hot reload or live certificate changes for active connections.
+Configured leaf identities are parsed and checked for `NotBefore`/`NotAfter` before listener
+readiness. `/readyz` becomes unavailable if a configured identity later expires; CA bundles are
+not included in the identity count or expiry timestamp.
 
 For private clusters where every node shares an operator-managed secret, add
 `-peer-auth-token` to each node. Add a stable `-peer-id` to make the remote application
@@ -170,7 +173,8 @@ Add a `Service` for the health port and (separately) headless or load-balanced s
 Define error budgets once you expose a workload to users. Baseline probes:
 
 - **Availability**: `/livez` success rate.
-- **Readiness**: `/readyz` reflects listener bound (`TCPTransport.Ready`).
+- **Readiness**: `/readyz` reflects a bound listener and currently valid configured TLS identities; without TLS credentials it retains listener-only behavior.
+- **TLS credential health**: `tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, and `tls_certificates_expiring_soon` expose aggregate leaf-identity health through JSON and Prometheus without certificate or peer labels.
 - **Peer visibility**: `/peers` returns active connected peers with remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 - **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, `replication_blob_write_errors`, `replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_sent`, `replication_inventory_keys_probed`, `replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`, `replication_inventory_exchanges_active`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`, and `replication_corrupt_blobs_detected`, or Prometheus samples from `/metrics/prometheus`. The anti-entropy counters are aggregate: advertisements count successful `blob.has` frames, keys sent count advertised keys, missing-key requests count keys in `blob.missing` messages, exchange-limited counts budgeted continuations, repair sends count successful repair `blob.put` frames, deferred counts keys held back by the per-response repair budget, and corruption counts damaged content-addressed files replaced by a verified repair.
 

@@ -1,6 +1,6 @@
 # TLS And Application Auth
 
-Status: v0.12 acceptance contract, tracked by issues #37, #38, and #41.
+Status: v0.12 acceptance contract, tracked by issues #37, #38, #41, and #42.
 
 ## Contract
 
@@ -21,6 +21,12 @@ Certificate subjects and serial numbers are not emitted as metric labels. `/peer
 application `auth_method` and `auth_identity`; `/metrics` and `/metrics/prometheus` expose
 aggregate TLS-adjacent admission outcomes through the existing transport and replication
 counters.
+
+Configured CLI identity certificates also expose bounded lifecycle health through
+`tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`,
+`tls_certificates_expired`, `tls_certificates_not_yet_valid`, and
+`tls_certificates_expiring_soon`. These values contain no certificate, peer, address, serial,
+subject, fingerprint, or file-path labels.
 
 ## CLI Workflow
 
@@ -87,6 +93,24 @@ server-side mTLS rejection as a connection close or subsequent application-auth 
 listener's aggregate handshake and admission metrics to distinguish that boundary from a
 successful peer.
 
+## Credential Health
+
+The CLI parses the leaf certificate from every configured server identity and outbound client
+identity before `TCPTransport.ListenAndAccept`. An expired or not-yet-valid identity fails startup
+before `listening on` is printed. CA bundles remain trust material and are not counted as identity
+credentials.
+
+The `-tls-expiry-warning` flag defaults to `720h` (30 days). A positive value counts valid leaf
+identities whose `NotAfter` falls inside that window as `tls_certificates_expiring_soon`; `0`
+disables only that warning status. `tls_certificate_expiry_timestamp_seconds` is the earliest
+configured leaf `NotAfter` as a Unix timestamp, or `0` when no identity certificate is configured.
+The expired, not-yet-valid, and expiring-soon values are recalculated on every health scrape.
+
+`/readyz` requires both a bound listener and currently valid configured identities. A warning does
+not remove readiness, but an identity that expires after startup does. A process with no TLS
+identity keeps the existing listener-only readiness behavior. There is no certificate clock-skew
+grace period; synchronize host clocks before deploying short-lived credentials.
+
 ## Library mTLS Boundary
 
 The CLI and library both expose mutual certificate authentication. Library users who need custom
@@ -141,6 +165,17 @@ application admission. `TestRun_tlsMutualTLSRejectsBeforePeerAdmission` proves m
 untrusted client certificates fail before application auth. The flag validation test covers
 incomplete and ambiguous mTLS configurations.
 
+The credential-health target is:
+
+```bash
+make test-tls-credential-health
+```
+
+`TestRun_tlsCredentialHealthReportsAggregateStatus` covers a server plus short-lived outbound
+client identity, JSON/Prometheus health, and warning-window metrics. The companion tests cover
+warning suppression, expired and not-yet-valid startup rejection, and readiness transitions under
+the race detector.
+
 Certificate lifecycle and restart-only rotation are defined in
 [TLS_ROTATION.md](TLS_ROTATION.md). Replacing files on disk does not change active connections;
 planned rotation requires preflight validation, process restart, and bounded static-peer
@@ -150,6 +185,8 @@ reconnect.
 
 - [Go `crypto/tls` package](https://pkg.go.dev/crypto/tls) documents `RootCAs`, `ServerName`,
   `HandshakeContext`, and the testing-only risk of `InsecureSkipVerify`.
+- [Go `crypto/x509` package](https://pkg.go.dev/crypto/x509) defines certificate validity through
+  `Certificate.NotBefore` and `Certificate.NotAfter`.
 - [Go TLS verification example](https://go.dev/src/crypto/tls/example_test.go) shows custom
   certificate verification and the server-side client-certificate boundary.
 - [RFC 8446](https://datatracker.ietf.org/doc/html/rfc8446) defines TLS 1.3 certificate
