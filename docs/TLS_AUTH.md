@@ -95,6 +95,11 @@ tls.RequireAndVerifyClientCert`, exchanges a frame, and checks the handshake met
 test covers a missing and an unrelated client certificate; the server records a TLS failure without
 calling `OnPeer` or the frame handler, and the client observes the resulting disconnect.
 
+Certificate lifecycle and restart-only rotation are defined in
+[TLS_ROTATION.md](TLS_ROTATION.md). Replacing files on disk does not change active connections;
+planned rotation requires preflight validation, process restart, and bounded static-peer
+reconnect.
+
 ## Research Sources
 
 - [Go `crypto/tls` package](https://pkg.go.dev/crypto/tls) documents `RootCAs`, `ServerName`,

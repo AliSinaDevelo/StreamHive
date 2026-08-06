@@ -28,6 +28,7 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Metrics**: aggregate `tls_handshake_success` and `tls_handshake_failures` expose local TLS handshake outcomes without certificate or address labels.
 - **Tests**: library mTLS acceptance coverage proves verified frame exchange and pre-registration rejection for missing or unrelated client certificates.
 - **CI**: `make test-mtls` runs three race-enabled repetitions as a dedicated Go 1.23.x pipeline job.
+- **Docs**: `docs/TLS_ROTATION.md` defines restart-only certificate rotation, session-resumption boundaries, rollback, observability, and the focused follow-up acceptance plan.
 - **Docs**: `docs/DELETION_SEMANTICS.md` defines local blob eviction versus future logical deletion and records the tombstone/versioning research boundary.
 - **Metrics**: aggregate repair-continuation active and pending-key gauges expose scheduler saturation through JSON and Prometheus without peer or blob labels.
 - **Tests**: bounded fuzz smoke targets cover replication decode/base64/limit validation and SHV1 frame length/magic boundaries, including valid round trips.
