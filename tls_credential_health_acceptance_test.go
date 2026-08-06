@@ -93,7 +93,7 @@ func TestRun_tlsCredentialHealthReportsAggregateStatus(t *testing.T) {
 	assert.Equal(t, http.StatusOK, getReadyStatus(t, node))
 
 	prometheus := inventoryBudgetPrometheus(t, node)
-	assert.Contains(t, prometheus, fmt.Sprintf("streamhive_tls_certificates_configured 2\n"))
+	assert.Contains(t, prometheus, "streamhive_tls_certificates_configured 2\n")
 	assert.Contains(t, prometheus, fmt.Sprintf("streamhive_tls_certificate_expiry_timestamp_seconds %d\n", clientCert.NotAfter.Unix()))
 	assert.NotContains(t, prometheus, "remote=")
 	assert.NotContains(t, prometheus, "serial")
