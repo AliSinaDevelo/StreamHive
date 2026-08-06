@@ -128,6 +128,16 @@ It runs three race-enabled repetitions covering aggregate server/client identity
 warning suppression, expired and not-yet-valid startup rejection, Prometheus output, and
 readiness behavior.
 
+The Prometheus exposition acceptance target is:
+
+```bash
+make test-prometheus-format
+```
+
+It runs three race-enabled repetitions, builds the complete transport/replication/TLS metric
+snapshot, and parses the output to require safe names, one `HELP`/`TYPE` pair per sample,
+deterministic ordering, and explicit counter/gauge classification.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -208,6 +218,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-mtls-cli` to repeat CLI mTLS certificate admission, pre-registration rejection, and fail-closed flag validation under the race detector
 - `make test-tls-rotation` to repeat restart-only certificate rotation, bounded static-peer reconnect, malformed startup rejection, and rollback under the race detector
 - `make test-tls-credential-health` to repeat aggregate TLS identity validity, expiry warning, startup rejection, and readiness checks under the race detector
+- `make test-prometheus-format` to repeat typed, sorted, label-free `HELP`/`TYPE` health exposition checks under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
 

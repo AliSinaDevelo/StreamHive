@@ -259,3 +259,13 @@ allowlist failures and the aggregate anti-entropy counters described above. `/pe
 includes remote address, local address, direction,
 connection timestamp, connection age in milliseconds, `auth_method` (`none` or
 `shared-token`), and optional `auth_identity`.
+
+The Prometheus endpoint emits a sorted, label-free family for every JSON metric. Each family
+has exactly one `# HELP`, one `# TYPE`, and one sample line; metric names and sample values are
+identical to the JSON keys and values after the `streamhive_` prefix is added. Existing names are
+kept for compatibility even when a counter name does not end in `_total`. Transport and
+replication events are `counter` families. Active, pending, in-flight, queued, and TLS
+credential-health values are `gauge` families, including `active_peers`,
+`replication_blob_acks_pending`, inventory/repair active or pending values, repair I/O in-flight
+or queued values, and the `tls_certificate_*` / `tls_certificates_*` values. There are no labels,
+exemplars, peer addresses, blob keys, or certificate metadata.

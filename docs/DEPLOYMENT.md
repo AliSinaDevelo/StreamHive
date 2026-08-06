@@ -61,6 +61,11 @@ make demo-status
 
 The status command prints each node's `/peers`, `/metrics`, and durable store keys.
 
+`/metrics/prometheus` is deterministic and scrape-ready: every `streamhive_*` sample is preceded
+by one `# HELP` and one `# TYPE` line, output is sorted by metric name, and no labels are emitted.
+The existing JSON keys and values remain unchanged. Run `make test-prometheus-format` when
+validating a monitoring integration or exporter change.
+
 Run the corruption repair demo:
 
 ```bash
@@ -175,6 +180,7 @@ Define error budgets once you expose a workload to users. Baseline probes:
 - **Availability**: `/livez` success rate.
 - **Readiness**: `/readyz` reflects a bound listener and currently valid configured TLS identities; without TLS credentials it retains listener-only behavior.
 - **TLS credential health**: `tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, and `tls_certificates_expiring_soon` expose aggregate leaf-identity health through JSON and Prometheus without certificate or peer labels.
+- **Prometheus exposition**: `/metrics/prometheus` emits one sorted `# HELP`/`# TYPE` pair per sample. Event counters are typed `counter`; active, pending, in-flight, queued, and TLS health values are typed `gauge`.
 - **Peer visibility**: `/peers` returns active connected peers with remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 - **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, `replication_blob_write_errors`, `replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_sent`, `replication_inventory_keys_probed`, `replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`, `replication_inventory_exchanges_active`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`, and `replication_corrupt_blobs_detected`, or Prometheus samples from `/metrics/prometheus`. The anti-entropy counters are aggregate: advertisements count successful `blob.has` frames, keys sent count advertised keys, missing-key requests count keys in `blob.missing` messages, exchange-limited counts budgeted continuations, repair sends count successful repair `blob.put` frames, deferred counts keys held back by the per-response repair budget, and corruption counts damaged content-addressed files replaced by a verified repair.
 
