@@ -30,16 +30,21 @@ import (
 )
 
 const (
-	defaultPutAckTimeout          = time.Second
-	defaultPutRetries             = 2
-	defaultPutRetryDelay          = 100 * time.Millisecond
-	maxPutRetries                 = 10
-	maxPutRetryDelay              = 500 * time.Millisecond
-	repairContinuationDelay       = 100 * time.Millisecond
-	maxRepairContinuationAttempts = 1
-	defaultMaxRepairOps           = 4
-	defaultTLSExpiryWarning       = 30 * 24 * time.Hour
-	maxDuration                   = time.Duration(1<<63 - 1)
+	defaultPutAckTimeout           = time.Second
+	defaultPutRetries              = 2
+	defaultPutRetryDelay           = 100 * time.Millisecond
+	maxPutRetries                  = 10
+	maxPutRetryDelay               = 500 * time.Millisecond
+	defaultHealthReadHeaderTimeout = 5 * time.Second
+	defaultHealthReadTimeout       = 10 * time.Second
+	defaultHealthWriteTimeout      = 10 * time.Second
+	defaultHealthIdleTimeout       = 60 * time.Second
+	defaultHealthMaxHeaderBytes    = 1 << 20
+	repairContinuationDelay        = 100 * time.Millisecond
+	maxRepairContinuationAttempts  = 1
+	defaultMaxRepairOps            = 4
+	defaultTLSExpiryWarning        = 30 * 24 * time.Hour
+	maxDuration                    = time.Duration(1<<63 - 1)
 )
 
 var errBlobAckTimeout = errors.New("replication: timed out waiting for blob acknowledgment")
@@ -1902,7 +1907,11 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 
 	srv := &http.Server{
 		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: defaultHealthReadHeaderTimeout,
+		ReadTimeout:       defaultHealthReadTimeout,
+		WriteTimeout:      defaultHealthWriteTimeout,
+		IdleTimeout:       defaultHealthIdleTimeout,
+		MaxHeaderBytes:    defaultHealthMaxHeaderBytes,
 	}
 	go func() {
 		log.Info("health", "addr", ln.Addr().String())
