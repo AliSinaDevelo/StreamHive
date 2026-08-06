@@ -82,6 +82,11 @@ certificate and key must be supplied together; `-tls-client-ca` must be paired w
 readiness. A missing, malformed, or untrusted client certificate fails TLS before application
 auth, peer registration, `OnPeer`, or replication frames.
 
+Because the transport has no remote-admission acknowledgment, an outbound CLI may observe a
+server-side mTLS rejection as a connection close or subsequent application-auth failure. Use the
+listener's aggregate handshake and admission metrics to distinguish that boundary from a
+successful peer.
+
 ## Library mTLS Boundary
 
 The CLI and library both expose mutual certificate authentication. Library users who need custom
