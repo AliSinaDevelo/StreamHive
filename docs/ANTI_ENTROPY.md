@@ -60,6 +60,14 @@ becomes a measurable part of the node budget. Any follow-up should specify mixed
 fallback, range boundaries, digest domain separation, missing-key retrieval, and its own
 DoS limits before changing the wire protocol.
 
+## v0.13 Lifecycle Boundary
+
+The released flat inventory remains the repair mechanism for immutable raw blobs. A future
+logical namespace must not use a digest root or the live `BlobKeyPager` cursor as its deletion
+history. Issue #49 selects a separate ordered lifecycle journal with per-peer watermarks and a
+snapshot fallback; digest/range exchange remains a separate scale decision. See
+[LIFECYCLE_V0_13.md](LIFECYCLE_V0_13.md) for the lifecycle contract and implementation split.
+
 ## v0.12 Wire Pressure Checkpoint
 
 After the native store indexes landed, the end-to-end research benchmark measured the

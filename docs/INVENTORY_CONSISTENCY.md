@@ -1,6 +1,7 @@
 # Inventory Consistency
 
-Status: design decision for v0.12.0, tracked by issue #35.
+Status: v0.12.0 raw-blob inventory contract, tracked by issue #35. Lifecycle replication is a
+separate v0.13 journal design in [LIFECYCLE_V0_13.md](LIFECYCLE_V0_13.md), tracked by issue #49.
 
 ## Decision
 
@@ -88,6 +89,11 @@ these conditions:
 
 Any follow-up must specify retention, cancellation, restart, compaction, mixed-version fallback,
 and frame/storage/metric budgets before changing the wire contract.
+
+The v0.13 lifecycle design does not strengthen this raw-blob cursor. Logical records use a
+durable ordered mutation journal and per-peer watermarks, with a bounded snapshot fallback when
+a peer has fallen behind the retained journal floor. This prevents a live raw inventory cursor
+from being mistaken for a deletion-safe revision stream.
 
 ## Research Sources
 

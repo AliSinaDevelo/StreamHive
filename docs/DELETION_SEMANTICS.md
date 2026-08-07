@@ -1,6 +1,7 @@
 # Deletion And Tombstone Semantics
 
-Status: design decision for v0.12.0, tracked by issue #33.
+Status: v0.12.0 raw-blob contract, tracked by issue #33. The v0.13 lifecycle follow-up is
+defined in [LIFECYCLE_V0_13.md](LIFECYCLE_V0_13.md), tracked by issue #49.
 
 ## Decision
 
@@ -65,6 +66,12 @@ The future record would need:
 This record intentionally does not choose a wire encoding. A future implementation issue must
 first choose authority versus multi-writer semantics, then specify restart and mixed-version
 behavior before adding a message.
+
+The v0.13 research decision now selects an operator-fenced single authority per logical
+namespace, with durable `(epoch, sequence)` lifecycle tokens and per-peer repair watermarks.
+It still does not change this v0.12 raw-blob contract or add a tombstone message. See
+[LIFECYCLE_V0_13.md](LIFECYCLE_V0_13.md) for the ordering, retention, compaction, mixed-version,
+and implementation boundaries.
 
 ## Operational Budgets
 
