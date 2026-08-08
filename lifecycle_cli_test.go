@@ -79,6 +79,30 @@ func TestOpenLifecycleRuntimeRestoresDurableState(t *testing.T) {
 	assert.Equal(t, record, got)
 	assert.FileExists(t, filepath.Join(dir, "journal"))
 	assert.FileExists(t, filepath.Join(dir, "watermarks"))
+	assert.FileExists(t, filepath.Join(dir, "authority"))
+}
+
+func TestOpenLifecycleRuntimeResumesAuthoritySequence(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	config := testLifecycleCLIConfig(dir)
+	store := storage.NewMemoryStore()
+
+	runtime, err := openLifecycleRuntime(ctx, config, store, "token", "node-a")
+	require.NoError(t, err)
+	first, err := runtime.nextVersion(ctx)
+	require.NoError(t, err)
+	current := runtime.authority.Current()
+	require.NoError(t, runtime.Close())
+
+	restarted, err := openLifecycleRuntime(ctx, config, store, "token", "node-a")
+	require.NoError(t, err)
+	defer func() { _ = restarted.Close() }()
+	assert.Equal(t, current, restarted.authority.Current())
+	second, err := restarted.nextVersion(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, first.Epoch, second.Epoch)
+	assert.Equal(t, first.Sequence+1, second.Sequence)
 }
 
 func TestOpenLifecycleRuntimeRefusesMissingRestoredBlob(t *testing.T) {

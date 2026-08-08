@@ -28,6 +28,7 @@ type lifecycleRuntime struct {
 	checkpointPath string
 	repairLimits   lifecycle.RepairLimits
 	journal        *lifecycle.Journal
+	authority      *lifecycle.Authority
 	watermarks     *lifecycle.WatermarkBook
 	coordinator    *lifecycle.RepairCoordinator
 	state          *lifecycle.Store
@@ -108,6 +109,13 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 			_ = journal.Close()
 		}
 	}()
+	authority, err := lifecycle.OpenAuthority(ctx, filepath.Join(config.dir, "authority"), peerID, lifecycle.AuthorityOptions{
+		Limits:   recordLimits,
+		Observed: journal.LastVersion(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lifecycle: open authority: %w", err)
+	}
 
 	watermarks, err := lifecycle.OpenWatermarkBook(filepath.Join(config.dir, "watermarks"), lifecycle.WatermarkOptions{})
 	if err != nil {
@@ -154,6 +162,7 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 		checkpointPath: checkpointPath,
 		repairLimits:   config.repairLimits,
 		journal:        journal,
+		authority:      authority,
 		watermarks:     watermarks,
 		coordinator:    coordinator,
 		state:          state,
@@ -165,6 +174,13 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 	}
 	closeJournal = false
 	return runtime, nil
+}
+
+func (r *lifecycleRuntime) nextVersion(ctx context.Context) (lifecycle.Version, error) {
+	if r == nil || r.authority == nil || r.journal == nil {
+		return lifecycle.Version{}, errors.New("lifecycle: runtime authority unavailable")
+	}
+	return r.authority.Next(ctx, r.journal.LastVersion())
 }
 
 func verifyLifecycleRecords(ctx context.Context, blobs storage.BlobStore, records []lifecycle.Record) error {
