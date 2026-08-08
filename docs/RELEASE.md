@@ -31,7 +31,6 @@ make demo-auth
 make demo-repair
 make demo-failure
 make demo-continuation
-make demo-status
 go run . -version  # expected: 0.13.0
 ```
 
