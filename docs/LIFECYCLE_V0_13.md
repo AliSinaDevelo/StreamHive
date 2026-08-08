@@ -1,8 +1,8 @@
 # v0.13 Versioned Lifecycle Semantics
 
-Status: v0.13.0 design plus the shipped capability/record-transport boundary from issue #51.
-This document extends the released v0.12.0 add-only blob contract; lifecycle application,
-repair, compaction, and raw blob deletion remain future slices.
+Status: v0.13.0 design plus the shipped capability, record-transport, and apply boundaries from
+issues #51 and #52. This document extends the released v0.12.0 add-only blob contract; wire
+repair, compaction, CLI configuration, and raw blob deletion remain future slices.
 
 ## Problem Statement
 
@@ -31,8 +31,10 @@ Issue #51 adds the first wire boundary without enabling lifecycle synchronizatio
   explicit without adding metric labels.
 - `internal/lifecycle.EncodeRecord` and `DecodeRecord` bound and validate one
   `lifecycle.record` envelope independently from raw blob limits.
-- No lifecycle frame is sent to a peer without negotiated `lifecycle.v1`, and no decoded record
-  is applied or used to delete a raw blob in this slice. Ordinary `blob.*` traffic is unchanged.
+- `internal/lifecycle.Applier` refuses peers without `lifecycle.v1`, verifies present-record
+  bytes before raw storage and journal publication, and applies deletes without raw deletion.
+- No lifecycle frame is sent to a peer without negotiated `lifecycle.v1`; ordinary `blob.*`
+  traffic is unchanged. Wire repair and CLI lifecycle configuration remain future slices.
 
 ## Decision
 
@@ -215,9 +217,10 @@ verifiable slices:
    truncated-tail recovery, atomic checkpoints, and compaction watermarks.
 2. **Capability and record transport:** bounded lifecycle negotiation, record encoding limits,
    explicit v0.12 refusal, and no admission of unknown frames. This boundary is shipped by
-   issue #51; application and repair remain separate.
+   issue #51.
 3. **Apply path:** verified blob-before-record ordering, delete application, duplicate replay,
-   partial-write recovery, and raw-blob non-resurrection.
+   partial-write recovery, and raw-blob non-resurrection. The reusable capability-gated apply
+   path is shipped by issue #52; wire repair and operations remain separate.
 4. **Repair:** per-peer watermarks, bounded journal batches, snapshot bootstrap, behind-floor
    reseeding, reconnect, partition, and restart acceptance.
 5. **Operations:** CLI configuration, readiness states, aggregate JSON/Prometheus metrics,

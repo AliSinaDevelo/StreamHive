@@ -120,9 +120,12 @@ Lifecycle records use a separate envelope after `lifecycle.v1` negotiation:
 ```
 
 `internal/lifecycle.DecodeRecord` rejects unknown message types, unknown envelope fields,
-trailing JSON, malformed records, and oversized payloads before any record application. This
-transport slice only validates and decodes the envelope; lifecycle apply, repair, compaction,
-and raw blob deletion remain separate work.
+trailing JSON, malformed records, and oversized payloads before any record application.
+`DecodeRecordForPeer` refuses the payload before decoding when `lifecycle.v1` is absent.
+`internal/lifecycle.Applier` then verifies present-record bytes, writes supplied bytes to the raw
+store before appending the durable journal and publishing state, and applies deletes as
+tombstones without calling raw blob deletion. Wire repair, compaction, CLI configuration, and
+physical blob deletion remain separate work.
 
 ## Message Types
 
