@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,6 +104,91 @@ func TestOpenLifecycleRuntimeResumesAuthoritySequence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first.Epoch, second.Epoch)
 	assert.Equal(t, first.Sequence+1, second.Sequence)
+}
+
+func TestLifecycleRuntimePutDeletePreservesRawBlob(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := &trackingDeleteStore{BlobStore: storage.NewMemoryStore()}
+	runtime, err := openLifecycleRuntime(ctx, testLifecycleCLIConfig(dir), store, "token", "node-a")
+	require.NoError(t, err)
+	defer func() { _ = runtime.Close() }()
+
+	data := []byte("local lifecycle value")
+	putRecord, putResult, err := runtime.put(ctx, "demo", "item", data, nil)
+	require.NoError(t, err)
+	assert.Equal(t, lifecycle.OutcomeApplied, putResult.Outcome)
+
+	deletedRecord, deleteResult, err := runtime.delete(ctx, "demo", "item")
+	require.NoError(t, err)
+	assert.Equal(t, lifecycle.OutcomeApplied, deleteResult.Outcome)
+	assert.Equal(t, putRecord.Version.Epoch, deletedRecord.Version.Epoch)
+	assert.Equal(t, putRecord.Version.Sequence+1, deletedRecord.Version.Sequence)
+	assert.Equal(t, 2, runtime.journal.Len())
+	assert.Equal(t, int32(0), store.deletes.Load())
+	stored, err := store.Get(ctx, putRecord.BlobKey)
+	require.NoError(t, err)
+	assert.Equal(t, data, stored)
+	current, ok, err := runtime.state.Get([]byte("demo"), []byte("item"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, deletedRecord, current)
+
+	metrics := runtime.Metrics()
+	assert.Equal(t, int64(2), metrics["lifecycle_mutations_started"])
+	assert.Equal(t, int64(2), metrics["lifecycle_mutations_applied"])
+}
+
+func TestLifecycleRuntimeRejectsCorruptSuppliedBlobKeyWithoutRecord(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	runtime, err := openLifecycleRuntime(ctx, testLifecycleCLIConfig(dir), storage.NewMemoryStore(), "token", "node-a")
+	require.NoError(t, err)
+	defer func() { _ = runtime.Close() }()
+
+	_, _, err = runtime.put(ctx, "demo", "item", []byte("value"), []byte("wrong"))
+	assert.ErrorIs(t, err, storage.ErrInvalidSHA256Key)
+	assert.Equal(t, 0, runtime.journal.Len())
+	_, ok, getErr := runtime.state.Get([]byte("demo"), []byte("item"))
+	require.NoError(t, getErr)
+	assert.False(t, ok)
+}
+
+func TestLifecycleRuntimeRawWriteFailureDoesNotPublishRecord(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := &failingPutStore{BlobStore: storage.NewMemoryStore(), err: errors.New("disk full")}
+	runtime, err := openLifecycleRuntime(ctx, testLifecycleCLIConfig(dir), store, "token", "node-a")
+	require.NoError(t, err)
+	defer func() { _ = runtime.Close() }()
+	before := runtime.authority.Current()
+
+	_, _, err = runtime.put(ctx, "demo", "item", []byte("value"), nil)
+	assert.EqualError(t, err, "disk full")
+	assert.Equal(t, 0, runtime.journal.Len())
+	_, ok, getErr := runtime.state.Get([]byte("demo"), []byte("item"))
+	require.NoError(t, getErr)
+	assert.False(t, ok)
+	assert.True(t, runtime.authority.Current().Compare(before) > 0)
+}
+
+type trackingDeleteStore struct {
+	storage.BlobStore
+	deletes atomic.Int32
+}
+
+func (s *trackingDeleteStore) Delete(ctx context.Context, key []byte) error {
+	s.deletes.Add(1)
+	return s.BlobStore.Delete(ctx, key)
+}
+
+type failingPutStore struct {
+	storage.BlobStore
+	err error
+}
+
+func (s *failingPutStore) Put(context.Context, []byte, []byte) error {
+	return s.err
 }
 
 func TestOpenLifecycleRuntimeRefusesMissingRestoredBlob(t *testing.T) {

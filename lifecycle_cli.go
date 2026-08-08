@@ -55,6 +55,9 @@ type lifecycleRuntimeMetrics struct {
 	SessionsActive    atomic.Int64
 	FramesReceived    atomic.Uint64
 	FrameErrors       atomic.Uint64
+	MutationsStarted  atomic.Uint64
+	MutationsApplied  atomic.Uint64
+	MutationErrors    atomic.Uint64
 }
 
 func (c lifecycleCLIConfig) validate(blobStore storage.BlobStore, peerAuthToken, peerID string) error {
@@ -181,6 +184,76 @@ func (r *lifecycleRuntime) nextVersion(ctx context.Context) (lifecycle.Version, 
 		return lifecycle.Version{}, errors.New("lifecycle: runtime authority unavailable")
 	}
 	return r.authority.Next(ctx, r.journal.LastVersion())
+}
+
+func (r *lifecycleRuntime) put(ctx context.Context, namespace, logicalKey string, data, blobKey []byte) (lifecycle.Record, lifecycle.ApplyResult, error) {
+	if r == nil || r.applier == nil {
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, errors.New("lifecycle: runtime applier unavailable")
+	}
+	r.metrics.MutationsStarted.Add(1)
+	if err := r.state.ValidateKey([]byte(namespace), []byte(logicalKey)); err != nil {
+		r.metrics.MutationErrors.Add(1)
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+	}
+	if blobKey == nil {
+		blobKey = storage.SHA256Key(data)
+	} else {
+		blobKey = append([]byte(nil), blobKey...)
+		if err := storage.VerifySHA256Key(blobKey, data); err != nil {
+			r.metrics.MutationErrors.Add(1)
+			return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+		}
+	}
+	version, err := r.nextVersion(ctx)
+	if err != nil {
+		r.metrics.MutationErrors.Add(1)
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+	}
+	record := lifecycle.Record{
+		Namespace:   []byte(namespace),
+		LogicalKey:  []byte(logicalKey),
+		State:       lifecycle.StatePresent,
+		BlobKey:     blobKey,
+		Version:     version,
+		AuthorityID: r.authority.AuthorityID(),
+	}
+	result, err := r.applier.Apply(ctx, []string{lifecycle.LifecycleCapabilityV1}, record, data)
+	if err != nil {
+		r.metrics.MutationErrors.Add(1)
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+	}
+	r.metrics.MutationsApplied.Add(1)
+	return record, result, nil
+}
+
+func (r *lifecycleRuntime) delete(ctx context.Context, namespace, logicalKey string) (lifecycle.Record, lifecycle.ApplyResult, error) {
+	if r == nil || r.applier == nil {
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, errors.New("lifecycle: runtime applier unavailable")
+	}
+	r.metrics.MutationsStarted.Add(1)
+	if err := r.state.ValidateKey([]byte(namespace), []byte(logicalKey)); err != nil {
+		r.metrics.MutationErrors.Add(1)
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+	}
+	version, err := r.nextVersion(ctx)
+	if err != nil {
+		r.metrics.MutationErrors.Add(1)
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+	}
+	record := lifecycle.Record{
+		Namespace:   []byte(namespace),
+		LogicalKey:  []byte(logicalKey),
+		State:       lifecycle.StateDeleted,
+		Version:     version,
+		AuthorityID: r.authority.AuthorityID(),
+	}
+	result, err := r.applier.Apply(ctx, []string{lifecycle.LifecycleCapabilityV1}, record, nil)
+	if err != nil {
+		r.metrics.MutationErrors.Add(1)
+		return lifecycle.Record{}, lifecycle.ApplyResult{}, err
+	}
+	r.metrics.MutationsApplied.Add(1)
+	return record, result, nil
 }
 
 func verifyLifecycleRecords(ctx context.Context, blobs storage.BlobStore, records []lifecycle.Record) error {
@@ -342,6 +415,9 @@ func (r *lifecycleRuntime) Metrics() map[string]int64 {
 		"lifecycle_repair_session_errors":     int64(r.metrics.SessionErrors.Load()),
 		"lifecycle_repair_frames_received":    int64(r.metrics.FramesReceived.Load()),
 		"lifecycle_repair_frame_errors":       int64(r.metrics.FrameErrors.Load()),
+		"lifecycle_mutations_started":         int64(r.metrics.MutationsStarted.Load()),
+		"lifecycle_mutations_applied":         int64(r.metrics.MutationsApplied.Load()),
+		"lifecycle_mutation_errors":           int64(r.metrics.MutationErrors.Load()),
 	}
 }
 

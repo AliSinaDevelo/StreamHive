@@ -291,7 +291,7 @@ func classifyRecord(record, previous Record, exists bool) (ApplyResult, error) {
 
 // Get returns a copy of the current record for a logical key.
 func (s *Store) Get(namespace, key []byte) (Record, bool, error) {
-	if err := s.limits.validateLookup(namespace, key); err != nil {
+	if err := s.ValidateKey(namespace, key); err != nil {
 		return Record{}, false, err
 	}
 	lookup := logicalKey{namespace: string(namespace), logicalKey: string(key)}
@@ -302,6 +302,14 @@ func (s *Store) Get(namespace, key []byte) (Record, bool, error) {
 		return Record{}, false, nil
 	}
 	return record.clone(), true, nil
+}
+
+// ValidateKey checks namespace and logical-key bounds without reading state.
+func (s *Store) ValidateKey(namespace, key []byte) error {
+	if s == nil {
+		return ErrLogicalKeyEmpty
+	}
+	return s.limits.validateLookup(namespace, key)
 }
 
 // Snapshot returns records in deterministic namespace/key order.
