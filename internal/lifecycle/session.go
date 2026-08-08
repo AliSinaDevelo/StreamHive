@@ -44,6 +44,7 @@ type RepairSession struct {
 	checkpointPath string
 	maxFrameBytes  int
 	sendMu         sync.Mutex
+	ackNotify      chan struct{}
 }
 
 // NewRepairSession constructs a cancellation-safe session. Applier is optional
@@ -73,7 +74,28 @@ func NewRepairSession(options RepairSessionOptions) (*RepairSession, error) {
 		snapshot:       options.Snapshot,
 		checkpointPath: options.CheckpointPath,
 		maxFrameBytes:  maxFrameBytes,
+		ackNotify:      make(chan struct{}, 1),
 	}, nil
+}
+
+// Run sends one bounded repair sequence and waits for durable acknowledgements
+// before planning the next frame. It stops after the current journal tail;
+// callers can start it again after a reconnect or when new records exist.
+func (s *RepairSession) Run(ctx context.Context) error {
+	for {
+		plan, err := s.SendNext(ctx)
+		if err != nil {
+			return err
+		}
+		if plan.To.Compare(plan.From) > 0 {
+			if err := s.waitForAcknowledgement(ctx, plan.To); err != nil {
+				return err
+			}
+		}
+		if !plan.More {
+			return nil
+		}
+	}
 }
 
 // SendNext plans and writes one bounded repair frame. The watermark advances
@@ -115,7 +137,14 @@ func (s *RepairSession) Handle(ctx context.Context, payload []byte) error {
 	}
 	switch {
 	case frame.Ack != nil:
-		return s.coordinator.Acknowledge(ctx, s.peerID, frame.Ack.Watermark)
+		if err := s.coordinator.Acknowledge(ctx, s.peerID, frame.Ack.Watermark); err != nil {
+			return err
+		}
+		select {
+		case s.ackNotify <- struct{}{}:
+		default:
+		}
+		return nil
 	case frame.Batch != nil:
 		return s.handleBatch(ctx, *frame.Batch)
 	case frame.Snapshot != nil:
@@ -181,6 +210,19 @@ func (s *RepairSession) writeAck(ctx context.Context, watermark Version) error {
 		return err
 	}
 	return s.peer.WriteFrame(payload, s.maxFrameBytes)
+}
+
+func (s *RepairSession) waitForAcknowledgement(ctx context.Context, target Version) error {
+	for {
+		if s.coordinator.watermarks.Watermark(s.peerID).Compare(target) >= 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.ackNotify:
+		}
+	}
 }
 
 func (s *RepairSession) requireCapability() error {

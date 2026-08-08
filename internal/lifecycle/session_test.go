@@ -1,10 +1,12 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AliSinaDevelo/StreamHive/storage"
 	"github.com/stretchr/testify/assert"
@@ -36,6 +38,15 @@ func (p *repairSessionPeer) lastWrite(t *testing.T) []byte {
 	defer p.mu.Unlock()
 	require.NotEmpty(t, p.writes)
 	return append([]byte(nil), p.writes[len(p.writes)-1]...)
+}
+
+func (p *repairSessionPeer) latestWrite() ([]byte, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.writes) == 0 {
+		return nil, false
+	}
+	return append([]byte(nil), p.writes[len(p.writes)-1]...), true
 }
 
 func (p *repairSessionPeer) writeCount() int {
@@ -257,4 +268,55 @@ func TestRepairSessionRefusesCapabilityBeforeWriting(t *testing.T) {
 	_, err = session.SendNext(context.Background())
 	assert.ErrorIs(t, err, ErrLifecycleCapabilityRequired)
 	assert.Equal(t, 0, peer.writeCount())
+}
+
+func TestRepairSessionRunWaitsForDurableAcknowledgements(t *testing.T) {
+	first := testRecord(1, "a", StateDeleted, nil)
+	second := testRecord(2, "b", StateDeleted, nil)
+	journal, _ := openTestJournal(t, JournalOptions{})
+	defer func() { _ = journal.Close() }()
+	appendTestRecords(t, journal, first, second)
+	book, err := OpenWatermarkBook(filepath.Join(t.TempDir(), "watermarks"), WatermarkOptions{})
+	require.NoError(t, err)
+	coordinator, err := NewRepairCoordinator(journal, book, RepairLimits{MaxRecords: 1})
+	require.NoError(t, err)
+	peer := newRepairSessionPeer()
+	session, err := NewRepairSession(RepairSessionOptions{
+		Peer:        peer,
+		Coordinator: coordinator,
+		PeerID:      "target",
+	})
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- session.Run(context.Background()) }()
+
+	var firstPayload []byte
+	require.Eventually(t, func() bool {
+		var ok bool
+		firstPayload, ok = peer.latestWrite()
+		return ok
+	}, time.Second, time.Millisecond)
+	firstBatch := mustDecodeBatch(t, firstPayload)
+	require.Equal(t, first.Version, firstBatch.To)
+	assert.Equal(t, Version{}, coordinator.watermarks.Watermark("target"))
+
+	ack, err := EncodeRepairAck(RepairAck{Watermark: first.Version}, RepairLimits{})
+	require.NoError(t, err)
+	require.NoError(t, session.Handle(context.Background(), ack))
+
+	var secondPayload []byte
+	require.Eventually(t, func() bool {
+		var ok bool
+		secondPayload, ok = peer.latestWrite()
+		return ok && !bytes.Equal(firstPayload, secondPayload)
+	}, time.Second, time.Millisecond)
+	secondBatch := mustDecodeBatch(t, secondPayload)
+	require.Equal(t, second.Version, secondBatch.To)
+
+	ack, err = EncodeRepairAck(RepairAck{Watermark: second.Version}, RepairLimits{})
+	require.NoError(t, err)
+	require.NoError(t, session.Handle(context.Background(), ack))
+	require.NoError(t, <-runDone)
+	assert.Equal(t, second.Version, coordinator.watermarks.Watermark("target"))
 }
