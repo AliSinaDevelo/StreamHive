@@ -186,6 +186,24 @@ func TestRun_inventoryStatusConvergesAfterAntiEntropy(t *testing.T) {
 	}, 8*time.Second, 20*time.Millisecond, "inventory status did not converge: before=%+v source=%+v target=%+v source stderr=%q target stderr=%q", targetBefore, sourceStatus, targetAfter, source.err.String(), target.err.String())
 
 	assert.Equal(t, sourceStatus, targetAfter)
+	sourceMetrics := inventoryBudgetMetrics(t, source)
+	assert.GreaterOrEqual(t, sourceMetrics["replication_inventory_status_scans_started"], int64(1))
+	assert.GreaterOrEqual(t, sourceMetrics["replication_inventory_status_scans_completed"], int64(1))
+	assert.Equal(t, int64(0), sourceMetrics["replication_inventory_status_scans_failed"])
+	assert.GreaterOrEqual(t, sourceMetrics["replication_inventory_status_keys_scanned"], int64(len(keys)))
+	assert.GreaterOrEqual(t, sourceMetrics["replication_inventory_status_key_bytes_scanned"], sourceStatus.KeyBytes)
+	assert.GreaterOrEqual(t, sourceMetrics["replication_inventory_status_scan_duration_ms"], int64(0))
+
+	targetMetrics := inventoryBudgetMetrics(t, target)
+	assert.GreaterOrEqual(t, targetMetrics["replication_inventory_status_scans_started"], int64(1))
+	assert.GreaterOrEqual(t, targetMetrics["replication_inventory_status_scans_completed"], int64(1))
+	assert.Equal(t, int64(0), targetMetrics["replication_inventory_status_scans_failed"])
+	assert.GreaterOrEqual(t, targetMetrics["replication_inventory_status_keys_scanned"], int64(len(keys)))
+	assert.GreaterOrEqual(t, targetMetrics["replication_inventory_status_key_bytes_scanned"], sourceStatus.KeyBytes)
+
+	prometheus := inventoryBudgetPrometheus(t, source)
+	assert.Contains(t, prometheus, fmt.Sprintf("streamhive_replication_inventory_status_scans_completed %d\n", sourceMetrics["replication_inventory_status_scans_completed"]))
+	assert.Contains(t, prometheus, fmt.Sprintf("streamhive_replication_inventory_status_keys_scanned %d\n", sourceMetrics["replication_inventory_status_keys_scanned"]))
 }
 
 func TestRun_budgetedInventoryConvergesAfterTargetRestart(t *testing.T) {
