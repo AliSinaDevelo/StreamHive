@@ -285,8 +285,11 @@ checkpoint, including tombstones, before replacing the journal tail and exits wi
 TCP listener. It never deletes raw blobs. `/lifecycle/status` reports
 `membership_configured`, `membership_members`, `membership_acknowledged`, the minimum acknowledged
 watermark, the compaction target, `compaction_blocked`, and a bounded reason; the JSON and
-Prometheus metrics expose the same aggregate state without member IDs or peer labels. The focused
-stale-peer snapshot proof is repeatable with `make test-lifecycle-compaction`.
+Prometheus metrics expose the same aggregate state without member IDs or peer labels. The status
+resource also reports aggregate repair session errors, received frames, and frame errors alongside
+active, started, and completed sessions; these values contain no peer IDs, logical keys, blob keys,
+or raw error strings. The focused stale-peer snapshot proof is repeatable with
+`make test-lifecycle-compaction`.
 
 When both authenticated peers advertise `lifecycle.repair-reconcile.v1`, each repair session first
 reports its durable startup watermark. A source accepts a lower or zero report only through that

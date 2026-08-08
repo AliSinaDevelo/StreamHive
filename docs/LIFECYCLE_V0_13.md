@@ -306,9 +306,9 @@ Prometheus health endpoints. The bounded operator snapshot is:
 
 `/lifecycle/status` returns readiness, authority identity and version, journal floor/tail/size,
 logical-record and tombstone counts, membership configuration and progress, compaction target and
-blocked state, and aggregate repair-session counters. It never returns logical keys, record bodies,
-blob contents,
-peer identities, or peer-address labels. The raw-only invocation reports `enabled: false`,
+blocked state, and aggregate repair-session counters for active, started, completed, session errors,
+received frames, and frame errors. It never returns logical keys, record bodies, blob contents,
+peer identities, peer-address labels, or raw error strings. The raw-only invocation reports `enabled: false`,
 `ready: true`, and `readiness: "raw-only"` at this endpoint.
 
 - counters for lifecycle records applied, duplicates, stale records, conflicts, capability

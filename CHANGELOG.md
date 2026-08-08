@@ -4,7 +4,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
-No unreleased changes.
+- **Ops**: `/lifecycle/status` now includes aggregate repair session errors, received frame
+  count, and frame errors alongside active, started, and completed session counters; the
+  JSON and Prometheus surfaces remain label-free and do not expose peer or logical data.
 
 ## [0.13.0] — 2026-08-09
 
