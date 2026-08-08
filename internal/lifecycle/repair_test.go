@@ -224,3 +224,82 @@ func TestRepairBatchPayloadIsStableAcrossDecode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, payload, reencoded)
 }
+
+func TestRepairFrameRoundTripAndCapabilityGate(t *testing.T) {
+	batch := RepairBatch{
+		Type: RepairBatchMessageType,
+		From: Version{},
+		To:   Version{Epoch: 1, Sequence: 1},
+		Records: []Record{
+			testRecord(1, "key", StateDeleted, nil),
+		},
+	}
+	ack := RepairAck{Type: RepairAckMessageType, Watermark: batch.To}
+	snapshot := RepairSnapshot{Type: RepairSnapshotMessageType, Watermark: batch.To, Records: batch.Records}
+
+	tests := []struct {
+		name string
+		want RepairFrame
+		make func() (RepairFrame, error)
+	}{
+		{
+			name: "batch",
+			want: RepairFrame{Type: RepairBatchMessageType, Batch: &batch},
+			make: func() (RepairFrame, error) {
+				return RepairFrame{Type: RepairBatchMessageType, Batch: &batch}, nil
+			},
+		},
+		{
+			name: "snapshot",
+			want: RepairFrame{Type: RepairSnapshotMessageType, Snapshot: &snapshot},
+			make: func() (RepairFrame, error) {
+				return RepairFrame{Type: RepairSnapshotMessageType, Snapshot: &snapshot}, nil
+			},
+		},
+		{
+			name: "ack",
+			want: RepairFrame{Type: RepairAckMessageType, Ack: &ack},
+			make: func() (RepairFrame, error) {
+				return RepairFrame{Type: RepairAckMessageType, Ack: &ack}, nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			frame, err := tt.make()
+			require.NoError(t, err)
+			payload, err := EncodeRepairFrame(frame, RepairLimits{})
+			require.NoError(t, err)
+			_, err = DecodeRepairFrameForPeer(payload, nil, RepairLimits{})
+			assert.ErrorIs(t, err, ErrLifecycleCapabilityRequired)
+			decoded, err := DecodeRepairFrameForPeer(payload, []string{LifecycleCapabilityV1}, RepairLimits{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, decoded)
+		})
+	}
+}
+
+func TestRepairFrameRejectsAmbiguousUnknownAndTrailingPayloads(t *testing.T) {
+	batch := RepairBatch{
+		Type:    RepairBatchMessageType,
+		From:    Version{},
+		To:      Version{Epoch: 1, Sequence: 1},
+		Records: []Record{testRecord(1, "key", StateDeleted, nil)},
+	}
+	ack := RepairAck{Type: RepairAckMessageType, Watermark: batch.To}
+	_, err := EncodeRepairFrame(RepairFrame{Batch: &batch, Ack: &ack}, RepairLimits{})
+	assert.ErrorIs(t, err, ErrRepairMalformed)
+
+	unknown := []byte(`{"type":"lifecycle.repair.unknown"}`)
+	_, err = DecodeRepairFrame(unknown, RepairLimits{})
+	assert.ErrorIs(t, err, ErrRepairMessageType)
+
+	valid, err := EncodeRepairFrame(RepairFrame{Ack: &ack}, RepairLimits{})
+	require.NoError(t, err)
+	trailing := append(append([]byte(nil), valid...), []byte(` {}`)...)
+	_, err = DecodeRepairFrame(trailing, RepairLimits{})
+	assert.ErrorIs(t, err, ErrRepairMalformed)
+
+	_, err = DecodeRepairFrame(make([]byte, DefaultMaxRepairFrameBytes+1), RepairLimits{})
+	assert.ErrorIs(t, err, ErrRepairFrameTooLarge)
+}

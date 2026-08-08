@@ -13,6 +13,8 @@ const (
 	RepairBatchMessageType = "lifecycle.repair.batch"
 	// RepairSnapshotMessageType identifies a complete checkpoint bootstrap.
 	RepairSnapshotMessageType = "lifecycle.repair.snapshot"
+	// RepairAckMessageType identifies an acknowledgement of an applied watermark.
+	RepairAckMessageType = "lifecycle.repair.ack"
 	// DefaultMaxRepairRecords bounds one repair batch or snapshot.
 	DefaultMaxRepairRecords = 128
 	// DefaultMaxRepairLogicalKeyBytes bounds logical namespace/key bytes in one repair payload.
@@ -84,6 +86,20 @@ type RepairSnapshot struct {
 	Type      string   `json:"type"`
 	Watermark Version  `json:"watermark"`
 	Records   []Record `json:"records"`
+}
+
+// RepairAck confirms that a receiver durably applied through Watermark.
+type RepairAck struct {
+	Type      string  `json:"type"`
+	Watermark Version `json:"watermark"`
+}
+
+// RepairFrame is the bounded lifecycle repair message union used at the wire boundary.
+type RepairFrame struct {
+	Type     string
+	Batch    *RepairBatch
+	Snapshot *RepairSnapshot
+	Ack      *RepairAck
 }
 
 // RepairPlanMode identifies whether a peer receives journal tail or snapshot state.
@@ -189,6 +205,120 @@ func DecodeRepairSnapshot(payload []byte, limits RepairLimits) (RepairSnapshot, 
 		return RepairSnapshot{}, ErrRepairMessageType
 	}
 	return normalizeRepairSnapshot(snapshot, limits)
+}
+
+// EncodeRepairAck validates and encodes one durable watermark acknowledgement.
+func EncodeRepairAck(ack RepairAck, limits RepairLimits) ([]byte, error) {
+	limits = limits.normalized()
+	if ack.Type == "" {
+		ack.Type = RepairAckMessageType
+	}
+	if ack.Type != RepairAckMessageType {
+		return nil, ErrRepairMessageType
+	}
+	payload, err := json.Marshal(ack)
+	if err != nil {
+		return nil, errors.Join(ErrRepairMalformed, err)
+	}
+	if len(payload) > limits.MaxFrameBytes {
+		return nil, ErrRepairFrameTooLarge
+	}
+	return payload, nil
+}
+
+// DecodeRepairAck validates one durable watermark acknowledgement.
+func DecodeRepairAck(payload []byte, limits RepairLimits) (RepairAck, error) {
+	limits = limits.normalized()
+	if len(payload) > limits.MaxFrameBytes {
+		return RepairAck{}, ErrRepairFrameTooLarge
+	}
+	var ack RepairAck
+	if err := decodeRepairEnvelope(payload, &ack); err != nil {
+		return RepairAck{}, err
+	}
+	if ack.Type != RepairAckMessageType {
+		return RepairAck{}, ErrRepairMessageType
+	}
+	return ack, nil
+}
+
+// EncodeRepairFrame encodes exactly one lifecycle repair message.
+func EncodeRepairFrame(frame RepairFrame, limits RepairLimits) ([]byte, error) {
+	var count int
+	if frame.Batch != nil {
+		count++
+	}
+	if frame.Snapshot != nil {
+		count++
+	}
+	if frame.Ack != nil {
+		count++
+	}
+	if count != 1 {
+		return nil, ErrRepairMalformed
+	}
+	switch {
+	case frame.Batch != nil:
+		if frame.Type != "" && frame.Type != RepairBatchMessageType {
+			return nil, ErrRepairMessageType
+		}
+		return EncodeRepairBatch(*frame.Batch, limits)
+	case frame.Snapshot != nil:
+		if frame.Type != "" && frame.Type != RepairSnapshotMessageType {
+			return nil, ErrRepairMessageType
+		}
+		return EncodeRepairSnapshot(*frame.Snapshot, limits)
+	case frame.Ack != nil:
+		if frame.Type != "" && frame.Type != RepairAckMessageType {
+			return nil, ErrRepairMessageType
+		}
+		return EncodeRepairAck(*frame.Ack, limits)
+	default:
+		return nil, ErrRepairMalformed
+	}
+}
+
+// DecodeRepairFrame validates one lifecycle repair message without applying it.
+func DecodeRepairFrame(payload []byte, limits RepairLimits) (RepairFrame, error) {
+	limits = limits.normalized()
+	if len(payload) > limits.MaxFrameBytes {
+		return RepairFrame{}, ErrRepairFrameTooLarge
+	}
+	typeName, err := decodeRepairType(payload)
+	if err != nil {
+		return RepairFrame{}, err
+	}
+	switch typeName {
+	case RepairBatchMessageType:
+		batch, err := DecodeRepairBatch(payload, limits)
+		if err != nil {
+			return RepairFrame{}, err
+		}
+		return RepairFrame{Type: typeName, Batch: &batch}, nil
+	case RepairSnapshotMessageType:
+		snapshot, err := DecodeRepairSnapshot(payload, limits)
+		if err != nil {
+			return RepairFrame{}, err
+		}
+		return RepairFrame{Type: typeName, Snapshot: &snapshot}, nil
+	case RepairAckMessageType:
+		ack, err := DecodeRepairAck(payload, limits)
+		if err != nil {
+			return RepairFrame{}, err
+		}
+		return RepairFrame{Type: typeName, Ack: &ack}, nil
+	default:
+		return RepairFrame{}, ErrRepairMessageType
+	}
+}
+
+// DecodeRepairFrameForPeer refuses lifecycle repair data before decoding when
+// the remote peer lacks lifecycle.v1.
+func DecodeRepairFrameForPeer(payload []byte, capabilities []string, limits RepairLimits) (RepairFrame, error) {
+	if !HasLifecycleCapability(capabilities) {
+		return RepairFrame{}, ErrLifecycleCapabilityRequired
+	}
+	return DecodeRepairFrame(payload, limits)
 }
 
 // Delivery classifies a batch as ready, a harmless duplicate, or a gap.
@@ -397,4 +527,25 @@ func decodeRepairEnvelope(payload []byte, target any) error {
 		return errors.Join(ErrRepairMalformed, err)
 	}
 	return nil
+}
+
+func decodeRepairType(payload []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := decoder.Decode(&envelope); err != nil {
+		return "", errors.Join(ErrRepairMalformed, err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", ErrRepairMalformed
+		}
+		return "", errors.Join(ErrRepairMalformed, err)
+	}
+	if envelope.Type == "" {
+		return "", ErrRepairMalformed
+	}
+	return envelope.Type, nil
 }
