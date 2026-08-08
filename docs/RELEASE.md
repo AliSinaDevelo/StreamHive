@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.12.0`, the release with bounded inventory exchange, authenticated TLS/mTLS admission, typed health exposition, bounded HTTP resources, and staged CLI-owned shutdown.
+Use this checklist for StreamHive releases. The current target is `v0.13.0`, the release that adds the opt-in, authenticated lifecycle journal, bounded repair sessions, operator-fenced compaction, and stale-peer snapshot recovery while preserving raw-blob compatibility.
 
 ## Preflight
 
@@ -20,6 +20,8 @@ make test-mtls
 make test-mtls-cli
 make test-tls-rotation
 make test-tls-credential-health
+make test-lifecycle-compaction
+make test-lifecycle-compose
 go test ./replication -run '^TestResearchInventoryEnvelopeSizes$' -count=1 -v
 go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
 go test . -run '^TestRun_authenticatedRestartRepairsAndDeduplicatesContentBlob$' -count=1 -v
@@ -29,26 +31,27 @@ make demo-auth
 make demo-repair
 make demo-failure
 make demo-continuation
-go run . -version  # expected: 0.12.0
+make demo-status
+go run . -version  # expected: 0.13.0
 ```
 
 ## Version
 
 1. Update [internal/version/version.go](../internal/version/version.go) to the release semver.
-2. Move completed [CHANGELOG.md](../CHANGELOG.md) entries from `[Unreleased]` into `[MAJOR.MINOR.PATCH] - YYYY-MM-DD`.
+2. Move completed [CHANGELOG.md](../CHANGELOG.md) entries from `[Unreleased]` into `[MAJOR.MINOR.PATCH] - YYYY-MM-DD`; retain a truthful `[Unreleased]` section for follow-up work.
 3. Commit the version bump:
 
 ```bash
 git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
-git commit -m "chore: release v0.12.0"
+git commit -m "chore(release): cut v0.13.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.12.0 -m "v0.12.0"
+git tag -a v0.13.0 -m "v0.13.0"
 git push origin main
-git push origin v0.12.0
+git push origin v0.13.0
 ```
 
 ## Release Notes
@@ -56,6 +59,12 @@ git push origin v0.12.0
 Highlight:
 
 - Bounded whole-inventory anti-entropy exchanges with cursor continuations, indexed store paging, and live-cursor fallback coverage.
+- Opt-in lifecycle records with durable authority allocation, verified raw-blob preflight, bounded journals, snapshots, and per-peer repair watermarks.
+- Capability-gated lifecycle repair sessions with ordered batches, tombstone preservation, duplicate-safe replay, reconnect resume, and raw-only mixed-version compatibility.
+- Operator-authored membership fences and checkpoint-first compaction that never physically deletes raw blobs.
+- Negotiated startup-watermark reconciliation and stale-peer snapshot recovery after lifecycle metadata loss.
+- Authenticated three-node Compose acceptance coverage for present records, tombstones, source restart, checkpoint restoration, and retained raw bytes.
+- Aggregate lifecycle status and Prometheus gauges for readiness, journal state, repair sessions, membership progress, and compaction safety without peer or logical-key labels.
 - Aggregate inventory, repair, continuation, scheduler, and resource-budget metrics exposed through deterministic JSON and Prometheus health endpoints.
 - Finite peer admission and overload behavior, authenticated application identities, exact inbound identity allowlists, and tokenless compatibility.
 - Library and CLI TLS/mTLS admission with bounded handshakes, credential validity/expiry health, and restart-only certificate rotation semantics.
@@ -82,7 +91,7 @@ Highlight:
 - Repair demos that require a positive `replication_repair_blobs_sent` outcome.
 - Bounded continuation demo evidence with periodic inventory disabled.
 - Multi-peer continuation fairness acceptance under Go 1.22.x and 1.23.x.
-- Anti-entropy inventory benchmark and the decision to retain the bounded flat `blob.has` protocol for v0.11.
+- Anti-entropy inventory benchmark and the decision to retain the bounded flat `blob.has` protocol for mixed-version compatibility.
 - Dependency updates for checkout, setup-go, golangci-lint, testify, and upload-artifact with green CI evidence.
 
 Attach or link the CI SBOM artifact when publishing GitHub release binaries.
