@@ -2111,6 +2111,12 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(snapshot)
 	})
+	mux.HandleFunc("/lifecycle/status", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(lifecycleState.Status())
+	})
 	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
@@ -2169,6 +2175,17 @@ func writePrometheusMetrics(w io.Writer, snapshot map[string]int64) {
 var prometheusGaugeMetrics = map[string]struct{}{
 	"active_peers":                                 {},
 	"lifecycle_enabled":                            {},
+	"lifecycle_ready":                              {},
+	"lifecycle_authority_epoch":                    {},
+	"lifecycle_authority_sequence":                 {},
+	"lifecycle_journal_floor_epoch":                {},
+	"lifecycle_journal_floor_sequence":             {},
+	"lifecycle_journal_tail_epoch":                 {},
+	"lifecycle_journal_tail_sequence":              {},
+	"lifecycle_journal_entries":                    {},
+	"lifecycle_journal_bytes":                      {},
+	"lifecycle_logical_records":                    {},
+	"lifecycle_tombstones":                         {},
 	"lifecycle_repair_sessions_active":             {},
 	"replication_blob_acks_pending":                {},
 	"replication_inventory_exchanges_active":       {},

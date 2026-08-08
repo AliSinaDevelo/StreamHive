@@ -227,6 +227,12 @@ type ApplyResult struct {
 	Version Version
 }
 
+// StoreStats describes logical state without returning keys or record bodies.
+type StoreStats struct {
+	Records    int
+	Tombstones int
+}
+
 // Store is an in-memory logical state view used by the journal and future replicas.
 type Store struct {
 	mu      sync.RWMutex
@@ -327,6 +333,22 @@ func (s *Store) Snapshot() []Record {
 		return bytes.Compare(records[i].LogicalKey, records[j].LogicalKey) < 0
 	})
 	return records
+}
+
+// Stats returns aggregate logical-state counts without exposing key material.
+func (s *Store) Stats() StoreStats {
+	if s == nil {
+		return StoreStats{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	stats := StoreStats{Records: len(s.records)}
+	for _, record := range s.records {
+		if record.State == StateDeleted {
+			stats.Tombstones++
+		}
+	}
+	return stats
 }
 
 // ReplaceSnapshot atomically replaces the logical view with a validated,

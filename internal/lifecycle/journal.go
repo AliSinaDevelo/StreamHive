@@ -72,6 +72,14 @@ type Recovery struct {
 	Entries       int
 }
 
+// JournalStats describes the retained durable journal without returning records.
+type JournalStats struct {
+	Floor   Version
+	Last    Version
+	Entries int
+	Bytes   int64
+}
+
 // Journal is an ordered, append-only lifecycle mutation log.
 type Journal struct {
 	mu         sync.Mutex
@@ -307,6 +315,21 @@ func (j *Journal) Bytes() int64 {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.size
+}
+
+// Stats returns one consistent aggregate journal snapshot.
+func (j *Journal) Stats() JournalStats {
+	if j == nil {
+		return JournalStats{}
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return JournalStats{
+		Floor:   j.floor,
+		Last:    j.last,
+		Entries: len(j.records),
+		Bytes:   j.size,
+	}
 }
 
 func (j *Journal) ensureOpenLocked() error {

@@ -243,6 +243,15 @@ func TestRun_healthEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp2.Body.Close() }()
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	respLifecycle, err := client.Get(base + "/lifecycle/status")
+	require.NoError(t, err)
+	defer func() { _ = respLifecycle.Body.Close() }()
+	assert.Equal(t, http.StatusOK, respLifecycle.StatusCode)
+	var rawLifecycleStatus lifecycleStatus
+	require.NoError(t, json.NewDecoder(respLifecycle.Body).Decode(&rawLifecycleStatus))
+	assert.False(t, rawLifecycleStatus.Enabled)
+	assert.True(t, rawLifecycleStatus.Ready)
+	assert.Equal(t, "raw-only", rawLifecycleStatus.Readiness)
 
 	resp3, err := client.Get(base + "/metrics")
 	require.NoError(t, err)

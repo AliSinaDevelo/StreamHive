@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml/badge.svg)](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml)
 
-StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`).
+StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/lifecycle/status`).
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.12.0**, pre-1.0).
 
@@ -279,7 +279,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-peer-reconnect` | Retry `-peers` with exponential backoff |
 | `-peer-reconnect-min` / `-peer-reconnect-max` | Reconnect backoff bounds |
 | `-sync-interval` | Periodically advertise local blob keys to connected peers (0 = startup only) |
-| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics` |
+| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics`, `/lifecycle/status` |
 | `-max-peers` | Cap simultaneous peers (0 = unlimited) |
 | `-peer-auth-token` / `-peer-auth-timeout` | Optional shared-token peer auth before peer registration |
 | `-peer-id` | Optional application identity exchanged during shared-token auth (requires `-peer-auth-token`) |

@@ -168,6 +168,12 @@ waits up to `-lifecycle-mutation-timeout` for each outbound lifecycle watermark 
 Before sending a lifecycle repair frame, the CLI sends referenced raw blobs through acknowledged
 `blob.put` frames; this preserves the raw-before-logical ordering over a new TCP connection.
 
+The opt-in health server exposes `/lifecycle/status` as a bounded operator snapshot. It reports
+readiness, the authority identity in JSON, current/floor journal versions, journal size and entry
+count, logical-record/tombstone counts, and aggregate repair-session counters. It never exposes
+logical keys, record bodies, blob contents, or peer-address labels. A raw-only node returns an
+explicit `raw-only` readiness state without advertising lifecycle metrics.
+
 ## Message Types
 
 | Type | Fields | Meaning |

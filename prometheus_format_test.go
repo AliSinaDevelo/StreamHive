@@ -45,6 +45,11 @@ func TestWritePrometheusMetricsEmitsTypedMetadataForEveryHealthMetric(t *testing
 	}
 	assert.Equal(t, "gauge", metadata["streamhive_active_peers"].typeName)
 	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_enabled"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_ready"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_authority_epoch"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_journal_bytes"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_logical_records"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_tombstones"].typeName)
 	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_repair_sessions_active"].typeName)
 	assert.Equal(t, "counter", metadata["streamhive_dial_errors"].typeName)
 	assert.NotContains(t, out.String(), "{")

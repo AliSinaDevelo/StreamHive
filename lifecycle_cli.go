@@ -53,6 +53,23 @@ type lifecycleSessionEntry struct {
 	active  bool
 }
 
+type lifecycleStatus struct {
+	Enabled                 bool              `json:"enabled"`
+	Ready                   bool              `json:"ready"`
+	Readiness               string            `json:"readiness"`
+	AuthorityID             string            `json:"authority_id,omitempty"`
+	AuthorityVersion        lifecycle.Version `json:"authority_version"`
+	JournalFloor            lifecycle.Version `json:"journal_floor"`
+	JournalTail             lifecycle.Version `json:"journal_tail"`
+	JournalEntries          int               `json:"journal_entries"`
+	JournalBytes            int64             `json:"journal_bytes"`
+	LogicalRecords          int               `json:"logical_records"`
+	Tombstones              int               `json:"tombstones"`
+	RepairSessionsActive    int64             `json:"repair_sessions_active"`
+	RepairSessionsStarted   uint64            `json:"repair_sessions_started"`
+	RepairSessionsCompleted uint64            `json:"repair_sessions_completed"`
+}
+
 type lifecycleRuntimeMetrics struct {
 	SessionsStarted   atomic.Uint64
 	SessionsCompleted atomic.Uint64
@@ -325,6 +342,40 @@ func (r *lifecycleRuntime) waitForVersion(ctx context.Context, version lifecycle
 	}
 }
 
+func (r *lifecycleRuntime) Status() lifecycleStatus {
+	if r == nil {
+		return lifecycleStatus{Ready: true, Readiness: "raw-only"}
+	}
+	status := lifecycleStatus{
+		Enabled:                 true,
+		Ready:                   r.Ready(),
+		Readiness:               "ready",
+		RepairSessionsActive:    r.metrics.SessionsActive.Load(),
+		RepairSessionsStarted:   r.metrics.SessionsStarted.Load(),
+		RepairSessionsCompleted: r.metrics.SessionsCompleted.Load(),
+	}
+	if !status.Ready {
+		status.Readiness = "lifecycle-state-unavailable"
+	}
+	if r.authority != nil {
+		status.AuthorityID = r.authority.AuthorityID()
+		status.AuthorityVersion = r.authority.Current()
+	}
+	if r.journal != nil {
+		journal := r.journal.Stats()
+		status.JournalFloor = journal.Floor
+		status.JournalTail = journal.Last
+		status.JournalEntries = journal.Entries
+		status.JournalBytes = journal.Bytes
+	}
+	if r.state != nil {
+		state := r.state.Stats()
+		status.LogicalRecords = state.Records
+		status.Tombstones = state.Tombstones
+	}
+	return status
+}
+
 func verifyLifecycleRecords(ctx context.Context, blobs storage.BlobStore, records []lifecycle.Record) error {
 	for _, record := range records {
 		if err := ctx.Err(); err != nil {
@@ -499,15 +550,31 @@ func (r *lifecycleRuntime) HandleFrame(ctx context.Context, peer p2p.Peer, paylo
 }
 
 func (r *lifecycleRuntime) Ready() bool {
-	return r == nil || r.journal != nil
+	if r == nil {
+		return true
+	}
+	return r.journal != nil && r.authority != nil && r.watermarks != nil &&
+		r.coordinator != nil && r.state != nil && r.applier != nil
 }
 
 func (r *lifecycleRuntime) Metrics() map[string]int64 {
 	if r == nil {
 		return map[string]int64{}
 	}
+	status := r.Status()
 	return map[string]int64{
 		"lifecycle_enabled":                   1,
+		"lifecycle_ready":                     boolMetric(status.Ready),
+		"lifecycle_authority_epoch":           int64(status.AuthorityVersion.Epoch),
+		"lifecycle_authority_sequence":        int64(status.AuthorityVersion.Sequence),
+		"lifecycle_journal_floor_epoch":       int64(status.JournalFloor.Epoch),
+		"lifecycle_journal_floor_sequence":    int64(status.JournalFloor.Sequence),
+		"lifecycle_journal_tail_epoch":        int64(status.JournalTail.Epoch),
+		"lifecycle_journal_tail_sequence":     int64(status.JournalTail.Sequence),
+		"lifecycle_journal_entries":           int64(status.JournalEntries),
+		"lifecycle_journal_bytes":             status.JournalBytes,
+		"lifecycle_logical_records":           int64(status.LogicalRecords),
+		"lifecycle_tombstones":                int64(status.Tombstones),
 		"lifecycle_repair_sessions_started":   int64(r.metrics.SessionsStarted.Load()),
 		"lifecycle_repair_sessions_completed": int64(r.metrics.SessionsCompleted.Load()),
 		"lifecycle_repair_sessions_active":    r.metrics.SessionsActive.Load(),
@@ -518,6 +585,13 @@ func (r *lifecycleRuntime) Metrics() map[string]int64 {
 		"lifecycle_mutations_applied":         int64(r.metrics.MutationsApplied.Load()),
 		"lifecycle_mutation_errors":           int64(r.metrics.MutationErrors.Load()),
 	}
+}
+
+func boolMetric(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func authCapabilitiesForPeer(peer p2p.Peer) []string {

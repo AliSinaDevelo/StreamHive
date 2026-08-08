@@ -252,6 +252,12 @@ enablement, active/started/completed repair sessions, received frames, frame/ses
 local mutation started/applied/error counters through JSON and Prometheus health endpoints. The
 full lifecycle observability target remains:
 
+`/lifecycle/status` returns the bounded operator snapshot: readiness, authority identity and
+version, journal floor/tail/size, logical-record and tombstone counts, and aggregate repair
+session counters. It never returns logical keys, record bodies, blob contents, peer identities,
+or peer-address labels. The raw-only invocation reports `enabled: false`, `ready: true`, and
+`readiness: "raw-only"` at this endpoint.
+
 - counters for lifecycle records applied, duplicates, stale records, conflicts, capability
   refusals, invalid blob references, snapshot bootstraps, journal repairs, and compactions;
 - gauges for lifecycle readiness, pending records, journal bytes, tombstone count, minimum peer
