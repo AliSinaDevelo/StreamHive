@@ -1,8 +1,9 @@
 # v0.13 Versioned Lifecycle Semantics
 
-Status: v0.13.0 design plus the shipped capability, record-transport, and apply boundaries from
-issues #51 and #52. This document extends the released v0.12.0 add-only blob contract; wire
-repair, compaction, CLI configuration, and raw blob deletion remain future slices.
+Status: v0.13.0 design plus the shipped capability, record-transport, apply, and internal repair
+boundaries from issues #51, #52, and #53. This document extends the released v0.12.0 add-only
+blob contract; wire repair, compaction operations, CLI configuration, and raw blob deletion
+remain future slices.
 
 ## Problem Statement
 
@@ -151,6 +152,23 @@ record. A delete does not wait for blob transfer. If the journal or snapshot is 
 a peer and no safe snapshot is available, the peer is lifecycle-unready and must be reseeded;
 the system must not silently claim convergence.
 
+### Internal Repair Boundary Shipped
+
+Issue #53 adds reusable repair state without changing `SHV1`, the raw `blob.*` messages, or the
+CLI. `internal/lifecycle.RepairBatch` selects a strictly ordered, bounded journal prefix and
+`RepairBatch.Delivery` classifies an exact replay as a duplicate while refusing gaps and
+reordered records. `RepairSnapshot` and `PlanRepair` provide a complete checkpoint fallback when
+the peer watermark is older than the retained journal floor; a missing checkpoint returns an
+explicit snapshot-required error.
+
+`WatermarkBook` stores per-peer acknowledgements in a checksummed envelope through an atomic
+fsynced rename. Acknowledgements are monotonic, bounded by peer count, identity size, and file
+size, and reload across process restart. `RepairCoordinator` reads the durable watermark for a
+peer, resumes the next batch after reconnect, and rejects acknowledgements beyond the local
+journal tail. This is a planning and durability boundary, not a claim that the TCP transport
+already sends lifecycle repair frames; wire scheduling, readiness metrics, CLI configuration, and
+membership/compaction controls remain later work.
+
 The authority keeps tombstones until every configured lifecycle replica has acknowledged a
 version at or beyond the tombstone and a durable checkpoint includes it. Unknown or removed
 members block automatic compaction until an operator creates a new membership epoch and fences
@@ -222,7 +240,9 @@ verifiable slices:
    partial-write recovery, and raw-blob non-resurrection. The reusable capability-gated apply
    path is shipped by issue #52; wire repair and operations remain separate.
 4. **Repair:** per-peer watermarks, bounded journal batches, snapshot bootstrap, behind-floor
-   reseeding, reconnect, partition, and restart acceptance.
+   reseeding, reconnect, partition, and restart acceptance. The reusable internal planning and
+   durable-watermark boundary is shipped by issue #53; network scheduling and operations remain
+   separate.
 5. **Operations:** CLI configuration, readiness states, aggregate JSON/Prometheus metrics,
    compaction controls, migration/rollback runbook, and a deterministic multi-node demo.
 

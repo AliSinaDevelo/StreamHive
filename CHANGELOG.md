@@ -4,7 +4,15 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
-Future changes will be documented here.
+- **Lifecycle**: bounded internal repair batches and checkpoint snapshots now enforce ordered
+  watermarks, duplicate/gap detection, logical-key and metadata limits, and explicit behind-floor
+  fallback errors without changing the `SHV1` or raw `blob.*` wire contract.
+- **Lifecycle**: per-peer repair acknowledgements persist through checksummed envelopes and
+  atomic rename, reject regressions, and resume bounded repair planning after reconnect or
+  process restart.
+- **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
+  duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
+  restart reload, and corruption rejection.
 
 ## [0.12.0] — 2026-08-06
 

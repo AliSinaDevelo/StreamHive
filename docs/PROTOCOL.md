@@ -124,8 +124,10 @@ trailing JSON, malformed records, and oversized payloads before any record appli
 `DecodeRecordForPeer` refuses the payload before decoding when `lifecycle.v1` is absent.
 `internal/lifecycle.Applier` then verifies present-record bytes, writes supplied bytes to the raw
 store before appending the durable journal and publishing state, and applies deletes as
-tombstones without calling raw blob deletion. Wire repair, compaction, CLI configuration, and
-physical blob deletion remain separate work.
+tombstones without calling raw blob deletion. The internal `RepairBatch`, `RepairSnapshot`,
+`WatermarkBook`, and `RepairCoordinator` APIs now provide bounded journal planning and durable
+per-peer acknowledgements, but they do not add a lifecycle frame to the current TCP transport.
+Wire repair, compaction, CLI configuration, and physical blob deletion remain separate work.
 
 ## Message Types
 
@@ -183,6 +185,8 @@ Default replication limits are:
 | Max peer auth capabilities | 16 entries, 512 aggregate bytes, 64 bytes per entry | `p2p` capability validation errors |
 | Max lifecycle record | `64 << 10` bytes | `lifecycle.ErrRecordTooLarge` |
 | Max lifecycle envelope | `128 << 10` bytes | `lifecycle.ErrLifecyclePayloadTooLarge` |
+| Max lifecycle repair batch/snapshot | 128 records, 64 KiB logical bytes, 64 KiB metadata, 128 KiB encoded payload | `lifecycle.ErrRepairLimit` / `lifecycle.ErrRepairFrameTooLarge` |
+| Max durable repair peers | 1,024 peers, 128 bytes per identity, 1 MiB encoded state | `lifecycle.ErrWatermarkLimit` / `lifecycle.ErrWatermarkPeerInvalid` |
 
 Empty keys fail with `replication.ErrKeyEmpty`. Empty `keys` lists fail with
 `replication.ErrKeysEmpty`. Unknown message types fail with
