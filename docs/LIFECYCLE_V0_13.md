@@ -1,8 +1,9 @@
 # v0.13 Versioned Lifecycle Semantics
 
 Status: v0.13.0 design plus the shipped capability, record-transport, apply, internal repair,
-capability-gated repair-frame, caller-owned repair-session, operator membership, and
-checkpoint-first compaction boundaries from issues #51 through #59. This document extends the
+capability-gated repair-frame, caller-owned repair-session, operator membership, checkpoint-first
+compaction, and stale-peer snapshot-repair boundaries from issues #51 through #60. This document
+extends the
 released v0.12.0 add-only blob contract. Raw blob deletion remains a separate retention concern.
 
 ## Problem Statement
@@ -238,10 +239,24 @@ the `authority`, `watermarks`, `checkpoint`, and `journal` files:
   anti-entropy and local blob retention remain independent of logical compaction.
 
 Compaction status is available from `/lifecycle/status` as `membership_configured`,
-`membership_members`, `compaction_blocked`, and a bounded reason such as
-`membership-missing`, `member-behind`, or `no-progress`. The JSON and Prometheus outputs also
-expose aggregate membership and compaction gauges without logical keys, peer identities, or
-peer-address labels.
+`membership_members`, `membership_acknowledged`, the minimum acknowledged watermark, the current
+compaction target, `compaction_blocked`, and a bounded reason such as `membership-missing`,
+`member-behind`, or `no-progress`. The JSON and Prometheus outputs also expose aggregate membership
+and compaction gauges without logical keys, peer identities, or peer-address labels.
+
+### Stale-Peer Snapshot Repair
+
+When a configured target returns below the source's retained journal floor, the existing lifecycle
+repair session selects a complete bounded checkpoint instead of attempting to invent a missing
+journal prefix. The source preflights present-record blobs through acknowledged raw replication,
+then sends the snapshot through the negotiated lifecycle repair frame. The target durably applies
+the records, preserves tombstones, acknowledges the checkpoint watermark, and resumes from the
+retained floor. The source can restart from its compacted checkpoint before serving the repair;
+the raw blob store is never physically deleted.
+
+The deterministic race-enabled proof is `make test-lifecycle-compaction` and exercises source
+compaction, target metadata restart behind the floor, source restart, raw blob rehydration, and
+logical present/tombstone restoration over real authenticated TCP.
 
 ## Option Comparison
 
@@ -274,14 +289,15 @@ There is no automatic rollback that converts logical deletes into raw `BlobStore
 ## Observability And Readiness
 
 Metrics remain aggregate and label-free. The opt-in CLI runtime currently exposes lifecycle
-enablement, readiness, authority and journal aggregates, membership configuration,
-compaction-blocked state, active/started/completed repair sessions, received frames,
+enablement, readiness, authority and journal aggregates, membership configuration and progress,
+compaction target and blocked state, active/started/completed repair sessions, received frames,
 frame/session errors, and local mutation started/applied/error counters through JSON and
 Prometheus health endpoints. The bounded operator snapshot is:
 
 `/lifecycle/status` returns readiness, authority identity and version, journal floor/tail/size,
-logical-record and tombstone counts, membership configuration and count, compaction-blocked state,
-and aggregate repair-session counters. It never returns logical keys, record bodies, blob contents,
+logical-record and tombstone counts, membership configuration and progress, compaction target and
+blocked state, and aggregate repair-session counters. It never returns logical keys, record bodies,
+blob contents,
 peer identities, or peer-address labels. The raw-only invocation reports `enabled: false`,
 `ready: true`, and `readiness: "raw-only"` at this endpoint.
 

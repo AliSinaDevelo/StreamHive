@@ -170,9 +170,10 @@ Before sending a lifecycle repair frame, the CLI sends referenced raw blobs thro
 
 The opt-in health server exposes `/lifecycle/status` as a bounded operator snapshot. It reports
 readiness, the authority identity in JSON, current/floor journal versions, journal size and entry
-count, logical-record/tombstone counts, membership configuration and count, compaction-blocked
-state, and aggregate repair-session counters. It never exposes logical keys, record bodies, blob
-contents, or peer-address labels. A raw-only node returns an explicit `raw-only` readiness state
+count, logical-record/tombstone counts, membership configuration and progress, compaction target
+and blocked state, and aggregate repair-session counters. It never exposes logical keys, record
+bodies, blob contents, member identities, or peer-address labels. A raw-only node returns an
+explicit `raw-only` readiness state
 without advertising lifecycle metrics.
 
 Compaction is local operator control, not a wire operation. `-lifecycle-members` persists a

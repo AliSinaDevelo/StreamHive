@@ -272,8 +272,10 @@ empty set for a standalone node. A missing membership file, behind member, inval
 unsafe checkpoint, or corrupt checkpoint fails closed. `-lifecycle-compact` writes a complete
 checkpoint, including tombstones, before replacing the journal tail and exits without opening a
 TCP listener. It never deletes raw blobs. `/lifecycle/status` reports
-`membership_configured`, `membership_members`, `compaction_blocked`, and a bounded reason;
-the JSON and Prometheus metrics expose the same aggregate state.
+`membership_configured`, `membership_members`, `membership_acknowledged`, the minimum acknowledged
+watermark, the compaction target, `compaction_blocked`, and a bounded reason; the JSON and
+Prometheus metrics expose the same aggregate state without member IDs or peer labels. The focused
+stale-peer snapshot proof is repeatable with `make test-lifecycle-compaction`.
 
 For the verified TLS plus application-auth boundary, including wrong-CA and wrong-hostname
 acceptance paths, see [docs/TLS_AUTH.md](docs/TLS_AUTH.md) and run `make test-tls-auth`.
@@ -342,7 +344,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
 | `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
-See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
+See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-lifecycle-compaction`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
 
 ## Architecture (summary)
 

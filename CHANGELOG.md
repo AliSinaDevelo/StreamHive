@@ -34,10 +34,13 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   checkpoint workflow that fails closed on missing membership, behind members, invalid targets,
   and unsafe or corrupt checkpoints without opening a listener or deleting raw blobs.
 - **Ops**: `/lifecycle/status` and Prometheus now expose membership configuration, member count,
-  and aggregate compaction-blocked state without logical keys or peer labels.
+  acknowledged count, minimum acknowledged watermark, compaction target, and aggregate
+  compaction-blocked state without logical keys, member IDs, or peer labels.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.
+- **Tests/CI**: `make test-lifecycle-compaction` runs the race-enabled real-TCP stale-peer snapshot
+  repair proof as a dedicated GitHub Actions acceptance job.
 - **Tests**: a race-enabled CLI acceptance path proves a pre-seeded lifecycle tombstone converges
   over authenticated TCP and persists in the target journal after shutdown.
 - **Tests**: race-enabled CLI coverage proves local put/delete ordering, authority sequence resume,
