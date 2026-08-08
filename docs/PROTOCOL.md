@@ -390,6 +390,9 @@ connection timestamp, connection age in milliseconds, `auth_method` (`none` or
 `/inventory/status` reports only the live-scan marker, key count, key-byte total, and
 length-prefixed SHA-256 fingerprint. It is not a snapshot or deletion signal; it does not
 expose blob keys, raw content, peer labels, or a new wire message.
+The corresponding `replication_inventory_status_*` counters expose aggregate scan attempts,
+outcomes, observed key/byte totals, and cumulative duration through JSON and Prometheus without
+changing the protocol.
 
 The Prometheus endpoint emits a sorted, label-free family for every JSON metric. Each family
 has exactly one `# HELP`, one `# TYPE`, and one sample line; metric names and sample values are

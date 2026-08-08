@@ -4,6 +4,11 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Metrics**: `/inventory/status` scan attempts, outcomes, observed key/byte totals, and
+  cumulative duration are now exposed as aggregate `replication_inventory_status_*` counters in
+  JSON and Prometheus; raw-only nodes remain at zero.
+- **Tests/CI**: `make test-inventory-status-metrics` proves successful real-TCP accounting and
+  failed-scan accounting under three race-enabled repetitions.
 - **Ops**: `/inventory/status` exposes aggregate live-scan key count, key-byte total, and a
   deterministic length-prefixed SHA-256 inventory fingerprint without peer, key, content, or
   deletion labels.

@@ -257,6 +257,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-eviction-repair` to repeat startup-only rehydration after local durable eviction under the race detector
 - `make test-inventory-consistency` to repeat periodic repair after a behind-cursor mutation under the race detector
 - `make test-inventory-status` to repeat live inventory fingerprint mismatch/equality after bounded real-TCP repair under the race detector
+- `make test-inventory-status-metrics` to repeat successful and failed inventory-status accounting, including JSON/Prometheus samples, under the race detector
 - `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
 - `make test-tls-auth` to repeat TLS certificate verification, application identity admission, and pre-registration certificate failures under the race detector
 - `make test-mtls` to repeat library mTLS admission, bounded TLS failure handling, and frame exchange under the race detector
