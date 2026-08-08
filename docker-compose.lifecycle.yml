@@ -1,0 +1,109 @@
+services:
+  node1:
+    build: .
+    image: streamhive:lifecycle
+    command:
+      - -listen
+      - 0.0.0.0:7070
+      - -health
+      - 0.0.0.0:8080
+      - -replicate
+      - -store-dir
+      - /data
+      - -lifecycle
+      - -lifecycle-dir
+      - /lifecycle
+      - -peers
+      - node2:7070,node3:7070
+      - -peer-reconnect
+      - -peer-reconnect-min
+      - 200ms
+      - -peer-reconnect-max
+      - 2s
+      - -sync-interval
+      - 1s
+      - -peer-auth-token
+      - "${STREAMHIVE_LIFECYCLE_TOKEN:-streamhive-lifecycle-demo-token}"
+      - -peer-id
+      - node1
+      - -peer-allow-ids
+      - node2,node3
+      - -lifecycle-members
+      - node2,node3
+    ports:
+      - "18181:8080"
+    volumes:
+      - "${STREAMHIVE_LIFECYCLE_DATA_DIR:-./.streamhive-lifecycle}/node1/blobs:/data"
+      - "${STREAMHIVE_LIFECYCLE_DATA_DIR:-./.streamhive-lifecycle}/node1/lifecycle:/lifecycle"
+
+  node2:
+    image: streamhive:lifecycle
+    command:
+      - -listen
+      - 0.0.0.0:7070
+      - -health
+      - 0.0.0.0:8080
+      - -replicate
+      - -store-dir
+      - /data
+      - -lifecycle
+      - -lifecycle-dir
+      - /lifecycle
+      - -peers
+      - node1:7070
+      - -peer-reconnect
+      - -peer-reconnect-min
+      - 200ms
+      - -peer-reconnect-max
+      - 2s
+      - -sync-interval
+      - 1s
+      - -peer-auth-token
+      - "${STREAMHIVE_LIFECYCLE_TOKEN:-streamhive-lifecycle-demo-token}"
+      - -peer-id
+      - node2
+      - -peer-allow-ids
+      - node1,node3
+      - -lifecycle-members
+      - node1,node3
+    ports:
+      - "18182:8080"
+    volumes:
+      - "${STREAMHIVE_LIFECYCLE_DATA_DIR:-./.streamhive-lifecycle}/node2/blobs:/data"
+      - "${STREAMHIVE_LIFECYCLE_DATA_DIR:-./.streamhive-lifecycle}/node2/lifecycle:/lifecycle"
+
+  node3:
+    image: streamhive:lifecycle
+    command:
+      - -listen
+      - 0.0.0.0:7070
+      - -health
+      - 0.0.0.0:8080
+      - -replicate
+      - -store-dir
+      - /data
+      - -lifecycle
+      - -lifecycle-dir
+      - /lifecycle
+      - -peers
+      - node1:7070
+      - -peer-reconnect
+      - -peer-reconnect-min
+      - 200ms
+      - -peer-reconnect-max
+      - 2s
+      - -sync-interval
+      - 1s
+      - -peer-auth-token
+      - "${STREAMHIVE_LIFECYCLE_TOKEN:-streamhive-lifecycle-demo-token}"
+      - -peer-id
+      - node3
+      - -peer-allow-ids
+      - node1,node2
+      - -lifecycle-members
+      - node1,node2
+    ports:
+      - "18183:8080"
+    volumes:
+      - "${STREAMHIVE_LIFECYCLE_DATA_DIR:-./.streamhive-lifecycle}/node3/blobs:/data"
+      - "${STREAMHIVE_LIFECYCLE_DATA_DIR:-./.streamhive-lifecycle}/node3/lifecycle:/lifecycle"
