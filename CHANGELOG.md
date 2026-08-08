@@ -15,9 +15,16 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Lifecycle**: caller-owned repair sessions now plan bounded frames, apply batches or snapshots
   through the verified applier, persist acknowledgements after durable apply, and resume safely
   across duplicate delivery, reconnect, and process restart.
+- **CLI**: opt-in `-lifecycle` state opens a private durable journal, checkpoint, and peer-watermark
+  directory, validates authenticated identity prerequisites, and advertises `lifecycle.v1` without
+  changing the default raw replication path.
+- **CLI**: authenticated lifecycle-capable peers now receive cancellable repair sessions, with
+  aggregate lifecycle readiness and JSON/Prometheus repair counters.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.
+- **Tests**: a race-enabled CLI acceptance path proves a pre-seeded lifecycle tombstone converges
+  over authenticated TCP and persists in the target journal after shutdown.
 
 ## [0.12.0] — 2026-08-06
 

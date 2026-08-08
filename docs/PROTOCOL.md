@@ -128,9 +128,10 @@ tombstones without calling raw blob deletion. The internal `RepairBatch`, `Repai
 `WatermarkBook`, and `RepairCoordinator` APIs provide bounded journal planning and durable
 per-peer acknowledgements. `RepairFrame` adds bounded batch, snapshot, and watermark-ack payload
 codecs; `DecodeRepairFrameForPeer` refuses them before decoding without negotiated
-`lifecycle.v1`. This is a caller-owned frame boundary: the current CLI does not schedule these
-frames automatically. Compaction, CLI configuration, and physical blob deletion remain separate
-work.
+`lifecycle.v1`. This is a caller-owned frame boundary; the CLI constructs repair sessions and
+schedules these frames only when `-lifecycle` is enabled with authenticated peer identities.
+Without that opt-in, the CLI remains raw-only. Compaction, membership administration, and physical
+blob deletion remain separate work.
 
 Lifecycle repair payloads use these JSON message types when a caller sends them through an
 authenticated, capability-ready peer:
@@ -149,7 +150,9 @@ present-record blobs therefore produce no logical publication or acknowledgement
 still goes through the internal duplicate, gap, and reorder classifier; decoding alone never
 mutates the journal, logical store, or raw blob store. A session reloads its peer watermark on
 construction, so reconnect and process restart resume from the last durable acknowledgement.
-The current CLI does not construct sessions or schedule lifecycle frames automatically.
+The CLI constructs sessions only with `-lifecycle`; the default invocation does not advertise
+`lifecycle.v1` or schedule lifecycle frames. `/readyz`, `/metrics`, and `/metrics/prometheus`
+expose aggregate lifecycle state when the opt-in runtime is active.
 
 ## Message Types
 

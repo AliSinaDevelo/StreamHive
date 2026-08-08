@@ -3,8 +3,8 @@
 Status: v0.13.0 design plus the shipped capability, record-transport, apply, internal repair,
 capability-gated repair-frame, and caller-owned repair-session boundaries from issues #51,
 #52, #53, #54, and #55. This document extends the released v0.12.0 add-only blob contract;
-automatic CLI scheduling, compaction operations, CLI configuration, and raw blob deletion
-remain future slices.
+opt-in CLI scheduling is shipped, while compaction operations, membership administration, and
+raw blob deletion remain future slices.
 
 ## Problem Statement
 
@@ -37,7 +37,7 @@ Issue #51 adds the first wire boundary without enabling lifecycle synchronizatio
   bytes before raw storage and journal publication, and applies deletes without raw deletion.
 - No lifecycle frame is sent to a peer without negotiated `lifecycle.v1`; ordinary `blob.*`
   traffic is unchanged. The caller-owned repair session is the first sender/receiver boundary;
-  automatic CLI scheduling and lifecycle configuration remain future slices.
+  CLI scheduling is opt-in through the lifecycle flags and remains disabled by default.
 
 ## Decision
 
@@ -172,9 +172,10 @@ ack payloads, while `DecodeRepairFrameForPeer` refuses lifecycle data before dec
 caller supplies the negotiated `lifecycle.v1` capability. `RepairSession` composes those pieces:
 `SendNext` plans and writes one bounded frame, while `Handle` validates, applies, and acknowledges
 received batches or snapshots only after durable apply. It refuses gaps, preserves duplicate
-replay safety, and leaves the durable watermark ready for reconnect or process restart. This is
-still caller-owned scheduling: the current CLI does not construct repair sessions, and readiness
-metrics, CLI configuration, and membership/compaction controls remain later work.
+replay safety, and leaves the durable watermark ready for reconnect or process restart. The CLI
+constructs one cancellable session per authenticated lifecycle-capable peer only when `-lifecycle`
+is enabled; its aggregate readiness and repair counters are exposed without peer labels. The
+default CLI path remains raw-only, while membership and compaction controls remain later work.
 
 The authority keeps tombstones until every configured lifecycle replica has acknowledged a
 version at or beyond the tombstone and a durable checkpoint includes it. Unknown or removed
@@ -219,7 +220,9 @@ There is no automatic rollback that converts logical deletes into raw `BlobStore
 
 ## Observability And Readiness
 
-Metrics remain aggregate and label-free. The implementation should expose at least:
+Metrics remain aggregate and label-free. The opt-in CLI runtime currently exposes lifecycle
+enablement, active/started/completed repair sessions, received frames, and frame/session errors
+through JSON and Prometheus health endpoints. The full lifecycle observability target remains:
 
 - counters for lifecycle records applied, duplicates, stale records, conflicts, capability
   refusals, invalid blob references, snapshot bootstraps, journal repairs, and compactions;
