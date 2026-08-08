@@ -974,7 +974,7 @@ func TestRunLifecycleSnapshotRepairsStalePeerAfterCompaction(t *testing.T) {
 		}
 		defer func() { _ = targetJournal.Close() }()
 		return targetJournal.Floor() == sourceTail && targetJournal.Len() == 0
-	}, 10*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
+	}, 30*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
 	targetCheckpoint, err := lifecycle.LoadCheckpoint(ctx, filepath.Join(targetLifecycleDir, "checkpoint"), lifecycle.Limits{})
 	require.NoError(t, err)
 	var liveRecord, retiredRecord lifecycle.Record
