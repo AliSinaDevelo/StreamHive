@@ -110,6 +110,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	lifecycleMaxKeyBytes := fs.Int("lifecycle-max-key-bytes", lifecycle.DefaultMaxRepairLogicalKeyBytes, "max lifecycle logical-key bytes per repair frame")
 	lifecycleMaxMetadataBytes := fs.Int("lifecycle-max-metadata-bytes", lifecycle.DefaultMaxRepairMetadataBytes, "max lifecycle metadata bytes per repair frame")
 	lifecycleMaxFrameBytes := fs.Int("lifecycle-max-frame-bytes", lifecycle.DefaultMaxRepairFrameBytes, "max encoded lifecycle repair frame bytes")
+	lifecycleMembersFlag := fs.String("lifecycle-members", "", "comma-separated operator-fenced lifecycle replica identities (requires -lifecycle; an explicit empty value creates an empty fence)")
+	lifecycleCompact := fs.Bool("lifecycle-compact", false, "write a verified lifecycle checkpoint through the durable tail and exit")
 	lifecyclePutNamespace := fs.String("lifecycle-put-namespace", "", "create one lifecycle present record in this namespace")
 	lifecyclePutKey := fs.String("lifecycle-put-key", "", "logical key for one lifecycle present record")
 	lifecyclePutData := fs.String("lifecycle-put-data", "", "data for one lifecycle present record")
@@ -149,6 +151,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	lifecycleMembers, err := parsePeerIdentityList(*lifecycleMembersFlag)
+	if err != nil {
+		return fmt.Errorf("lifecycle: invalid membership list: %w", err)
+	}
+	lifecycleMembersConfigured := flagWasSet(fs, "lifecycle-members")
 	peerTargets := combinePeerTargets(dialTarget, peerList)
 	putRequested := *putKey != "" || *putContentKey
 	lifecyclePutRequested := *lifecyclePutNamespace != "" || *lifecyclePutKey != "" || *lifecyclePutData != "" || *lifecyclePutBlobKey != ""
@@ -168,6 +175,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if lifecycleMutationRequested && !*lifecycleEnabled {
 		return fmt.Errorf("lifecycle: local mutation requires -lifecycle")
+	}
+	if *lifecycleCompact && !*lifecycleEnabled {
+		return fmt.Errorf("lifecycle: -lifecycle-compact requires -lifecycle")
+	}
+	if *lifecycleCompact && lifecycleMutationRequested {
+		return fmt.Errorf("lifecycle: compaction cannot be combined with a local mutation")
+	}
+	if *lifecycleCompact && putRequested {
+		return fmt.Errorf("lifecycle: compaction cannot be combined with raw blob put")
+	}
+	if *lifecycleCompact && len(peerTargets) > 0 {
+		return fmt.Errorf("lifecycle: compaction cannot be combined with -dial or -peers")
+	}
+	if *lifecycleCompact && *peerReconnect {
+		return fmt.Errorf("lifecycle: compaction cannot be combined with -peer-reconnect")
+	}
+	if *lifecycleCompact && *lifecycleExitAfterMutation {
+		return fmt.Errorf("lifecycle: compaction cannot be combined with -lifecycle-exit-after-mutation")
 	}
 	if lifecyclePutRequested && (*lifecyclePutNamespace == "" || *lifecyclePutKey == "") {
 		return fmt.Errorf("lifecycle: put requires -lifecycle-put-namespace and -lifecycle-put-key")
@@ -309,8 +334,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		replMetrics.ackTracker = putTracker
 	}
 	lifecycleConfig := lifecycleCLIConfig{
-		enabled: *lifecycleEnabled,
-		dir:     *lifecycleDir,
+		enabled:              *lifecycleEnabled,
+		dir:                  *lifecycleDir,
+		membershipConfigured: lifecycleMembersConfigured,
+		membershipMembers:    lifecycleMembers,
 		repairLimits: lifecycle.RepairLimits{
 			MaxRecords:         *lifecycleMaxRecords,
 			MaxLogicalKeyBytes: *lifecycleMaxKeyBytes,
@@ -330,6 +357,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			log.Warn("lifecycle journal close", "err", err)
 		}
 	}()
+	if *lifecycleCompact {
+		if err := lifecycleState.compact(ctx); err != nil {
+			return fmt.Errorf("lifecycle: compact: %w", err)
+		}
+		watermark := lifecycleState.journal.Floor()
+		_, err := fmt.Fprintf(stdout, "lifecycle compacted watermark=%d/%d members=%d\n", watermark.Epoch, watermark.Sequence, len(lifecycleState.membership.Snapshot()))
+		return err
+	}
 
 	tr := p2p.NewTCPTransport(*listen)
 	tr.Logger = log
@@ -1912,6 +1947,19 @@ func parsePeerIdentityList(identities string) ([]string, error) {
 		allowed = append(allowed, identity)
 	}
 	return allowed, nil
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	if fs == nil {
+		return false
+	}
+	set := false
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == name {
+			set = true
+		}
+	})
+	return set
 }
 
 func combinePeerTargets(dial string, peers []string) []string {

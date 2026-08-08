@@ -97,6 +97,21 @@ func TestRunLifecycleMutationFlagsAreStrict(t *testing.T) {
 			args: []string{"-lifecycle", "-lifecycle-put-namespace", "demo", "-lifecycle-put-key", "item", "-lifecycle-put-data", "value", "-lifecycle-put-blob-key", "bad"},
 			want: "lifecycle: invalid -lifecycle-put-blob-key",
 		},
+		{
+			name: "compact requires opt in",
+			args: []string{"-lifecycle-compact"},
+			want: "lifecycle: -lifecycle-compact requires -lifecycle",
+		},
+		{
+			name: "members require opt in",
+			args: []string{"-lifecycle-members", "node-b"},
+			want: "lifecycle: -lifecycle-members requires -lifecycle",
+		},
+		{
+			name: "compact and mutation are exclusive",
+			args: []string{"-lifecycle", "-lifecycle-compact", "-lifecycle-put-namespace", "demo", "-lifecycle-put-key", "item", "-lifecycle-put-data", "value"},
+			want: "lifecycle: compaction cannot be combined with a local mutation",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,6 +120,50 @@ func TestRunLifecycleMutationFlagsAreStrict(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+func TestRunLifecycleCompactCommandWritesCheckpointAndExits(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	lifecycleDir := t.TempDir()
+	baseArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", storeDir,
+		"-lifecycle",
+		"-lifecycle-dir", lifecycleDir,
+		"-peer-auth-token", "shared-secret",
+		"-peer-id", "node-a",
+		"-lifecycle-members=",
+	}
+	putArgs := append(append([]string(nil), baseArgs...),
+		"-lifecycle-put-namespace", "demo",
+		"-lifecycle-put-key", "item",
+		"-lifecycle-put-data", "value",
+		"-lifecycle-exit-after-mutation",
+	)
+	require.NoError(t, run(ctx, putArgs, io.Discard, io.Discard))
+
+	var out safeBuffer
+	compactArgs := append(append([]string(nil), baseArgs[:len(baseArgs)-1]...), "-lifecycle-compact")
+	require.NoError(t, run(ctx, compactArgs, &out, io.Discard))
+	assert.Contains(t, out.String(), "lifecycle compacted watermark=")
+	assert.NotContains(t, out.String(), "listening on")
+
+	journal, _, err := lifecycle.OpenJournal(filepath.Join(lifecycleDir, "journal"), lifecycle.JournalOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, journal.LastVersion(), journal.Floor())
+	assert.Equal(t, 0, journal.Len())
+	require.NoError(t, journal.Close())
+	checkpoint, err := lifecycle.LoadCheckpoint(ctx, filepath.Join(lifecycleDir, "checkpoint"), lifecycle.Limits{})
+	require.NoError(t, err)
+	require.Len(t, checkpoint.Records, 1)
+	assert.Equal(t, lifecycle.StatePresent, checkpoint.Records[0].State)
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	data, err := store.Get(ctx, checkpoint.Records[0].BlobKey)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value"), data)
 }
 
 func TestRunLifecyclePutCommitsAndExits(t *testing.T) {
