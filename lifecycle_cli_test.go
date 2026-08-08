@@ -821,3 +821,180 @@ func TestRunLifecycleRepairConvergesOverAuthenticatedTCP(t *testing.T) {
 	sourceCancel()
 	require.NoError(t, <-sourceDone)
 }
+
+func TestRunLifecycleSnapshotRepairsStalePeerAfterCompaction(t *testing.T) {
+	ctx := context.Background()
+	sourceStoreDir := t.TempDir()
+	sourceLifecycleDir := t.TempDir()
+	targetStoreDir := t.TempDir()
+	targetLifecycleDir := t.TempDir()
+	const token = "shared-secret"
+	liveData := []byte("live-value")
+	liveBlobKey := storage.SHA256Key(liveData)
+
+	mutationArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", sourceStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", sourceLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "source",
+		"-lifecycle-members", "target",
+		"-lifecycle-exit-after-mutation",
+	}
+	putLive := append(append([]string(nil), mutationArgs...),
+		"-lifecycle-put-namespace", "demo",
+		"-lifecycle-put-key", "live",
+		"-lifecycle-put-data", string(liveData),
+	)
+	require.NoError(t, run(ctx, putLive, io.Discard, io.Discard))
+	putRetired := append(append([]string(nil), mutationArgs...),
+		"-lifecycle-put-namespace", "demo",
+		"-lifecycle-put-key", "retired",
+		"-lifecycle-put-data", "retired-value",
+	)
+	require.NoError(t, run(ctx, putRetired, io.Discard, io.Discard))
+	deleteRetired := append(append([]string(nil), mutationArgs...),
+		"-lifecycle-delete-namespace", "demo",
+		"-lifecycle-delete-key", "retired",
+	)
+	require.NoError(t, run(ctx, deleteRetired, io.Discard, io.Discard))
+
+	listenPattern := regexp.MustCompile(`listening on ([^\n]+)`)
+	startNode := func(nodeCtx context.Context, args []string) (context.CancelFunc, <-chan error, *safeBuffer, *safeBuffer, string) {
+		nodeCtx, nodeCancel := context.WithCancel(nodeCtx)
+		var out, stderr safeBuffer
+		done := make(chan error, 1)
+		go func() {
+			done <- run(nodeCtx, args, &out, &stderr)
+		}()
+		var address string
+		require.Eventually(t, func() bool {
+			match := listenPattern.FindStringSubmatch(out.String())
+			if len(match) != 2 {
+				return false
+			}
+			address = strings.TrimSpace(match[1])
+			return address != ""
+		}, 3*time.Second, 10*time.Millisecond, "stdout=%q stderr=%q", out.String(), stderr.String())
+		return nodeCancel, done, &out, &stderr, address
+	}
+
+	sourceArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", sourceStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", sourceLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "source",
+	}
+	sourceCancel, sourceDone, sourceOut, sourceErr, sourceAddr := startNode(context.Background(), sourceArgs)
+	targetArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-dial", sourceAddr,
+		"-replicate",
+		"-store-dir", targetStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", targetLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "target",
+	}
+	targetCancel, targetDone, targetOut, targetErr, _ := startNode(context.Background(), targetArgs)
+
+	readJournal := func(path string) ([]lifecycle.Record, lifecycle.Version, bool) {
+		journal, _, err := lifecycle.OpenJournal(path, lifecycle.JournalOptions{})
+		if err != nil {
+			return nil, lifecycle.Version{}, false
+		}
+		defer func() { _ = journal.Close() }()
+		records, err := journal.Records(ctx)
+		return records, journal.LastVersion(), err == nil
+	}
+	sourceJournalPath := filepath.Join(sourceLifecycleDir, "journal")
+	targetJournalPath := filepath.Join(targetLifecycleDir, "journal")
+	var sourceTail lifecycle.Version
+	require.Eventually(t, func() bool {
+		records, tail, ok := readJournal(sourceJournalPath)
+		if !ok || len(records) != 3 {
+			return false
+		}
+		sourceTail = tail
+		targetRecords, _, targetOK := readJournal(targetJournalPath)
+		return targetOK && len(targetRecords) == 3
+	}, 8*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
+	require.Eventually(t, func() bool {
+		book, err := lifecycle.OpenWatermarkBook(filepath.Join(sourceLifecycleDir, "watermarks"), lifecycle.WatermarkOptions{})
+		return err == nil && book.Watermark("target") == sourceTail
+	}, 8*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
+
+	targetCancel()
+	require.NoError(t, <-targetDone, "target stdout=%q stderr=%q", targetOut.String(), targetErr.String())
+	sourceCancel()
+	require.NoError(t, <-sourceDone, "source stdout=%q stderr=%q", sourceOut.String(), sourceErr.String())
+
+	var compactOut safeBuffer
+	require.NoError(t, run(ctx, []string{
+		"-replicate",
+		"-store-dir", sourceStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", sourceLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "source",
+		"-lifecycle-compact",
+	}, &compactOut, io.Discard))
+	assert.Contains(t, compactOut.String(), "lifecycle compacted watermark=")
+	checkpoint, err := lifecycle.LoadCheckpoint(ctx, filepath.Join(sourceLifecycleDir, "checkpoint"), lifecycle.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, sourceTail, checkpoint.Watermark)
+	require.Len(t, checkpoint.Records, 2)
+
+	sourceWatermarks, err := lifecycle.OpenWatermarkBook(filepath.Join(sourceLifecycleDir, "watermarks"), lifecycle.WatermarkOptions{})
+	require.NoError(t, err)
+	require.NoError(t, sourceWatermarks.Forget(ctx, "target"))
+	targetStore, err := storage.NewFileStore(targetStoreDir)
+	require.NoError(t, err)
+	require.NoError(t, targetStore.Delete(ctx, liveBlobKey))
+	require.NoError(t, os.RemoveAll(targetLifecycleDir))
+	require.NoError(t, os.MkdirAll(targetLifecycleDir, 0o700))
+
+	sourceCancel, sourceDone, sourceOut, sourceErr, sourceAddr = startNode(context.Background(), sourceArgs)
+	targetArgs[3] = sourceAddr
+	targetCancel, targetDone, targetOut, targetErr, _ = startNode(context.Background(), targetArgs)
+	require.Eventually(t, func() bool {
+		got, getErr := targetStore.Get(ctx, liveBlobKey)
+		if getErr != nil || !reflect.DeepEqual(got, liveData) {
+			return false
+		}
+		targetCheckpoint, checkpointErr := lifecycle.LoadCheckpoint(ctx, filepath.Join(targetLifecycleDir, "checkpoint"), lifecycle.Limits{})
+		if checkpointErr != nil || targetCheckpoint.Watermark != sourceTail || len(targetCheckpoint.Records) != 2 {
+			return false
+		}
+		targetJournal, _, journalErr := lifecycle.OpenJournal(targetJournalPath, lifecycle.JournalOptions{})
+		if journalErr != nil {
+			return false
+		}
+		defer func() { _ = targetJournal.Close() }()
+		return targetJournal.Floor() == sourceTail && targetJournal.Len() == 0
+	}, 10*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
+	targetCheckpoint, err := lifecycle.LoadCheckpoint(ctx, filepath.Join(targetLifecycleDir, "checkpoint"), lifecycle.Limits{})
+	require.NoError(t, err)
+	var liveRecord, retiredRecord lifecycle.Record
+	for _, record := range targetCheckpoint.Records {
+		switch string(record.LogicalKey) {
+		case "live":
+			liveRecord = record
+		case "retired":
+			retiredRecord = record
+		}
+	}
+	assert.Equal(t, lifecycle.StatePresent, liveRecord.State)
+	assert.Equal(t, liveBlobKey, liveRecord.BlobKey)
+	assert.Equal(t, lifecycle.StateDeleted, retiredRecord.State)
+
+	targetCancel()
+	require.NoError(t, <-targetDone, "target stdout=%q stderr=%q", targetOut.String(), targetErr.String())
+	sourceCancel()
+	require.NoError(t, <-sourceDone, "source stdout=%q stderr=%q", sourceOut.String(), sourceErr.String())
+}
