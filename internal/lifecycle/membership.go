@@ -70,6 +70,16 @@ type membershipState struct {
 	Members []string `json:"members"`
 }
 
+// MembershipProgress is a bounded aggregate of the configured membership fence.
+// It intentionally carries no replica identity or logical data.
+type MembershipProgress struct {
+	Configured   bool
+	Members      int
+	Acknowledged int
+	Minimum      Version
+	Target       Version
+}
+
 // MembershipBook durably stores an operator-authored set of replica identities.
 // A missing file is distinct from an explicitly persisted empty set so callers can
 // fail closed when compaction has no configured safety fence.
@@ -187,6 +197,44 @@ func (b *MembershipBook) Snapshot() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return append([]string(nil), b.members...)
+}
+
+// Progress summarizes how many configured members have acknowledged Target and
+// returns the minimum durable watermark without exposing member identities.
+func (b *MembershipBook) Progress(ctx context.Context, watermarks *WatermarkBook, target Version) (MembershipProgress, error) {
+	if b == nil {
+		return MembershipProgress{}, ErrNilMembershipBook
+	}
+	if err := ctx.Err(); err != nil {
+		return MembershipProgress{}, err
+	}
+	if watermarks == nil {
+		return MembershipProgress{}, ErrNilWatermarkBook
+	}
+	b.mu.RLock()
+	configured := b.configured
+	members := append([]string(nil), b.members...)
+	b.mu.RUnlock()
+	progress := MembershipProgress{
+		Configured: configured,
+		Members:    len(members),
+		Target:     target,
+	}
+	minimumSet := false
+	for _, member := range members {
+		if err := ctx.Err(); err != nil {
+			return MembershipProgress{}, err
+		}
+		version := watermarks.Watermark(member)
+		if !minimumSet || version.Compare(progress.Minimum) < 0 {
+			progress.Minimum = version
+			minimumSet = true
+		}
+		if !target.IsZero() && version.Compare(target) >= 0 {
+			progress.Acknowledged++
+		}
+	}
+	return progress, nil
 }
 
 // WatermarksAt checks every configured member's durable acknowledgement at a

@@ -90,6 +90,41 @@ func TestMembershipBookRequiresDurableAcknowledgementForEveryMember(t *testing.T
 	assert.Empty(t, got)
 }
 
+func TestMembershipBookProgressSummarizesAcknowledgements(t *testing.T) {
+	ctx := context.Background()
+	membership, err := OpenMembershipBook(filepath.Join(t.TempDir(), "membership"), MembershipOptions{})
+	require.NoError(t, err)
+	watermarks, err := OpenWatermarkBook(filepath.Join(t.TempDir(), "watermarks"), WatermarkOptions{})
+	require.NoError(t, err)
+	target := Version{Epoch: 4, Sequence: 3}
+
+	progress, err := membership.Progress(ctx, watermarks, target)
+	require.NoError(t, err)
+	assert.False(t, progress.Configured)
+	assert.Equal(t, target, progress.Target)
+	assert.Zero(t, progress.Members)
+	assert.Zero(t, progress.Acknowledged)
+	assert.True(t, progress.Minimum.IsZero())
+
+	require.NoError(t, membership.Replace(ctx, []string{"node-a", "node-b", "node-c"}))
+	require.NoError(t, watermarks.Acknowledge(ctx, "node-a", target))
+	require.NoError(t, watermarks.Acknowledge(ctx, "node-b", Version{Epoch: 4, Sequence: 2}))
+
+	progress, err = membership.Progress(ctx, watermarks, target)
+	require.NoError(t, err)
+	assert.True(t, progress.Configured)
+	assert.Equal(t, 3, progress.Members)
+	assert.Equal(t, 1, progress.Acknowledged)
+	assert.Equal(t, Version{}, progress.Minimum)
+
+	require.NoError(t, watermarks.Acknowledge(ctx, "node-b", target))
+	require.NoError(t, watermarks.Acknowledge(ctx, "node-c", target))
+	progress, err = membership.Progress(ctx, watermarks, target)
+	require.NoError(t, err)
+	assert.Equal(t, 3, progress.Acknowledged)
+	assert.Equal(t, target, progress.Minimum)
+}
+
 func TestMembershipBookWatermarksAtHonorsCancellationAndNilInputs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

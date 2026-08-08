@@ -70,6 +70,9 @@ type lifecycleStatus struct {
 	Tombstones              int               `json:"tombstones"`
 	MembershipConfigured    bool              `json:"membership_configured"`
 	MembershipMembers       int               `json:"membership_members"`
+	MembershipAcknowledged  int               `json:"membership_acknowledged"`
+	MembershipMinimum       lifecycle.Version `json:"membership_minimum"`
+	CompactionTarget        lifecycle.Version `json:"compaction_target"`
 	CompactionBlocked       bool              `json:"compaction_blocked"`
 	CompactionBlockedReason string            `json:"compaction_blocked_reason,omitempty"`
 	RepairSessionsActive    int64             `json:"repair_sessions_active"`
@@ -393,33 +396,41 @@ func (r *lifecycleRuntime) compact(ctx context.Context) error {
 	return nil
 }
 
-func (r *lifecycleRuntime) compactionStatus() (configured bool, members int, blocked bool, reason string) {
+func (r *lifecycleRuntime) compactionProgress() lifecycle.MembershipProgress {
+	progress := lifecycle.MembershipProgress{}
+	if r == nil {
+		return progress
+	}
+	if r.journal != nil {
+		progress.Target = r.journal.LastVersion()
+	}
+	if r.membership == nil || r.watermarks == nil {
+		return progress
+	}
+	current, err := r.membership.Progress(context.Background(), r.watermarks, progress.Target)
+	if err != nil {
+		return progress
+	}
+	return current
+}
+
+func (r *lifecycleRuntime) compactionStatus(progress lifecycle.MembershipProgress) (blocked bool, reason string) {
 	if r == nil || r.membership == nil {
-		return false, 0, true, "membership-unavailable"
+		return true, "membership-unavailable"
 	}
-	configured = r.membership.Configured()
-	members = len(r.membership.Snapshot())
-	if !configured {
-		return configured, members, true, "membership-missing"
+	if r.watermarks == nil || r.journal == nil {
+		return true, "compaction-state-unavailable"
 	}
-	if r.journal == nil || r.watermarks == nil {
-		return configured, members, true, "compaction-state-unavailable"
+	if !progress.Configured {
+		return true, "membership-missing"
 	}
-	target := r.journal.LastVersion()
-	if target.Compare(r.journal.Floor()) <= 0 {
-		return configured, members, true, "no-progress"
+	if progress.Target.Compare(r.journal.Floor()) <= 0 {
+		return true, "no-progress"
 	}
-	if _, err := r.membership.WatermarksAt(context.Background(), r.watermarks, target); err != nil {
-		switch {
-		case errors.Is(err, lifecycle.ErrMembershipBehind):
-			return configured, members, true, "member-behind"
-		case errors.Is(err, lifecycle.ErrMembershipNotConfigured):
-			return configured, members, true, "membership-missing"
-		default:
-			return configured, members, true, "membership-invalid"
-		}
+	if progress.Members != progress.Acknowledged {
+		return true, "member-behind"
 	}
-	return configured, members, false, ""
+	return false, ""
 }
 
 func (r *lifecycleRuntime) Status() lifecycleStatus {
@@ -453,7 +464,13 @@ func (r *lifecycleRuntime) Status() lifecycleStatus {
 		status.LogicalRecords = state.Records
 		status.Tombstones = state.Tombstones
 	}
-	status.MembershipConfigured, status.MembershipMembers, status.CompactionBlocked, status.CompactionBlockedReason = r.compactionStatus()
+	progress := r.compactionProgress()
+	status.MembershipConfigured = progress.Configured
+	status.MembershipMembers = progress.Members
+	status.MembershipAcknowledged = progress.Acknowledged
+	status.MembershipMinimum = progress.Minimum
+	status.CompactionTarget = progress.Target
+	status.CompactionBlocked, status.CompactionBlockedReason = r.compactionStatus(progress)
 	return status
 }
 
@@ -644,30 +661,35 @@ func (r *lifecycleRuntime) Metrics() map[string]int64 {
 	}
 	status := r.Status()
 	return map[string]int64{
-		"lifecycle_enabled":                   1,
-		"lifecycle_ready":                     boolMetric(status.Ready),
-		"lifecycle_authority_epoch":           int64(status.AuthorityVersion.Epoch),
-		"lifecycle_authority_sequence":        int64(status.AuthorityVersion.Sequence),
-		"lifecycle_journal_floor_epoch":       int64(status.JournalFloor.Epoch),
-		"lifecycle_journal_floor_sequence":    int64(status.JournalFloor.Sequence),
-		"lifecycle_journal_tail_epoch":        int64(status.JournalTail.Epoch),
-		"lifecycle_journal_tail_sequence":     int64(status.JournalTail.Sequence),
-		"lifecycle_journal_entries":           int64(status.JournalEntries),
-		"lifecycle_journal_bytes":             status.JournalBytes,
-		"lifecycle_logical_records":           int64(status.LogicalRecords),
-		"lifecycle_tombstones":                int64(status.Tombstones),
-		"lifecycle_membership_configured":     boolMetric(status.MembershipConfigured),
-		"lifecycle_membership_members":        int64(status.MembershipMembers),
-		"lifecycle_compaction_blocked":        boolMetric(status.CompactionBlocked),
-		"lifecycle_repair_sessions_started":   int64(r.metrics.SessionsStarted.Load()),
-		"lifecycle_repair_sessions_completed": int64(r.metrics.SessionsCompleted.Load()),
-		"lifecycle_repair_sessions_active":    r.metrics.SessionsActive.Load(),
-		"lifecycle_repair_session_errors":     int64(r.metrics.SessionErrors.Load()),
-		"lifecycle_repair_frames_received":    int64(r.metrics.FramesReceived.Load()),
-		"lifecycle_repair_frame_errors":       int64(r.metrics.FrameErrors.Load()),
-		"lifecycle_mutations_started":         int64(r.metrics.MutationsStarted.Load()),
-		"lifecycle_mutations_applied":         int64(r.metrics.MutationsApplied.Load()),
-		"lifecycle_mutation_errors":           int64(r.metrics.MutationErrors.Load()),
+		"lifecycle_enabled":                    1,
+		"lifecycle_ready":                      boolMetric(status.Ready),
+		"lifecycle_authority_epoch":            int64(status.AuthorityVersion.Epoch),
+		"lifecycle_authority_sequence":         int64(status.AuthorityVersion.Sequence),
+		"lifecycle_journal_floor_epoch":        int64(status.JournalFloor.Epoch),
+		"lifecycle_journal_floor_sequence":     int64(status.JournalFloor.Sequence),
+		"lifecycle_journal_tail_epoch":         int64(status.JournalTail.Epoch),
+		"lifecycle_journal_tail_sequence":      int64(status.JournalTail.Sequence),
+		"lifecycle_journal_entries":            int64(status.JournalEntries),
+		"lifecycle_journal_bytes":              status.JournalBytes,
+		"lifecycle_logical_records":            int64(status.LogicalRecords),
+		"lifecycle_tombstones":                 int64(status.Tombstones),
+		"lifecycle_membership_configured":      boolMetric(status.MembershipConfigured),
+		"lifecycle_membership_members":         int64(status.MembershipMembers),
+		"lifecycle_membership_acknowledged":    int64(status.MembershipAcknowledged),
+		"lifecycle_membership_min_epoch":       int64(status.MembershipMinimum.Epoch),
+		"lifecycle_membership_min_sequence":    int64(status.MembershipMinimum.Sequence),
+		"lifecycle_compaction_target_epoch":    int64(status.CompactionTarget.Epoch),
+		"lifecycle_compaction_target_sequence": int64(status.CompactionTarget.Sequence),
+		"lifecycle_compaction_blocked":         boolMetric(status.CompactionBlocked),
+		"lifecycle_repair_sessions_started":    int64(r.metrics.SessionsStarted.Load()),
+		"lifecycle_repair_sessions_completed":  int64(r.metrics.SessionsCompleted.Load()),
+		"lifecycle_repair_sessions_active":     r.metrics.SessionsActive.Load(),
+		"lifecycle_repair_session_errors":      int64(r.metrics.SessionErrors.Load()),
+		"lifecycle_repair_frames_received":     int64(r.metrics.FramesReceived.Load()),
+		"lifecycle_repair_frame_errors":        int64(r.metrics.FrameErrors.Load()),
+		"lifecycle_mutations_started":          int64(r.metrics.MutationsStarted.Load()),
+		"lifecycle_mutations_applied":          int64(r.metrics.MutationsApplied.Load()),
+		"lifecycle_mutation_errors":            int64(r.metrics.MutationErrors.Load()),
 	}
 }
 
