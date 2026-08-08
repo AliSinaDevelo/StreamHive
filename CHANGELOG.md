@@ -4,6 +4,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.13.0] — 2026-08-09
+
 - **Lifecycle**: bounded internal repair batches and checkpoint snapshots now enforce ordered
   watermarks, duplicate/gap detection, logical-key and metadata limits, and explicit behind-floor
   fallback errors without changing the `SHV1` or raw `blob.*` wire contract.
