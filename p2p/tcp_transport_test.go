@@ -177,6 +177,82 @@ func TestPeerAuthExchangesIdentity(t *testing.T) {
 	assert.Equal(t, "node-a", client.Peers()[0].(*TCPPeer).AuthIdentity())
 }
 
+func TestPeerAuthNegotiatesLifecycleCapability(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthCapabilities = []string{CapabilityLifecycleV1}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	client.PeerAuthCapabilities = []string{CapabilityLifecycleV1}
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.Peers()) == 1 && len(client.Peers()) == 1
+	})
+
+	serverPeer := server.Peers()[0].(*TCPPeer)
+	clientPeer := client.Peers()[0].(*TCPPeer)
+	assert.Equal(t, []string{CapabilityLifecycleV1}, serverPeer.AuthCapabilities())
+	assert.Equal(t, []string{CapabilityLifecycleV1}, clientPeer.AuthCapabilities())
+	assert.True(t, serverPeer.HasCapability(CapabilityLifecycleV1))
+	assert.Equal(t, CapabilityStatusReady, serverPeer.LifecycleCapabilityStatus(true))
+	assert.Equal(t, []string{CapabilityLifecycleV1}, server.PeerSnapshots()[0].Capabilities)
+}
+
+func TestPeerAuthWithoutLifecycleCapabilityStaysRawOnlyAndReconnects(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	server.PeerAuthToken = "shared-secret"
+	server.PeerAuthCapabilities = []string{CapabilityLifecycleV1}
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	client.PeerAuthToken = "shared-secret"
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.Peers()) == 1 && len(client.Peers()) == 1
+	})
+
+	serverPeer := server.Peers()[0].(*TCPPeer)
+	clientPeer := client.Peers()[0].(*TCPPeer)
+	assert.Empty(t, serverPeer.AuthCapabilities())
+	assert.Equal(t, CapabilityStatusOptionalRawOnly, serverPeer.LifecycleCapabilityStatus(false))
+	assert.Equal(t, CapabilityStatusRequiredUnavailable, serverPeer.LifecycleCapabilityStatus(true))
+	assert.Equal(t, CapabilityStatusReady, clientPeer.LifecycleCapabilityStatus(true))
+
+	require.NoError(t, clientPeer.Close())
+	waitFor(t, func() bool {
+		return len(server.Peers()) == 0 && len(client.Peers()) == 0
+	})
+	require.NoError(t, client.Dial(ctx, server.Addr().String()))
+	waitFor(t, func() bool {
+		return len(server.Peers()) == 1 && len(client.Peers()) == 1
+	})
+	assert.Empty(t, server.Peers()[0].(*TCPPeer).AuthCapabilities())
+}
+
+func TestPeerAuthCapabilitiesRequireToken(t *testing.T) {
+	tr := NewTCPTransport("127.0.0.1:0")
+	tr.PeerAuthCapabilities = []string{CapabilityLifecycleV1}
+
+	err := tr.ListenAndAccept(context.Background())
+	assert.ErrorIs(t, err, ErrPeerAuthCapabilitiesRequiresToken)
+}
+
 func TestPeerAuthRejectsInvalidIdentity(t *testing.T) {
 	ctx := context.Background()
 	server := NewTCPTransport("127.0.0.1:0")

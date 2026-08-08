@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -25,6 +26,19 @@ const DefaultTLSHandshakeTimeout = 5 * time.Second
 // MaxPeerAuthIdentityBytes bounds the application identity carried in auth frames.
 const MaxPeerAuthIdentityBytes = 128
 
+const (
+	// CapabilityLifecycleV1 identifies the first logical lifecycle record protocol.
+	CapabilityLifecycleV1 = "lifecycle.v1"
+	// MaxPeerAuthCapabilities bounds the number of declarations in one auth frame.
+	MaxPeerAuthCapabilities = 16
+	// MaxPeerAuthCapabilityBytes bounds one capability declaration.
+	MaxPeerAuthCapabilityBytes = 64
+	// MaxPeerAuthCapabilitiesBytes bounds the aggregate declaration bytes.
+	MaxPeerAuthCapabilitiesBytes = 512
+	// MaxPeerAuthPayloadBytes bounds auth frames independently from replication frames.
+	MaxPeerAuthPayloadBytes = 4 << 10
+)
+
 var (
 	// ErrPeerAuthFailed is returned when the peer auth handshake is malformed or incomplete.
 	ErrPeerAuthFailed = errors.New("p2p: peer auth failed")
@@ -36,80 +50,171 @@ var (
 	ErrPeerAuthIdentityRequiresToken = errors.New("p2p: peer auth identity requires peer auth token")
 	// ErrPeerAuthIdentityNotAllowed is returned when an identity is absent from the inbound allowlist.
 	ErrPeerAuthIdentityNotAllowed = errors.New("p2p: peer auth identity not allowed")
+	// ErrPeerAuthPayloadTooLarge is returned when an auth frame exceeds its independent bound.
+	ErrPeerAuthPayloadTooLarge = errors.New("p2p: peer auth payload too large")
+	// ErrPeerAuthCapabilitiesRequiresToken is returned when capabilities are configured without auth.
+	ErrPeerAuthCapabilitiesRequiresToken = errors.New("p2p: peer auth capabilities require peer auth token")
+	// ErrPeerAuthCapabilitiesTooMany is returned when an auth frame declares too many capabilities.
+	ErrPeerAuthCapabilitiesTooMany = errors.New("p2p: too many peer auth capabilities")
+	// ErrPeerAuthCapabilityTooLarge is returned when one capability exceeds its bound.
+	ErrPeerAuthCapabilityTooLarge = errors.New("p2p: peer auth capability too large")
+	// ErrPeerAuthCapabilitiesTooLarge is returned when capability declarations exceed their aggregate bound.
+	ErrPeerAuthCapabilitiesTooLarge = errors.New("p2p: peer auth capabilities too large")
+	// ErrPeerAuthCapabilityInvalid is returned when a capability contains unsupported bytes.
+	ErrPeerAuthCapabilityInvalid = errors.New("p2p: peer auth capability invalid")
+	// ErrPeerAuthCapabilityDuplicate is returned when a capability is declared more than once.
+	ErrPeerAuthCapabilityDuplicate = errors.New("p2p: duplicate peer auth capability")
+	// ErrPeerAuthCapabilityUnknown is returned for an unsupported locally configured capability.
+	ErrPeerAuthCapabilityUnknown = errors.New("p2p: unknown peer auth capability")
 )
 
 type peerAuthMessage struct {
-	Type     string `json:"type"`
-	Version  string `json:"version"`
-	Token    string `json:"token,omitempty"`
-	Identity string `json:"identity,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Type         string   `json:"type"`
+	Version      string   `json:"version"`
+	Token        string   `json:"token,omitempty"`
+	Identity     string   `json:"identity,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
-func encodePeerAuth(token, identity string) ([]byte, error) {
-	return json.Marshal(peerAuthMessage{
-		Type:     handshakeTypePeerAuth,
-		Version:  HandshakeVersionV1,
-		Token:    token,
-		Identity: identity,
+func encodePeerAuth(token, identity string, capabilities []string) ([]byte, error) {
+	normalized, err := normalizePeerAuthCapabilities(capabilities, true)
+	if err != nil {
+		return nil, err
+	}
+	return marshalPeerAuthMessage(peerAuthMessage{
+		Type:         handshakeTypePeerAuth,
+		Version:      HandshakeVersionV1,
+		Token:        token,
+		Identity:     identity,
+		Capabilities: normalized,
 	})
 }
 
-func encodePeerAuthOK(identity string) ([]byte, error) {
-	return json.Marshal(peerAuthMessage{
-		Type:     handshakeTypePeerAuthOK,
-		Version:  HandshakeVersionV1,
-		Identity: identity,
+func encodePeerAuthOK(identity string, capabilities []string) ([]byte, error) {
+	normalized, err := normalizePeerAuthCapabilities(capabilities, true)
+	if err != nil {
+		return nil, err
+	}
+	return marshalPeerAuthMessage(peerAuthMessage{
+		Type:         handshakeTypePeerAuthOK,
+		Version:      HandshakeVersionV1,
+		Identity:     identity,
+		Capabilities: normalized,
 	})
 }
 
 func encodePeerAuthReject() ([]byte, error) {
-	return json.Marshal(peerAuthMessage{
+	return marshalPeerAuthMessage(peerAuthMessage{
 		Type:    handshakeTypePeerAuthReject,
 		Version: HandshakeVersionV1,
 		Error:   "unauthorized",
 	})
 }
 
-func validatePeerAuthPayload(payload []byte, token string, allowedIdentities []string) (string, error) {
-	var msg peerAuthMessage
-	if err := json.Unmarshal(payload, &msg); err != nil {
-		return "", errors.Join(ErrPeerAuthFailed, err)
+func marshalPeerAuthMessage(message peerAuthMessage) ([]byte, error) {
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return nil, err
 	}
-	if msg.Type != handshakeTypePeerAuth || msg.Version != HandshakeVersionV1 {
-		return "", ErrPeerAuthFailed
+	if len(payload) > MaxPeerAuthPayloadBytes {
+		return nil, ErrPeerAuthPayloadTooLarge
 	}
-	if subtle.ConstantTimeCompare([]byte(msg.Token), []byte(token)) != 1 {
-		return "", ErrPeerAuthRejected
-	}
-	if err := validatePeerIdentity(msg.Identity); err != nil {
-		return "", err
-	}
-	if len(allowedIdentities) > 0 && !peerAuthIdentityAllowed(msg.Identity, allowedIdentities) {
-		return "", ErrPeerAuthIdentityNotAllowed
-	}
-	return msg.Identity, nil
+	return payload, nil
 }
 
-func validatePeerAuthAck(payload []byte) (string, error) {
+func validatePeerAuthPayload(payload []byte, token string, allowedIdentities []string) (string, []string, error) {
+	if len(payload) > MaxPeerAuthPayloadBytes {
+		return "", nil, ErrPeerAuthPayloadTooLarge
+	}
 	var msg peerAuthMessage
 	if err := json.Unmarshal(payload, &msg); err != nil {
-		return "", errors.Join(ErrPeerAuthFailed, err)
+		return "", nil, errors.Join(ErrPeerAuthFailed, err)
+	}
+	if msg.Type != handshakeTypePeerAuth || msg.Version != HandshakeVersionV1 {
+		return "", nil, ErrPeerAuthFailed
+	}
+	if subtle.ConstantTimeCompare([]byte(msg.Token), []byte(token)) != 1 {
+		return "", nil, ErrPeerAuthRejected
+	}
+	if err := validatePeerIdentity(msg.Identity); err != nil {
+		return "", nil, err
+	}
+	if len(allowedIdentities) > 0 && !peerAuthIdentityAllowed(msg.Identity, allowedIdentities) {
+		return "", nil, ErrPeerAuthIdentityNotAllowed
+	}
+	capabilities, err := normalizePeerAuthCapabilities(msg.Capabilities, false)
+	if err != nil {
+		return "", nil, err
+	}
+	return msg.Identity, capabilities, nil
+}
+
+func validatePeerAuthAck(payload []byte) (string, []string, error) {
+	if len(payload) > MaxPeerAuthPayloadBytes {
+		return "", nil, ErrPeerAuthPayloadTooLarge
+	}
+	var msg peerAuthMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return "", nil, errors.Join(ErrPeerAuthFailed, err)
 	}
 	if msg.Version != HandshakeVersionV1 {
-		return "", ErrPeerAuthFailed
+		return "", nil, ErrPeerAuthFailed
 	}
 	switch msg.Type {
 	case handshakeTypePeerAuthOK:
 		if err := validatePeerIdentity(msg.Identity); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return msg.Identity, nil
+		capabilities, err := normalizePeerAuthCapabilities(msg.Capabilities, false)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg.Identity, capabilities, nil
 	case handshakeTypePeerAuthReject:
-		return "", ErrPeerAuthRejected
+		return "", nil, ErrPeerAuthRejected
 	default:
-		return "", ErrPeerAuthFailed
+		return "", nil, ErrPeerAuthFailed
 	}
+}
+
+func normalizePeerAuthCapabilities(capabilities []string, rejectUnknown bool) ([]string, error) {
+	if len(capabilities) > MaxPeerAuthCapabilities {
+		return nil, ErrPeerAuthCapabilitiesTooMany
+	}
+	seen := make(map[string]struct{}, len(capabilities))
+	var totalBytes int
+	normalized := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		if len(capability) > MaxPeerAuthCapabilityBytes {
+			return nil, ErrPeerAuthCapabilityTooLarge
+		}
+		totalBytes += len(capability)
+		if totalBytes > MaxPeerAuthCapabilitiesBytes {
+			return nil, ErrPeerAuthCapabilitiesTooLarge
+		}
+		if capability == "" {
+			return nil, ErrPeerAuthCapabilityInvalid
+		}
+		for i := 0; i < len(capability); i++ {
+			if capability[i] < 0x21 || capability[i] > 0x7e {
+				return nil, ErrPeerAuthCapabilityInvalid
+			}
+		}
+		if _, exists := seen[capability]; exists {
+			return nil, ErrPeerAuthCapabilityDuplicate
+		}
+		seen[capability] = struct{}{}
+		if capability != CapabilityLifecycleV1 {
+			if rejectUnknown {
+				return nil, ErrPeerAuthCapabilityUnknown
+			}
+			continue
+		}
+		normalized = append(normalized, capability)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
 }
 
 func validatePeerIdentity(identity string) error {
