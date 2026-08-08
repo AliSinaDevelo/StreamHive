@@ -27,6 +27,9 @@ func TestWritePrometheusMetricsEmitsTypedMetadataForEveryHealthMetric(t *testing
 	for key := range (&tlsCredentialHealth{}).Snapshot(time.Unix(1_800_000_000, 0).UTC()) {
 		snapshot[key] = int64(len(snapshot) + 1)
 	}
+	for key := range (&lifecycleRuntime{}).Metrics() {
+		snapshot[key] = int64(len(snapshot) + 1)
+	}
 
 	var out bytes.Buffer
 	writePrometheusMetrics(&out, snapshot)
@@ -41,6 +44,8 @@ func TestWritePrometheusMetricsEmitsTypedMetadataForEveryHealthMetric(t *testing
 		assert.Equal(t, prometheusMetricType(key), got.typeName)
 	}
 	assert.Equal(t, "gauge", metadata["streamhive_active_peers"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_enabled"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_repair_sessions_active"].typeName)
 	assert.Equal(t, "counter", metadata["streamhive_dial_errors"].typeName)
 	assert.NotContains(t, out.String(), "{")
 	assert.NotContains(t, out.String(), "remote=")

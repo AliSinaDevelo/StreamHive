@@ -2047,6 +2047,8 @@ func writePrometheusMetrics(w io.Writer, snapshot map[string]int64) {
 
 var prometheusGaugeMetrics = map[string]struct{}{
 	"active_peers":                                 {},
+	"lifecycle_enabled":                            {},
+	"lifecycle_repair_sessions_active":             {},
 	"replication_blob_acks_pending":                {},
 	"replication_inventory_exchanges_active":       {},
 	"replication_repair_continuations_active":      {},
