@@ -1,9 +1,10 @@
 # v0.13 Versioned Lifecycle Semantics
 
 Status: v0.13.0 design plus the shipped capability, record-transport, apply, internal repair,
-and capability-gated repair-frame boundaries from issues #51, #52, #53, and #54. This document
-extends the released v0.12.0 add-only blob contract; automatic wire scheduling, compaction
-operations, CLI configuration, and raw blob deletion remain future slices.
+capability-gated repair-frame, and caller-owned repair-session boundaries from issues #51,
+#52, #53, #54, and #55. This document extends the released v0.12.0 add-only blob contract;
+automatic CLI scheduling, compaction operations, CLI configuration, and raw blob deletion
+remain future slices.
 
 ## Problem Statement
 
@@ -35,7 +36,8 @@ Issue #51 adds the first wire boundary without enabling lifecycle synchronizatio
 - `internal/lifecycle.Applier` refuses peers without `lifecycle.v1`, verifies present-record
   bytes before raw storage and journal publication, and applies deletes without raw deletion.
 - No lifecycle frame is sent to a peer without negotiated `lifecycle.v1`; ordinary `blob.*`
-  traffic is unchanged. Wire repair and CLI lifecycle configuration remain future slices.
+  traffic is unchanged. The caller-owned repair session is the first sender/receiver boundary;
+  automatic CLI scheduling and lifecycle configuration remain future slices.
 
 ## Decision
 
@@ -165,10 +167,13 @@ explicit snapshot-required error.
 fsynced rename. Acknowledgements are monotonic, bounded by peer count, identity size, and file
 size, and reload across process restart. `RepairCoordinator` reads the durable watermark for a
 peer, resumes the next batch after reconnect, and rejects acknowledgements beyond the local
-journal tail. `RepairFrame` now gives callers one bounded union for batch, snapshot, and watermark
+journal tail. `RepairFrame` gives callers one bounded union for batch, snapshot, and watermark
 ack payloads, while `DecodeRepairFrameForPeer` refuses lifecycle data before decoding unless the
-caller supplies the negotiated `lifecycle.v1` capability. This is a codec and admission boundary,
-not automatic scheduling: the current CLI does not send lifecycle repair frames, and readiness
+caller supplies the negotiated `lifecycle.v1` capability. `RepairSession` composes those pieces:
+`SendNext` plans and writes one bounded frame, while `Handle` validates, applies, and acknowledges
+received batches or snapshots only after durable apply. It refuses gaps, preserves duplicate
+replay safety, and leaves the durable watermark ready for reconnect or process restart. This is
+still caller-owned scheduling: the current CLI does not construct repair sessions, and readiness
 metrics, CLI configuration, and membership/compaction controls remain later work.
 
 The authority keeps tombstones until every configured lifecycle replica has acknowledged a

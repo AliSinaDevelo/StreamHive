@@ -12,6 +12,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   process restart.
 - **Lifecycle**: bounded batch, snapshot, and watermark-ack repair frames are capability-gated
   before decode, with real-TCP coverage for lifecycle-capable delivery and raw-only compatibility.
+- **Lifecycle**: caller-owned repair sessions now plan bounded frames, apply batches or snapshots
+  through the verified applier, persist acknowledgements after durable apply, and resume safely
+  across duplicate delivery, reconnect, and process restart.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.

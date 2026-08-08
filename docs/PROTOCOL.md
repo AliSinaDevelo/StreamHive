@@ -142,9 +142,14 @@ authenticated, capability-ready peer:
 | `lifecycle.repair.ack` | `watermark` | Receiver acknowledgement after durable apply. |
 
 The codec bounds entry count, logical-key bytes, metadata bytes, and encoded frame bytes
-independently from raw blob limits. Batch delivery still goes through the internal duplicate,
-gap, and reorder classifier; decoding alone never mutates the journal, logical store, or raw
-blob store.
+independently from raw blob limits. `internal/lifecycle.RepairSession` is the caller-owned
+delivery loop: `SendNext` writes one bounded batch or snapshot, and `Handle` applies a received
+frame through the verified applier before persisting its acknowledgement. Missing or corrupt
+present-record blobs therefore produce no logical publication or acknowledgement. Batch delivery
+still goes through the internal duplicate, gap, and reorder classifier; decoding alone never
+mutates the journal, logical store, or raw blob store. A session reloads its peer watermark on
+construction, so reconnect and process restart resume from the last durable acknowledgement.
+The current CLI does not construct sessions or schedule lifecycle frames automatically.
 
 ## Message Types
 
