@@ -159,7 +159,7 @@ Implemented:
 - JSON `/peers` snapshots for connected peer addresses, direction, connection timestamp, connection age, and `auth_method`.
 - Optional `auth_identity` values in peer snapshots and structured connection logs.
 - Optional inbound identity allowlists with `peer_auth_identity_rejections` metrics.
-- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, anti-entropy inventory frames/bytes/keys/probes, inventory exchange started/completed/limited/dropped outcomes and active entries, missing/repair outcomes, continuation scheduling/completion/drop outcomes, TLS identity validity/expiry, and replication errors; aggregate continuation, inventory, and TLS health values are also exposed without peer or certificate labels, and the same values are available from `/metrics/prometheus`, which adds sorted `# HELP`/`# TYPE` metadata without changing names or values.
+- JSON `/metrics` counters for stored/sent blobs, ACKs, pending waiters, retry timeouts, bytes, duplicates, anti-entropy inventory frames/bytes/keys/probes, inventory exchange started/completed/limited/dropped outcomes and active entries, missing/repair outcomes, continuation scheduling/completion/drop outcomes, lifecycle membership and compaction safety, TLS identity validity/expiry, and replication errors; aggregate continuation, inventory, lifecycle, and TLS health values are also exposed without peer or certificate labels, and the same values are available from `/metrics/prometheus`, which adds sorted `# HELP`/`# TYPE` metadata without changing names or values.
 
 Not implemented yet:
 

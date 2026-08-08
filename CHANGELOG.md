@@ -27,6 +27,14 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Lifecycle replication**: repair sessions preflight referenced raw blobs through acknowledged
   `blob.put` frames before sending lifecycle records, so a present record cannot outrun its bytes
   on a new TCP connection.
+- **Lifecycle**: checksummed, bounded membership files now distinguish a missing operator fence
+  from an explicitly persisted empty set and require every configured identity's durable
+  acknowledgement before compaction.
+- **CLI**: `-lifecycle-members` and `-lifecycle-compact` provide an operator-authored, one-shot
+  checkpoint workflow that fails closed on missing membership, behind members, invalid targets,
+  and unsafe or corrupt checkpoints without opening a listener or deleting raw blobs.
+- **Ops**: `/lifecycle/status` and Prometheus now expose membership configuration, member count,
+  and aggregate compaction-blocked state without logical keys or peer labels.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.

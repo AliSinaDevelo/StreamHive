@@ -1,10 +1,9 @@
 # v0.13 Versioned Lifecycle Semantics
 
 Status: v0.13.0 design plus the shipped capability, record-transport, apply, internal repair,
-capability-gated repair-frame, and caller-owned repair-session boundaries from issues #51,
-#52, #53, #54, and #55. This document extends the released v0.12.0 add-only blob contract;
-opt-in CLI scheduling is shipped, while compaction operations, membership administration, and
-raw blob deletion remain future slices.
+capability-gated repair-frame, caller-owned repair-session, operator membership, and
+checkpoint-first compaction boundaries from issues #51 through #59. This document extends the
+released v0.12.0 add-only blob contract. Raw blob deletion remains a separate retention concern.
 
 ## Problem Statement
 
@@ -206,8 +205,8 @@ to publish a present logical record before its verified blob is available locall
 
 The authority keeps tombstones until every configured lifecycle replica has acknowledged a
 version at or beyond the tombstone and a durable checkpoint includes it. Unknown or removed
-members block automatic compaction until an operator creates a new membership epoch and fences
-the old member. Wall-clock age alone is never sufficient to discard a tombstone.
+members block compaction until an operator writes a new membership set and fences the old
+member. Wall-clock age alone is never sufficient to discard a tombstone.
 
 Physical blob garbage collection is a separate step. It requires that no current lifecycle
 record references the blob and that the tombstone/journal retention proof is complete. A shared
@@ -216,6 +215,33 @@ blob referenced by multiple logical keys is retained until all references are go
 The mutation journal must have bounded bytes, entries, and compaction concurrency. If the journal
 reaches its configured safety limit and cannot compact safely, new lifecycle mutations fail
 closed with an observable error; history is never dropped to preserve availability.
+
+### Operator-Fenced Compaction
+
+Issue #59 adds a local, one-shot compaction boundary without adding wire messages or changing
+raw anti-entropy. The lifecycle directory contains a checksummed `membership` envelope beside
+the `authority`, `watermarks`, `checkpoint`, and `journal` files:
+
+- `-lifecycle-members node-a,node-b` replaces the membership set through an atomic rename. The
+  identities are trimmed, sorted, bounded, and duplicate-checked. The update is explicit; there
+  is no discovery, election, or automatic membership change.
+- A missing membership file is an incomplete safety fence and blocks compaction. Passing
+  `-lifecycle-members=` creates a durable empty set, which is valid for a standalone node and
+  requires no peer acknowledgements.
+- `-lifecycle-compact` chooses the current durable journal tail as its target. Every configured
+  member must have a persisted watermark at or beyond that target. Unknown member watermarks are
+  therefore behind by definition.
+- The runtime snapshots the complete logical store, including tombstones, and calls the journal
+  compactor. The checkpoint is checksummed, fsynced, and atomically renamed before the retained
+  journal tail is replaced. A failed preflight leaves the original journal untouched.
+- The command exits before opening a TCP listener. It never deletes physical blobs; raw
+  anti-entropy and local blob retention remain independent of logical compaction.
+
+Compaction status is available from `/lifecycle/status` as `membership_configured`,
+`membership_members`, `compaction_blocked`, and a bounded reason such as
+`membership-missing`, `member-behind`, or `no-progress`. The JSON and Prometheus outputs also
+expose aggregate membership and compaction gauges without logical keys, peer identities, or
+peer-address labels.
 
 ## Option Comparison
 
@@ -248,15 +274,16 @@ There is no automatic rollback that converts logical deletes into raw `BlobStore
 ## Observability And Readiness
 
 Metrics remain aggregate and label-free. The opt-in CLI runtime currently exposes lifecycle
-enablement, active/started/completed repair sessions, received frames, frame/session errors, and
-local mutation started/applied/error counters through JSON and Prometheus health endpoints. The
-full lifecycle observability target remains:
+enablement, readiness, authority and journal aggregates, membership configuration,
+compaction-blocked state, active/started/completed repair sessions, received frames,
+frame/session errors, and local mutation started/applied/error counters through JSON and
+Prometheus health endpoints. The bounded operator snapshot is:
 
-`/lifecycle/status` returns the bounded operator snapshot: readiness, authority identity and
-version, journal floor/tail/size, logical-record and tombstone counts, and aggregate repair
-session counters. It never returns logical keys, record bodies, blob contents, peer identities,
-or peer-address labels. The raw-only invocation reports `enabled: false`, `ready: true`, and
-`readiness: "raw-only"` at this endpoint.
+`/lifecycle/status` returns readiness, authority identity and version, journal floor/tail/size,
+logical-record and tombstone counts, membership configuration and count, compaction-blocked state,
+and aggregate repair-session counters. It never returns logical keys, record bodies, blob contents,
+peer identities, or peer-address labels. The raw-only invocation reports `enabled: false`,
+`ready: true`, and `readiness: "raw-only"` at this endpoint.
 
 - counters for lifecycle records applied, duplicates, stale records, conflicts, capability
   refusals, invalid blob references, snapshot bootstraps, journal repairs, and compactions;
@@ -289,9 +316,10 @@ verifiable slices:
    real-TCP compatibility boundary are shipped by issue #54; automatic network scheduling and
    operations remain separate.
 5. **Operations:** CLI configuration, durable authority allocation, one-shot put/delete commands,
-   readiness states, aggregate JSON/Prometheus metrics, compaction controls, migration/rollback
-   runbook, and a deterministic multi-node demo. The first command slice is shipped; compaction,
-   membership, and garbage collection remain separate work.
+   readiness states, aggregate JSON/Prometheus metrics, operator-fenced compaction controls,
+   migration/rollback runbook, and a deterministic multi-node demo. The authority, mutation,
+   status, membership, and checkpoint-first compaction slices are shipped; physical raw-blob
+   garbage collection remains separate work.
 
 The deterministic test matrix must include put/delete/reconnect/restart in every order, a stale
 peer returning after compaction, duplicate and reordered records, same-token conflicts, concurrent
