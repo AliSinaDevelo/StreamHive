@@ -673,7 +673,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	if *health != "" {
 		var err error
-		hsrv, err = startHealth(*health, tr, replMetrics, tlsHealth, lifecycleState, log)
+		hsrv, err = startHealth(*health, tr, replMetrics, keyLister, tlsHealth, lifecycleState, log)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
@@ -2132,7 +2132,35 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 	}
 }
 
-func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, log *slog.Logger) (*http.Server, error) {
+type inventoryStatusResponse struct {
+	Enabled         bool   `json:"enabled"`
+	Ready           bool   `json:"ready"`
+	ScanConsistency string `json:"scan_consistency"`
+	Keys            int    `json:"keys"`
+	KeyBytes        int64  `json:"key_bytes"`
+	Digest          string `json:"digest,omitempty"`
+}
+
+func snapshotInventoryStatus(ctx context.Context, lister storage.BlobKeyLister) (inventoryStatusResponse, error) {
+	status := inventoryStatusResponse{
+		Ready:           true,
+		ScanConsistency: "live",
+	}
+	if lister == nil {
+		return status, nil
+	}
+	summary, err := storage.SummarizeInventory(ctx, lister)
+	if err != nil {
+		return inventoryStatusResponse{}, err
+	}
+	status.Enabled = true
+	status.Keys = summary.KeyCount
+	status.KeyBytes = summary.KeyBytes
+	status.Digest = summary.DigestHex()
+	return status, nil
+}
+
+func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -2167,6 +2195,17 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(lifecycleState.Status())
+	})
+	mux.HandleFunc("/inventory/status", func(w http.ResponseWriter, req *http.Request) {
+		status, err := snapshotInventoryStatus(req.Context(), keyLister)
+		if err != nil {
+			http.Error(w, "inventory unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(status)
 	})
 	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

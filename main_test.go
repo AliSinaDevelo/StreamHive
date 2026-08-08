@@ -252,6 +252,18 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.False(t, rawLifecycleStatus.Enabled)
 	assert.True(t, rawLifecycleStatus.Ready)
 	assert.Equal(t, "raw-only", rawLifecycleStatus.Readiness)
+	respInventory, err := client.Get(base + "/inventory/status")
+	require.NoError(t, err)
+	defer func() { _ = respInventory.Body.Close() }()
+	assert.Equal(t, http.StatusOK, respInventory.StatusCode)
+	var rawInventoryStatus inventoryStatusResponse
+	require.NoError(t, json.NewDecoder(respInventory.Body).Decode(&rawInventoryStatus))
+	assert.False(t, rawInventoryStatus.Enabled)
+	assert.True(t, rawInventoryStatus.Ready)
+	assert.Equal(t, "live", rawInventoryStatus.ScanConsistency)
+	assert.Zero(t, rawInventoryStatus.Keys)
+	assert.Zero(t, rawInventoryStatus.KeyBytes)
+	assert.Empty(t, rawInventoryStatus.Digest)
 
 	resp3, err := client.Get(base + "/metrics")
 	require.NoError(t, err)
