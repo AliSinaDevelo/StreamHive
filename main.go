@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AliSinaDevelo/StreamHive/internal/lifecycle"
 	"github.com/AliSinaDevelo/StreamHive/internal/version"
 	"github.com/AliSinaDevelo/StreamHive/p2p"
 	"github.com/AliSinaDevelo/StreamHive/replication"
@@ -103,6 +104,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	maxRepairOps := fs.Int("max-repair-ops", defaultMaxRepairOps, "max concurrent anti-entropy blob reads/writes (0 = default)")
 	maxInventoryBytes := fs.Int("max-inventory-bytes", defaultMaxInventoryBytes, "max encoded anti-entropy inventory bytes per peer exchange (0 = unlimited)")
 	maxInventoryKeys := fs.Int("max-inventory-keys", defaultMaxInventoryKeys, "max anti-entropy inventory keys per peer exchange (0 = unlimited)")
+	lifecycleEnabled := fs.Bool("lifecycle", false, "enable opt-in v0.13 lifecycle state and repair capability")
+	lifecycleDir := fs.String("lifecycle-dir", "", "directory for lifecycle journal, checkpoint, and peer watermarks (requires -lifecycle)")
+	lifecycleMaxRecords := fs.Int("lifecycle-max-records", lifecycle.DefaultMaxRepairRecords, "max lifecycle records per repair frame")
+	lifecycleMaxKeyBytes := fs.Int("lifecycle-max-key-bytes", lifecycle.DefaultMaxRepairLogicalKeyBytes, "max lifecycle logical-key bytes per repair frame")
+	lifecycleMaxMetadataBytes := fs.Int("lifecycle-max-metadata-bytes", lifecycle.DefaultMaxRepairMetadataBytes, "max lifecycle metadata bytes per repair frame")
+	lifecycleMaxFrameBytes := fs.Int("lifecycle-max-frame-bytes", lifecycle.DefaultMaxRepairFrameBytes, "max encoded lifecycle repair frame bytes")
 
 	tlsCert := fs.String("tls-cert", "", "path to PEM certificate (enables TLS on listener)")
 	tlsKey := fs.String("tls-key", "", "path to PEM private key for -tls-cert")
@@ -211,6 +218,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *maxInventoryKeys < 0 {
 		return fmt.Errorf("replication: -max-inventory-keys must be zero or greater")
 	}
+	if *lifecycleMaxRecords < 0 || *lifecycleMaxKeyBytes < 0 || *lifecycleMaxMetadataBytes < 0 || *lifecycleMaxFrameBytes < 0 {
+		return fmt.Errorf("lifecycle: repair limits must be zero or greater")
+	}
 	if *tlsExpiryWarning < 0 {
 		return fmt.Errorf("tls: -tls-expiry-warning must be zero or greater")
 	}
@@ -252,6 +262,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		putTracker = newPutAckTracker(replMetrics)
 		replMetrics.ackTracker = putTracker
 	}
+	lifecycleConfig := lifecycleCLIConfig{
+		enabled: *lifecycleEnabled,
+		dir:     *lifecycleDir,
+		repairLimits: lifecycle.RepairLimits{
+			MaxRecords:         *lifecycleMaxRecords,
+			MaxLogicalKeyBytes: *lifecycleMaxKeyBytes,
+			MaxMetadataBytes:   *lifecycleMaxMetadataBytes,
+			MaxFrameBytes:      *lifecycleMaxFrameBytes,
+		},
+	}
+	if err := lifecycleConfig.validate(blobStore, *peerAuthToken, *peerID); err != nil {
+		return err
+	}
+	lifecycleState, err := openLifecycleRuntime(ctx, lifecycleConfig, blobStore, *peerAuthToken, *peerID)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := lifecycleState.Close(); err != nil {
+			log.Warn("lifecycle journal close", "err", err)
+		}
+	}()
 
 	tr := p2p.NewTCPTransport(*listen)
 	tr.Logger = log
@@ -260,6 +292,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.PeerAuthTimeout = *peerAuthTimeout
 	tr.PeerAuthIdentity = *peerID
 	tr.PeerAuthAllowedIdentities = peerAllowedIDs
+	if lifecycleState != nil {
+		tr.PeerAuthCapabilities = []string{p2p.CapabilityLifecycleV1}
+	}
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle
 	var inventoryScheduler *inventoryExchangeScheduler
