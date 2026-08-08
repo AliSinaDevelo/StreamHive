@@ -125,9 +125,26 @@ trailing JSON, malformed records, and oversized payloads before any record appli
 `internal/lifecycle.Applier` then verifies present-record bytes, writes supplied bytes to the raw
 store before appending the durable journal and publishing state, and applies deletes as
 tombstones without calling raw blob deletion. The internal `RepairBatch`, `RepairSnapshot`,
-`WatermarkBook`, and `RepairCoordinator` APIs now provide bounded journal planning and durable
-per-peer acknowledgements, but they do not add a lifecycle frame to the current TCP transport.
-Wire repair, compaction, CLI configuration, and physical blob deletion remain separate work.
+`WatermarkBook`, and `RepairCoordinator` APIs provide bounded journal planning and durable
+per-peer acknowledgements. `RepairFrame` adds bounded batch, snapshot, and watermark-ack payload
+codecs; `DecodeRepairFrameForPeer` refuses them before decoding without negotiated
+`lifecycle.v1`. This is a caller-owned frame boundary: the current CLI does not schedule these
+frames automatically. Compaction, CLI configuration, and physical blob deletion remain separate
+work.
+
+Lifecycle repair payloads use these JSON message types when a caller sends them through an
+authenticated, capability-ready peer:
+
+| Type | Fields | Meaning |
+|------|--------|---------|
+| `lifecycle.repair.batch` | `from`, `to`, `more`, `records` | Ordered journal prefix after a peer watermark. |
+| `lifecycle.repair.snapshot` | `watermark`, `records` | Complete bounded logical checkpoint fallback. |
+| `lifecycle.repair.ack` | `watermark` | Receiver acknowledgement after durable apply. |
+
+The codec bounds entry count, logical-key bytes, metadata bytes, and encoded frame bytes
+independently from raw blob limits. Batch delivery still goes through the internal duplicate,
+gap, and reorder classifier; decoding alone never mutates the journal, logical store, or raw
+blob store.
 
 ## Message Types
 

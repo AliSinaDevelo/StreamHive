@@ -10,6 +10,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Lifecycle**: per-peer repair acknowledgements persist through checksummed envelopes and
   atomic rename, reject regressions, and resume bounded repair planning after reconnect or
   process restart.
+- **Lifecycle**: bounded batch, snapshot, and watermark-ack repair frames are capability-gated
+  before decode, with real-TCP coverage for lifecycle-capable delivery and raw-only compatibility.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.

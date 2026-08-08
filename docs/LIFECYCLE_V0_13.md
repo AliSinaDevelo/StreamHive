@@ -1,9 +1,9 @@
 # v0.13 Versioned Lifecycle Semantics
 
-Status: v0.13.0 design plus the shipped capability, record-transport, apply, and internal repair
-boundaries from issues #51, #52, and #53. This document extends the released v0.12.0 add-only
-blob contract; wire repair, compaction operations, CLI configuration, and raw blob deletion
-remain future slices.
+Status: v0.13.0 design plus the shipped capability, record-transport, apply, internal repair,
+and capability-gated repair-frame boundaries from issues #51, #52, #53, and #54. This document
+extends the released v0.12.0 add-only blob contract; automatic wire scheduling, compaction
+operations, CLI configuration, and raw blob deletion remain future slices.
 
 ## Problem Statement
 
@@ -165,9 +165,11 @@ explicit snapshot-required error.
 fsynced rename. Acknowledgements are monotonic, bounded by peer count, identity size, and file
 size, and reload across process restart. `RepairCoordinator` reads the durable watermark for a
 peer, resumes the next batch after reconnect, and rejects acknowledgements beyond the local
-journal tail. This is a planning and durability boundary, not a claim that the TCP transport
-already sends lifecycle repair frames; wire scheduling, readiness metrics, CLI configuration, and
-membership/compaction controls remain later work.
+journal tail. `RepairFrame` now gives callers one bounded union for batch, snapshot, and watermark
+ack payloads, while `DecodeRepairFrameForPeer` refuses lifecycle data before decoding unless the
+caller supplies the negotiated `lifecycle.v1` capability. This is a codec and admission boundary,
+not automatic scheduling: the current CLI does not send lifecycle repair frames, and readiness
+metrics, CLI configuration, and membership/compaction controls remain later work.
 
 The authority keeps tombstones until every configured lifecycle replica has acknowledged a
 version at or beyond the tombstone and a durable checkpoint includes it. Unknown or removed
@@ -241,8 +243,9 @@ verifiable slices:
    path is shipped by issue #52; wire repair and operations remain separate.
 4. **Repair:** per-peer watermarks, bounded journal batches, snapshot bootstrap, behind-floor
    reseeding, reconnect, partition, and restart acceptance. The reusable internal planning and
-   durable-watermark boundary is shipped by issue #53; network scheduling and operations remain
-   separate.
+   durable-watermark boundary is shipped by issue #53; the capability-gated frame codec and
+   real-TCP compatibility boundary are shipped by issue #54; automatic network scheduling and
+   operations remain separate.
 5. **Operations:** CLI configuration, readiness states, aggregate JSON/Prometheus metrics,
    compaction controls, migration/rollback runbook, and a deterministic multi-node demo.
 
