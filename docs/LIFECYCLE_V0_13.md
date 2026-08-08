@@ -245,6 +245,13 @@ compaction target, `compaction_blocked`, and a bounded reason such as `membershi
 `member-behind`, or `no-progress`. The JSON and Prometheus outputs also expose aggregate membership
 and compaction gauges without logical keys, peer identities, or peer-address labels.
 
+The race-enabled `make test-lifecycle-membership` proof exercises the operator failure boundary
+over authenticated TCP. A source with an unavailable configured member refuses compaction and
+leaves its journal floor and checkpoint unchanged. After the member reconnects, receives the
+verified blob and lifecycle record, and persists its watermark, the source accepts the same
+checkpoint-first compaction. The member may be offline again after that durable acknowledgement;
+the fence is evidence-based rather than a live-connection requirement.
+
 ### Stale-Peer Snapshot Repair
 
 When a configured target returns below the source's retained journal floor, the existing lifecycle

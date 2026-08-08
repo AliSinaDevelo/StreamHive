@@ -291,6 +291,12 @@ active, started, and completed sessions; these values contain no peer IDs, logic
 or raw error strings. The focused stale-peer snapshot proof is repeatable with
 `make test-lifecycle-compaction`.
 
+To prove the failure-and-reconnect safety boundary over authenticated TCP, run
+`make test-lifecycle-membership`. It starts with a configured member unavailable, verifies that
+compaction fails without writing a checkpoint, reconnects the member to persist its lifecycle
+watermark and verified blob, then proves the same compaction succeeds while retaining the raw
+bytes. The target runs three times under the race detector.
+
 When both authenticated peers advertise `lifecycle.repair-reconcile.v1`, each repair session first
 reports its durable startup watermark. A source accepts a lower or zero report only through that
 negotiated capability, then runs raw-blob preflight against the reconciled watermark before

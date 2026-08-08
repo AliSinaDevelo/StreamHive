@@ -7,6 +7,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Ops**: `/lifecycle/status` now includes aggregate repair session errors, received frame
   count, and frame errors alongside active, started, and completed session counters; the
   JSON and Prometheus surfaces remain label-free and do not expose peer or logical data.
+- **Lifecycle**: a race-enabled real-TCP acceptance target now proves operator-fenced compaction
+  blocks on an unavailable configured member, then succeeds only after authenticated repair
+  persists that member's watermark.
 
 ## [0.13.0] — 2026-08-09
 
