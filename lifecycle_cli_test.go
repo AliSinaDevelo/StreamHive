@@ -139,6 +139,90 @@ func TestRunLifecyclePutCommitsAndExits(t *testing.T) {
 	assert.Equal(t, []byte("value"), data)
 }
 
+func TestRunLifecycleMutationConvergesOverAuthenticatedTCP(t *testing.T) {
+	targetCtx, targetCancel := context.WithCancel(context.Background())
+	defer targetCancel()
+	targetStoreDir := t.TempDir()
+	targetLifecycleDir := t.TempDir()
+	var targetOut, targetErr safeBuffer
+	targetDone := make(chan error, 1)
+	go func() {
+		targetDone <- run(targetCtx, []string{
+			"-listen", "127.0.0.1:0",
+			"-replicate",
+			"-store-dir", targetStoreDir,
+			"-lifecycle",
+			"-lifecycle-dir", targetLifecycleDir,
+			"-peer-auth-token", "shared-secret",
+			"-peer-id", "target",
+			"-peer-allow-ids", "source",
+		}, &targetOut, &targetErr)
+	}()
+
+	listenPattern := regexp.MustCompile(`listening on ([^\n]+)`)
+	var targetAddr string
+	require.Eventually(t, func() bool {
+		match := listenPattern.FindStringSubmatch(targetOut.String())
+		if len(match) != 2 {
+			return false
+		}
+		targetAddr = strings.TrimSpace(match[1])
+		return targetAddr != ""
+	}, 3*time.Second, 10*time.Millisecond, "target stdout=%q stderr=%q", targetOut.String(), targetErr.String())
+
+	sourceStoreDir := t.TempDir()
+	sourceLifecycleDir := t.TempDir()
+	var sourceOut, sourceErr safeBuffer
+	sourceDone := make(chan error, 1)
+	go func() {
+		sourceDone <- run(context.Background(), []string{
+			"-listen", "127.0.0.1:0",
+			"-dial", targetAddr,
+			"-replicate",
+			"-store-dir", sourceStoreDir,
+			"-lifecycle",
+			"-lifecycle-dir", sourceLifecycleDir,
+			"-peer-auth-token", "shared-secret",
+			"-peer-id", "source",
+			"-lifecycle-put-namespace", "demo",
+			"-lifecycle-put-key", "item",
+			"-lifecycle-put-data", "value",
+			"-lifecycle-exit-after-mutation",
+			"-lifecycle-mutation-timeout", "8s",
+		}, &sourceOut, &sourceErr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(sourceOut.String(), "lifecycle mutation committed state=present")
+	}, 3*time.Second, 10*time.Millisecond, "source stdout=%q stderr=%q", sourceOut.String(), sourceErr.String())
+	require.NoError(t, <-sourceDone, "source stdout=%q stderr=%q", sourceOut.String(), sourceErr.String())
+
+	targetJournalPath := filepath.Join(targetLifecycleDir, "journal")
+	require.Eventually(t, func() bool {
+		journal, _, openErr := lifecycle.OpenJournal(targetJournalPath, lifecycle.JournalOptions{})
+		if openErr != nil {
+			return false
+		}
+		defer func() { _ = journal.Close() }()
+		records, recordsErr := journal.Records(context.Background())
+		if recordsErr != nil || len(records) != 1 {
+			return false
+		}
+		if records[0].State != lifecycle.StatePresent || string(records[0].Namespace) != "demo" || string(records[0].LogicalKey) != "item" {
+			return false
+		}
+		store, storeErr := storage.NewFileStore(targetStoreDir)
+		if storeErr != nil {
+			return false
+		}
+		data, getErr := store.Get(context.Background(), records[0].BlobKey)
+		return getErr == nil && string(data) == "value"
+	}, 8*time.Second, 20*time.Millisecond, "target stdout=%q stderr=%q source stdout=%q stderr=%q", targetOut.String(), targetErr.String(), sourceOut.String(), sourceErr.String())
+
+	targetCancel()
+	require.NoError(t, <-targetDone, "target stdout=%q stderr=%q", targetOut.String(), targetErr.String())
+}
+
 func TestOpenLifecycleRuntimeRestoresDurableState(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

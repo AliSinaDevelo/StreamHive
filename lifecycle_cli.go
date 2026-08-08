@@ -50,6 +50,7 @@ type lifecycleRuntime struct {
 type lifecycleSessionEntry struct {
 	session *lifecycle.RepairSession
 	cancel  context.CancelFunc
+	active  bool
 }
 
 type lifecycleRuntimeMetrics struct {
@@ -413,9 +414,11 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 	r.sessionsMu.Lock()
 	if previous, exists := r.sessions[key]; exists {
 		previous.cancel()
-		r.metrics.SessionsActive.Add(-1)
+		if previous.active {
+			r.metrics.SessionsActive.Add(-1)
+		}
 	}
-	r.sessions[key] = lifecycleSessionEntry{session: session, cancel: cancel}
+	r.sessions[key] = lifecycleSessionEntry{session: session, cancel: cancel, active: true}
 	r.metrics.SessionsStarted.Add(1)
 	r.metrics.SessionsActive.Add(1)
 	r.sessionsWG.Add(1)
@@ -423,6 +426,7 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 
 	go func() {
 		defer r.sessionsWG.Done()
+		defer r.finishSession(key, session)
 		if rawSync != nil {
 			records, syncErr := r.recordsForRawSync(sessionCtx, remoteID)
 			if syncErr == nil {
@@ -446,6 +450,18 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 	}()
 }
 
+func (r *lifecycleRuntime) finishSession(key string, session *lifecycle.RepairSession) {
+	r.sessionsMu.Lock()
+	defer r.sessionsMu.Unlock()
+	entry, exists := r.sessions[key]
+	if !exists || entry.session != session || !entry.active {
+		return
+	}
+	entry.active = false
+	r.sessions[key] = entry
+	r.metrics.SessionsActive.Add(-1)
+}
+
 func (r *lifecycleRuntime) ForgetPeer(peer p2p.Peer) {
 	if r == nil || peer == nil {
 		return
@@ -456,7 +472,9 @@ func (r *lifecycleRuntime) ForgetPeer(peer p2p.Peer) {
 	if exists {
 		delete(r.sessions, key)
 		entry.cancel()
-		r.metrics.SessionsActive.Add(-1)
+		if entry.active {
+			r.metrics.SessionsActive.Add(-1)
+		}
 	}
 	r.sessionsMu.Unlock()
 }
