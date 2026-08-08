@@ -866,6 +866,171 @@ func TestRunLifecycleRepairConvergesOverAuthenticatedTCP(t *testing.T) {
 	require.NoError(t, <-sourceDone)
 }
 
+func TestRunLifecycleCompactionBlocksUntilMemberReconnects(t *testing.T) {
+	ctx := context.Background()
+	const token = "shared-secret"
+	const memberID = "target"
+	sourceStoreDir := t.TempDir()
+	sourceLifecycleDir := t.TempDir()
+	targetStoreDir := t.TempDir()
+	targetLifecycleDir := t.TempDir()
+	data := []byte("membership-failure-value")
+	blobKey := storage.SHA256Key(data)
+
+	mutationArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", sourceStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", sourceLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "source",
+		"-lifecycle-members", memberID,
+		"-lifecycle-put-namespace", "demo",
+		"-lifecycle-put-key", "item",
+		"-lifecycle-put-data", string(data),
+		"-lifecycle-exit-after-mutation",
+	}
+	require.NoError(t, run(ctx, mutationArgs, io.Discard, io.Discard))
+
+	sourceJournalPath := filepath.Join(sourceLifecycleDir, "journal")
+	readJournal := func(path string) ([]lifecycle.Record, lifecycle.Version, bool) {
+		journal, _, err := lifecycle.OpenJournal(path, lifecycle.JournalOptions{})
+		if err != nil {
+			return nil, lifecycle.Version{}, false
+		}
+		defer func() { _ = journal.Close() }()
+		records, err := journal.Records(ctx)
+		return records, journal.LastVersion(), err == nil
+	}
+	sourceRecords, sourceTail, ok := readJournal(sourceJournalPath)
+	require.True(t, ok)
+	require.Len(t, sourceRecords, 1)
+	require.Equal(t, blobKey, sourceRecords[0].BlobKey)
+
+	compactArgs := []string{
+		"-replicate",
+		"-store-dir", sourceStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", sourceLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "source",
+		"-lifecycle-members", memberID,
+		"-lifecycle-compact",
+	}
+	var blockedOut safeBuffer
+	blockedErr := run(ctx, compactArgs, &blockedOut, io.Discard)
+	require.Error(t, blockedErr)
+	assert.ErrorIs(t, blockedErr, lifecycle.ErrMembershipBehind)
+	assert.Contains(t, blockedErr.Error(), memberID)
+	journal, _, err := lifecycle.OpenJournal(sourceJournalPath, lifecycle.JournalOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, lifecycle.Version{}, journal.Floor())
+	assert.Equal(t, sourceTail, journal.LastVersion())
+	require.NoError(t, journal.Close())
+	_, err = os.Stat(filepath.Join(sourceLifecycleDir, "checkpoint"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	listenPattern := regexp.MustCompile(`listening on ([^\n]+)`)
+	startNode := func(parent context.Context, args []string) (context.CancelFunc, <-chan error, *safeBuffer, *safeBuffer, string) {
+		nodeCtx, cancel := context.WithCancel(parent)
+		var out, stderr safeBuffer
+		done := make(chan error, 1)
+		go func() {
+			done <- run(nodeCtx, args, &out, &stderr)
+		}()
+		var address string
+		require.Eventually(t, func() bool {
+			match := listenPattern.FindStringSubmatch(out.String())
+			if len(match) != 2 {
+				return false
+			}
+			address = strings.TrimSpace(match[1])
+			return address != ""
+		}, 3*time.Second, 10*time.Millisecond, "stdout=%q stderr=%q", out.String(), stderr.String())
+		return cancel, done, &out, &stderr, address
+	}
+
+	sourceArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", sourceStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", sourceLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", "source",
+		"-lifecycle-members", memberID,
+	}
+	sourceCancel, sourceDone, sourceOut, sourceErr, sourceAddr := startNode(context.Background(), sourceArgs)
+	sourceStopped := false
+	defer func() {
+		if !sourceStopped {
+			sourceCancel()
+			_ = <-sourceDone
+		}
+	}()
+
+	targetArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-dial", sourceAddr,
+		"-replicate",
+		"-store-dir", targetStoreDir,
+		"-lifecycle",
+		"-lifecycle-dir", targetLifecycleDir,
+		"-peer-auth-token", token,
+		"-peer-id", memberID,
+	}
+	targetCancel, targetDone, targetOut, targetErr, _ := startNode(context.Background(), targetArgs)
+	targetStopped := false
+	defer func() {
+		if !targetStopped {
+			targetCancel()
+			_ = <-targetDone
+		}
+	}()
+
+	targetJournalPath := filepath.Join(targetLifecycleDir, "journal")
+	require.Eventually(t, func() bool {
+		records, tail, ok := readJournal(targetJournalPath)
+		return ok && tail == sourceTail && reflect.DeepEqual(records, sourceRecords)
+	}, 10*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
+	require.Eventually(t, func() bool {
+		book, openErr := lifecycle.OpenWatermarkBook(filepath.Join(sourceLifecycleDir, "watermarks"), lifecycle.WatermarkOptions{})
+		return openErr == nil && book.Watermark(memberID).Compare(sourceTail) >= 0
+	}, 10*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
+
+	targetStore, err := storage.NewFileStore(targetStoreDir)
+	require.NoError(t, err)
+	got, err := targetStore.Get(ctx, blobKey)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+
+	targetCancel()
+	require.NoError(t, <-targetDone, "target stdout=%q stderr=%q", targetOut.String(), targetErr.String())
+	targetStopped = true
+	sourceCancel()
+	require.NoError(t, <-sourceDone, "source stdout=%q stderr=%q", sourceOut.String(), sourceErr.String())
+	sourceStopped = true
+
+	var compactedOut safeBuffer
+	require.NoError(t, run(ctx, compactArgs, &compactedOut, io.Discard))
+	assert.Contains(t, compactedOut.String(), "lifecycle compacted watermark=")
+	checkpoint, err := lifecycle.LoadCheckpoint(ctx, filepath.Join(sourceLifecycleDir, "checkpoint"), lifecycle.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, sourceTail, checkpoint.Watermark)
+	assert.Equal(t, sourceRecords, checkpoint.Records)
+	journal, _, err = lifecycle.OpenJournal(sourceJournalPath, lifecycle.JournalOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, sourceTail, journal.Floor())
+	assert.Equal(t, 0, journal.Len())
+	require.NoError(t, journal.Close())
+	sourceStore, err := storage.NewFileStore(sourceStoreDir)
+	require.NoError(t, err)
+	got, err = sourceStore.Get(ctx, blobKey)
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+}
+
 func TestRunLifecycleSnapshotRepairsStalePeerAfterCompaction(t *testing.T) {
 	ctx := context.Background()
 	sourceStoreDir := t.TempDir()
