@@ -46,11 +46,11 @@ var (
 
 // RepairLimits bounds one ordered batch or snapshot.
 type RepairLimits struct {
-	MaxRecords             int
-	MaxLogicalKeyBytes     int
-	MaxMetadataBytes       int
-	MaxFrameBytes          int
-	RecordLimits           Limits
+	MaxRecords         int
+	MaxLogicalKeyBytes int
+	MaxMetadataBytes   int
+	MaxFrameBytes      int
+	RecordLimits       Limits
 }
 
 func (l RepairLimits) normalized() RepairLimits {
