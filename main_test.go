@@ -276,6 +276,12 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, metrics, "replication_blob_puts_accepted")
 	assert.Contains(t, metrics, "replication_blob_put_failures")
 	assert.Contains(t, metrics, "replication_blob_write_errors")
+	assert.Contains(t, metrics, "replication_inventory_status_scans_started")
+	assert.Contains(t, metrics, "replication_inventory_status_scans_completed")
+	assert.Contains(t, metrics, "replication_inventory_status_scans_failed")
+	assert.Contains(t, metrics, "replication_inventory_status_keys_scanned")
+	assert.Contains(t, metrics, "replication_inventory_status_key_bytes_scanned")
+	assert.Contains(t, metrics, "replication_inventory_status_scan_duration_ms")
 	assert.Contains(t, metrics, "replication_inventory_advertisements")
 	assert.Contains(t, metrics, "replication_inventory_bytes_sent")
 	assert.Contains(t, metrics, "replication_inventory_keys_sent")
@@ -311,6 +317,12 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Zero(t, metrics["replication_repair_io_ops_rejected"])
 	assert.Zero(t, metrics["replication_repair_io_ops_in_flight"])
 	assert.Zero(t, metrics["replication_repair_io_ops_queued"])
+	assert.Zero(t, metrics["replication_inventory_status_scans_started"])
+	assert.Zero(t, metrics["replication_inventory_status_scans_completed"])
+	assert.Zero(t, metrics["replication_inventory_status_scans_failed"])
+	assert.Zero(t, metrics["replication_inventory_status_keys_scanned"])
+	assert.Zero(t, metrics["replication_inventory_status_key_bytes_scanned"])
+	assert.Zero(t, metrics["replication_inventory_status_scan_duration_ms"])
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
 	assert.Zero(t, metrics["tls_certificates_configured"])
 	assert.Zero(t, metrics["tls_certificate_expiry_timestamp_seconds"])
@@ -327,6 +339,12 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_active_peers")
 	assert.Contains(t, string(body), "streamhive_replication_blobs_stored")
 	assert.Contains(t, string(body), "streamhive_replication_blob_puts_accepted")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_status_scans_started")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_status_scans_completed")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_status_scans_failed")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_status_keys_scanned")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_status_key_bytes_scanned")
+	assert.Contains(t, string(body), "streamhive_replication_inventory_status_scan_duration_ms")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_advertisements")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_bytes_sent")
 	assert.Contains(t, string(body), "streamhive_replication_inventory_keys_sent")
@@ -365,6 +383,25 @@ func TestRun_healthEndpoints(t *testing.T) {
 
 	cancel()
 	<-errCh
+}
+
+type failingInventoryStatusLister struct{}
+
+func (failingInventoryStatusLister) ListKeys(context.Context) ([][]byte, error) {
+	return nil, errors.New("inventory status test failure")
+}
+
+func TestObserveInventoryStatusCountsFailedScan(t *testing.T) {
+	metrics := &replicationMetrics{}
+
+	_, err := observeInventoryStatus(context.Background(), failingInventoryStatusLister{}, metrics)
+
+	assert.Error(t, err)
+	assert.Equal(t, uint64(1), metrics.InventoryStatusScansStarted.Load())
+	assert.Equal(t, uint64(0), metrics.InventoryStatusScansCompleted.Load())
+	assert.Equal(t, uint64(1), metrics.InventoryStatusScansFailed.Load())
+	assert.Zero(t, metrics.InventoryStatusKeysScanned.Load())
+	assert.Zero(t, metrics.InventoryStatusKeyBytesScanned.Load())
 }
 
 func TestRun_putRequiresDial(t *testing.T) {

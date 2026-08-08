@@ -1985,51 +1985,57 @@ func validateReconnectBackoff(minBackoff, maxBackoff time.Duration) error {
 }
 
 type replicationMetrics struct {
-	BlobsStored                   atomic.Uint64
-	BytesStored                   atomic.Uint64
-	DuplicateBlobs                atomic.Uint64
-	DuplicateBytes                atomic.Uint64
-	ApplyErrors                   atomic.Uint64
-	BlobsSent                     atomic.Uint64
-	BytesSent                     atomic.Uint64
-	BlobsSkipped                  atomic.Uint64
-	BlobAcksSent                  atomic.Uint64
-	BlobAcksReceived              atomic.Uint64
-	BlobAcksMatched               atomic.Uint64
-	BlobAcksPending               atomic.Int64
-	BlobAckTimeouts               atomic.Uint64
-	BlobRetries                   atomic.Uint64
-	BlobPutsAccepted              atomic.Uint64
-	BlobPutFailures               atomic.Uint64
-	BlobWriteErrors               atomic.Uint64
-	SendErrors                    atomic.Uint64
-	InventoryAdvertisements       atomic.Uint64
-	InventoryBytesSent            atomic.Uint64
-	InventoryKeysSent             atomic.Uint64
-	InventoryKeysProbed           atomic.Uint64
-	InventoryExchangesStarted     atomic.Uint64
-	InventoryExchangesCompleted   atomic.Uint64
-	InventoryExchangesLimited     atomic.Uint64
-	InventoryExchangesDropped     atomic.Uint64
-	InventoryExchangesActive      atomic.Int64
-	MissingKeysRequested          atomic.Uint64
-	RepairBlobsSent               atomic.Uint64
-	RepairBlobsDeferred           atomic.Uint64
-	CorruptBlobsDetected          atomic.Uint64
-	RepairContinuationsScheduled  atomic.Uint64
-	RepairContinuationsCompleted  atomic.Uint64
-	RepairContinuationsDropped    atomic.Uint64
-	RepairContinuationsActive     atomic.Int64
-	RepairContinuationKeysPending atomic.Int64
-	RepairIOOpsStarted            atomic.Uint64
-	RepairIOOpsCompleted          atomic.Uint64
-	RepairIOOpsWaited             atomic.Uint64
-	RepairIOOpsRejected           atomic.Uint64
-	RepairIOOpsInFlight           atomic.Int64
-	RepairIOOpsQueued             atomic.Int64
-	ackTracker                    *putAckTracker
-	repairBudget                  *repairIOLimiter
-	repairScheduler               *repairContinuationScheduler
+	BlobsStored                    atomic.Uint64
+	BytesStored                    atomic.Uint64
+	DuplicateBlobs                 atomic.Uint64
+	DuplicateBytes                 atomic.Uint64
+	ApplyErrors                    atomic.Uint64
+	BlobsSent                      atomic.Uint64
+	BytesSent                      atomic.Uint64
+	BlobsSkipped                   atomic.Uint64
+	BlobAcksSent                   atomic.Uint64
+	BlobAcksReceived               atomic.Uint64
+	BlobAcksMatched                atomic.Uint64
+	BlobAcksPending                atomic.Int64
+	BlobAckTimeouts                atomic.Uint64
+	BlobRetries                    atomic.Uint64
+	BlobPutsAccepted               atomic.Uint64
+	BlobPutFailures                atomic.Uint64
+	BlobWriteErrors                atomic.Uint64
+	SendErrors                     atomic.Uint64
+	InventoryStatusScansStarted    atomic.Uint64
+	InventoryStatusScansCompleted  atomic.Uint64
+	InventoryStatusScansFailed     atomic.Uint64
+	InventoryStatusKeysScanned     atomic.Uint64
+	InventoryStatusKeyBytesScanned atomic.Uint64
+	InventoryStatusScanDurationMS  atomic.Uint64
+	InventoryAdvertisements        atomic.Uint64
+	InventoryBytesSent             atomic.Uint64
+	InventoryKeysSent              atomic.Uint64
+	InventoryKeysProbed            atomic.Uint64
+	InventoryExchangesStarted      atomic.Uint64
+	InventoryExchangesCompleted    atomic.Uint64
+	InventoryExchangesLimited      atomic.Uint64
+	InventoryExchangesDropped      atomic.Uint64
+	InventoryExchangesActive       atomic.Int64
+	MissingKeysRequested           atomic.Uint64
+	RepairBlobsSent                atomic.Uint64
+	RepairBlobsDeferred            atomic.Uint64
+	CorruptBlobsDetected           atomic.Uint64
+	RepairContinuationsScheduled   atomic.Uint64
+	RepairContinuationsCompleted   atomic.Uint64
+	RepairContinuationsDropped     atomic.Uint64
+	RepairContinuationsActive      atomic.Int64
+	RepairContinuationKeysPending  atomic.Int64
+	RepairIOOpsStarted             atomic.Uint64
+	RepairIOOpsCompleted           atomic.Uint64
+	RepairIOOpsWaited              atomic.Uint64
+	RepairIOOpsRejected            atomic.Uint64
+	RepairIOOpsInFlight            atomic.Int64
+	RepairIOOpsQueued              atomic.Int64
+	ackTracker                     *putAckTracker
+	repairBudget                   *repairIOLimiter
+	repairScheduler                *repairContinuationScheduler
 }
 
 func (m *replicationMetrics) Snapshot() map[string]int64 {
@@ -2037,48 +2043,54 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 		return map[string]int64{}
 	}
 	return map[string]int64{
-		"replication_blobs_stored":                     int64(m.BlobsStored.Load()),
-		"replication_bytes_stored":                     int64(m.BytesStored.Load()),
-		"replication_duplicate_blobs":                  int64(m.DuplicateBlobs.Load()),
-		"replication_duplicate_bytes":                  int64(m.DuplicateBytes.Load()),
-		"replication_apply_errors":                     int64(m.ApplyErrors.Load()),
-		"replication_blobs_sent":                       int64(m.BlobsSent.Load()),
-		"replication_bytes_sent":                       int64(m.BytesSent.Load()),
-		"replication_blobs_skipped":                    int64(m.BlobsSkipped.Load()),
-		"replication_blob_acks_sent":                   int64(m.BlobAcksSent.Load()),
-		"replication_blob_acks_received":               int64(m.BlobAcksReceived.Load()),
-		"replication_blob_acks_matched":                int64(m.BlobAcksMatched.Load()),
-		"replication_blob_acks_pending":                m.BlobAcksPending.Load(),
-		"replication_blob_ack_timeouts":                int64(m.BlobAckTimeouts.Load()),
-		"replication_blob_retries":                     int64(m.BlobRetries.Load()),
-		"replication_blob_puts_accepted":               int64(m.BlobPutsAccepted.Load()),
-		"replication_blob_put_failures":                int64(m.BlobPutFailures.Load()),
-		"replication_blob_write_errors":                int64(m.BlobWriteErrors.Load()),
-		"replication_send_errors":                      int64(m.SendErrors.Load()),
-		"replication_inventory_advertisements":         int64(m.InventoryAdvertisements.Load()),
-		"replication_inventory_bytes_sent":             int64(m.InventoryBytesSent.Load()),
-		"replication_inventory_keys_sent":              int64(m.InventoryKeysSent.Load()),
-		"replication_inventory_keys_probed":            int64(m.InventoryKeysProbed.Load()),
-		"replication_inventory_exchanges_started":      int64(m.InventoryExchangesStarted.Load()),
-		"replication_inventory_exchanges_completed":    int64(m.InventoryExchangesCompleted.Load()),
-		"replication_inventory_exchanges_limited":      int64(m.InventoryExchangesLimited.Load()),
-		"replication_inventory_exchanges_dropped":      int64(m.InventoryExchangesDropped.Load()),
-		"replication_inventory_exchanges_active":       m.InventoryExchangesActive.Load(),
-		"replication_missing_keys_requested":           int64(m.MissingKeysRequested.Load()),
-		"replication_repair_blobs_sent":                int64(m.RepairBlobsSent.Load()),
-		"replication_repair_blobs_deferred":            int64(m.RepairBlobsDeferred.Load()),
-		"replication_corrupt_blobs_detected":           int64(m.CorruptBlobsDetected.Load()),
-		"replication_repair_continuations_scheduled":   int64(m.RepairContinuationsScheduled.Load()),
-		"replication_repair_continuations_completed":   int64(m.RepairContinuationsCompleted.Load()),
-		"replication_repair_continuations_dropped":     int64(m.RepairContinuationsDropped.Load()),
-		"replication_repair_continuations_active":      m.RepairContinuationsActive.Load(),
-		"replication_repair_continuation_keys_pending": m.RepairContinuationKeysPending.Load(),
-		"replication_repair_io_ops_started":            int64(m.RepairIOOpsStarted.Load()),
-		"replication_repair_io_ops_completed":          int64(m.RepairIOOpsCompleted.Load()),
-		"replication_repair_io_ops_waited":             int64(m.RepairIOOpsWaited.Load()),
-		"replication_repair_io_ops_rejected":           int64(m.RepairIOOpsRejected.Load()),
-		"replication_repair_io_ops_in_flight":          m.RepairIOOpsInFlight.Load(),
-		"replication_repair_io_ops_queued":             m.RepairIOOpsQueued.Load(),
+		"replication_blobs_stored":                       int64(m.BlobsStored.Load()),
+		"replication_bytes_stored":                       int64(m.BytesStored.Load()),
+		"replication_duplicate_blobs":                    int64(m.DuplicateBlobs.Load()),
+		"replication_duplicate_bytes":                    int64(m.DuplicateBytes.Load()),
+		"replication_apply_errors":                       int64(m.ApplyErrors.Load()),
+		"replication_blobs_sent":                         int64(m.BlobsSent.Load()),
+		"replication_bytes_sent":                         int64(m.BytesSent.Load()),
+		"replication_blobs_skipped":                      int64(m.BlobsSkipped.Load()),
+		"replication_blob_acks_sent":                     int64(m.BlobAcksSent.Load()),
+		"replication_blob_acks_received":                 int64(m.BlobAcksReceived.Load()),
+		"replication_blob_acks_matched":                  int64(m.BlobAcksMatched.Load()),
+		"replication_blob_acks_pending":                  m.BlobAcksPending.Load(),
+		"replication_blob_ack_timeouts":                  int64(m.BlobAckTimeouts.Load()),
+		"replication_blob_retries":                       int64(m.BlobRetries.Load()),
+		"replication_blob_puts_accepted":                 int64(m.BlobPutsAccepted.Load()),
+		"replication_blob_put_failures":                  int64(m.BlobPutFailures.Load()),
+		"replication_blob_write_errors":                  int64(m.BlobWriteErrors.Load()),
+		"replication_send_errors":                        int64(m.SendErrors.Load()),
+		"replication_inventory_status_scans_started":     int64(m.InventoryStatusScansStarted.Load()),
+		"replication_inventory_status_scans_completed":   int64(m.InventoryStatusScansCompleted.Load()),
+		"replication_inventory_status_scans_failed":      int64(m.InventoryStatusScansFailed.Load()),
+		"replication_inventory_status_keys_scanned":      int64(m.InventoryStatusKeysScanned.Load()),
+		"replication_inventory_status_key_bytes_scanned": int64(m.InventoryStatusKeyBytesScanned.Load()),
+		"replication_inventory_status_scan_duration_ms":  int64(m.InventoryStatusScanDurationMS.Load()),
+		"replication_inventory_advertisements":           int64(m.InventoryAdvertisements.Load()),
+		"replication_inventory_bytes_sent":               int64(m.InventoryBytesSent.Load()),
+		"replication_inventory_keys_sent":                int64(m.InventoryKeysSent.Load()),
+		"replication_inventory_keys_probed":              int64(m.InventoryKeysProbed.Load()),
+		"replication_inventory_exchanges_started":        int64(m.InventoryExchangesStarted.Load()),
+		"replication_inventory_exchanges_completed":      int64(m.InventoryExchangesCompleted.Load()),
+		"replication_inventory_exchanges_limited":        int64(m.InventoryExchangesLimited.Load()),
+		"replication_inventory_exchanges_dropped":        int64(m.InventoryExchangesDropped.Load()),
+		"replication_inventory_exchanges_active":         m.InventoryExchangesActive.Load(),
+		"replication_missing_keys_requested":             int64(m.MissingKeysRequested.Load()),
+		"replication_repair_blobs_sent":                  int64(m.RepairBlobsSent.Load()),
+		"replication_repair_blobs_deferred":              int64(m.RepairBlobsDeferred.Load()),
+		"replication_corrupt_blobs_detected":             int64(m.CorruptBlobsDetected.Load()),
+		"replication_repair_continuations_scheduled":     int64(m.RepairContinuationsScheduled.Load()),
+		"replication_repair_continuations_completed":     int64(m.RepairContinuationsCompleted.Load()),
+		"replication_repair_continuations_dropped":       int64(m.RepairContinuationsDropped.Load()),
+		"replication_repair_continuations_active":        m.RepairContinuationsActive.Load(),
+		"replication_repair_continuation_keys_pending":   m.RepairContinuationKeysPending.Load(),
+		"replication_repair_io_ops_started":              int64(m.RepairIOOpsStarted.Load()),
+		"replication_repair_io_ops_completed":            int64(m.RepairIOOpsCompleted.Load()),
+		"replication_repair_io_ops_waited":               int64(m.RepairIOOpsWaited.Load()),
+		"replication_repair_io_ops_rejected":             int64(m.RepairIOOpsRejected.Load()),
+		"replication_repair_io_ops_in_flight":            m.RepairIOOpsInFlight.Load(),
+		"replication_repair_io_ops_queued":               m.RepairIOOpsQueued.Load(),
 	}
 }
 
@@ -2160,6 +2172,24 @@ func snapshotInventoryStatus(ctx context.Context, lister storage.BlobKeyLister) 
 	return status, nil
 }
 
+func observeInventoryStatus(ctx context.Context, lister storage.BlobKeyLister, metrics *replicationMetrics) (inventoryStatusResponse, error) {
+	if lister == nil || metrics == nil {
+		return snapshotInventoryStatus(ctx, lister)
+	}
+	startedAt := time.Now()
+	metrics.InventoryStatusScansStarted.Add(1)
+	status, err := snapshotInventoryStatus(ctx, lister)
+	metrics.InventoryStatusScanDurationMS.Add(uint64(time.Since(startedAt) / time.Millisecond))
+	if err != nil {
+		metrics.InventoryStatusScansFailed.Add(1)
+		return inventoryStatusResponse{}, err
+	}
+	metrics.InventoryStatusScansCompleted.Add(1)
+	metrics.InventoryStatusKeysScanned.Add(uint64(status.Keys))
+	metrics.InventoryStatusKeyBytesScanned.Add(uint64(status.KeyBytes))
+	return status, nil
+}
+
 func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
@@ -2197,7 +2227,7 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		_ = enc.Encode(lifecycleState.Status())
 	})
 	mux.HandleFunc("/inventory/status", func(w http.ResponseWriter, req *http.Request) {
-		status, err := snapshotInventoryStatus(req.Context(), keyLister)
+		status, err := observeInventoryStatus(req.Context(), keyLister, replMetrics)
 		if err != nil {
 			http.Error(w, "inventory unavailable", http.StatusServiceUnavailable)
 			return
