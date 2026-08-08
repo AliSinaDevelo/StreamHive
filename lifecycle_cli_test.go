@@ -104,8 +104,8 @@ func TestOpenLifecycleRuntimeRefusesMissingRestoredBlob(t *testing.T) {
 }
 
 func TestRunLifecycleRepairConvergesOverAuthenticatedTCP(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	sourceCtx, sourceCancel := context.WithCancel(context.Background())
+	defer sourceCancel()
 	sourceDir := t.TempDir()
 	targetDir := t.TempDir()
 	record := lifecycle.Record{
@@ -117,13 +117,13 @@ func TestRunLifecycleRepairConvergesOverAuthenticatedTCP(t *testing.T) {
 	}
 	sourceJournal, _, err := lifecycle.OpenJournal(filepath.Join(sourceDir, "journal"), lifecycle.JournalOptions{})
 	require.NoError(t, err)
-	require.NoError(t, sourceJournal.Append(ctx, record))
+	require.NoError(t, sourceJournal.Append(context.Background(), record))
 	require.NoError(t, sourceJournal.Close())
 
 	var sourceOut, sourceErr, targetOut, targetErr safeBuffer
 	sourceDone := make(chan error, 1)
 	go func() {
-		sourceDone <- run(ctx, []string{
+		sourceDone <- run(sourceCtx, []string{
 			"-listen", "127.0.0.1:0",
 			"-replicate",
 			"-lifecycle",
@@ -144,18 +144,23 @@ func TestRunLifecycleRepairConvergesOverAuthenticatedTCP(t *testing.T) {
 		return sourceAddr != ""
 	}, 3*time.Second, 10*time.Millisecond, "source stdout=%q stderr=%q", sourceOut.String(), sourceErr.String())
 
-	targetDone := make(chan error, 1)
-	go func() {
-		targetDone <- run(ctx, []string{
-			"-listen", "127.0.0.1:0",
-			"-dial", sourceAddr,
-			"-replicate",
-			"-lifecycle",
-			"-lifecycle-dir", targetDir,
-			"-peer-auth-token", "shared-secret",
-			"-peer-id", "target",
-		}, &targetOut, &targetErr)
-	}()
+	startTarget := func(ctx context.Context, out, stderr *safeBuffer) <-chan error {
+		done := make(chan error, 1)
+		go func() {
+			done <- run(ctx, []string{
+				"-listen", "127.0.0.1:0",
+				"-dial", sourceAddr,
+				"-replicate",
+				"-lifecycle",
+				"-lifecycle-dir", targetDir,
+				"-peer-auth-token", "shared-secret",
+				"-peer-id", "target",
+			}, out, stderr)
+		}()
+		return done
+	}
+	targetCtx, targetCancel := context.WithCancel(context.Background())
+	targetDone := startTarget(targetCtx, &targetOut, &targetErr)
 
 	targetJournalPath := filepath.Join(targetDir, "journal")
 	require.Eventually(t, func() bool {
@@ -164,11 +169,30 @@ func TestRunLifecycleRepairConvergesOverAuthenticatedTCP(t *testing.T) {
 			return false
 		}
 		defer func() { _ = journal.Close() }()
-		records, recordsErr := journal.Records(ctx)
+		records, recordsErr := journal.Records(context.Background())
 		return recordsErr == nil && len(records) == 1 && reflect.DeepEqual(records[0], record)
 	}, 8*time.Second, 20*time.Millisecond, "source stdout=%q stderr=%q target stdout=%q stderr=%q", sourceOut.String(), sourceErr.String(), targetOut.String(), targetErr.String())
 
-	cancel()
-	require.NoError(t, <-sourceDone)
+	targetCancel()
 	require.NoError(t, <-targetDone)
+
+	restartedTargetCtx, restartedTargetCancel := context.WithCancel(context.Background())
+	var restartedTargetOut, restartedTargetErr safeBuffer
+	restartedTargetDone := startTarget(restartedTargetCtx, &restartedTargetOut, &restartedTargetErr)
+	require.Eventually(t, func() bool {
+		return strings.Contains(restartedTargetOut.String(), "listening on")
+	}, 3*time.Second, 10*time.Millisecond, "restarted target stdout=%q stderr=%q", restartedTargetOut.String(), restartedTargetErr.String())
+	require.Eventually(t, func() bool {
+		journal, _, openErr := lifecycle.OpenJournal(targetJournalPath, lifecycle.JournalOptions{})
+		if openErr != nil {
+			return false
+		}
+		defer func() { _ = journal.Close() }()
+		records, recordsErr := journal.Records(context.Background())
+		return recordsErr == nil && len(records) == 1 && reflect.DeepEqual(records[0], record)
+	}, 5*time.Second, 20*time.Millisecond, "restarted target stdout=%q stderr=%q", restartedTargetOut.String(), restartedTargetErr.String())
+	restartedTargetCancel()
+	require.NoError(t, <-restartedTargetDone)
+	sourceCancel()
+	require.NoError(t, <-sourceDone)
 }
