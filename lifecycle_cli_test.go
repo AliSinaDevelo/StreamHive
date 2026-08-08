@@ -966,7 +966,7 @@ func TestRunLifecycleCompactionBlocksUntilMemberReconnects(t *testing.T) {
 	defer func() {
 		if !sourceStopped {
 			sourceCancel()
-			_ = <-sourceDone
+			<-sourceDone
 		}
 	}()
 
@@ -985,7 +985,7 @@ func TestRunLifecycleCompactionBlocksUntilMemberReconnects(t *testing.T) {
 	defer func() {
 		if !targetStopped {
 			targetCancel()
-			_ = <-targetDone
+			<-targetDone
 		}
 	}()
 
