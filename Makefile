@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-peer-admission test-peer-drain test-tls-auth test-mtls test-mtls-cli test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-cli-shutdown test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
+.PHONY: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-peer-admission test-peer-drain test-tls-auth test-mtls test-mtls-cli test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-cli-shutdown test-lifecycle-compaction test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -55,6 +55,9 @@ test-health-server:
 test-cli-shutdown:
 	@go test -race -count=3 -run "^Test(Run_(shutdownGraceRejectsNonPositive|contextCancellationUsesBoundedShutdown|exitAfterPutCancellationDrainsTransport)|ShutdownApplicationDeadlineExpiresAndJoins|PeerReconnector_doesNotScheduleAfterCancellation|RepairContinuationSchedulerStopsOnShutdown)$$" ./...
 
+test-lifecycle-compaction:
+	@go test -race -count=1 -run '^TestRunLifecycleSnapshotRepairsStalePeerAfterCompaction$$' ./...
+
 test-fuzz:
 	@go test -run '^$$' -fuzz=FuzzDecode -fuzztime=3s ./replication
 	@go test -run '^$$' -fuzz=FuzzEncodeDecodeBlobPut -fuzztime=3s ./replication
@@ -107,4 +110,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-peer-admission test-peer-drain test-tls-auth test-mtls test-cli-shutdown test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
+	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-peer-admission test-peer-drain test-tls-auth test-mtls test-cli-shutdown test-lifecycle-compaction test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
