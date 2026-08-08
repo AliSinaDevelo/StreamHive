@@ -34,6 +34,21 @@ func TestApplyBlobPut(t *testing.T) {
 	assert.Equal(t, []byte("value"), got)
 }
 
+func TestApplyRejectsSHA256MismatchBeforeStoreMutation(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	key := storage.SHA256Key([]byte("expected"))
+	payload, err := EncodeBlobPut(key, []byte("tampered"), Limits{})
+	require.NoError(t, err)
+
+	err = Apply(ctx, store, payload, Limits{})
+
+	assert.ErrorIs(t, err, storage.ErrSHA256Mismatch)
+	has, hasErr := store.Has(ctx, key)
+	require.NoError(t, hasErr)
+	assert.False(t, has)
+}
+
 func TestEncodeDecodeBlobGet(t *testing.T) {
 	payload, err := EncodeBlobGet([]byte("alpha"), Limits{})
 	require.NoError(t, err)

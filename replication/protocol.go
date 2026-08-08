@@ -160,10 +160,20 @@ func Apply(ctx context.Context, store storage.BlobStore, payload []byte, limits 
 
 	switch msg.Type {
 	case MessageTypeBlobPut:
+		if err := verifyContentKey(msg.Key, msg.Data); err != nil {
+			return err
+		}
 		return store.Put(ctx, msg.Key, msg.Data)
 	default:
 		return ErrMessageNotApplicable
 	}
+}
+
+func verifyContentKey(key, data []byte) error {
+	if err := storage.ValidateSHA256Key(key); err != nil {
+		return nil
+	}
+	return storage.VerifySHA256Key(key, data)
 }
 
 func normalizeLimits(limits Limits) Limits {
