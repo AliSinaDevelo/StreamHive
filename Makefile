@@ -1,4 +1,4 @@
-.PHONY: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-inventory-status test-peer-admission test-peer-drain test-tls-auth test-mtls test-mtls-cli test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-cli-shutdown test-lifecycle-compaction test-lifecycle-membership test-lifecycle-compose test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
+.PHONY: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-inventory-status test-inventory-status-metrics test-peer-admission test-peer-drain test-tls-auth test-mtls test-mtls-cli test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-cli-shutdown test-lifecycle-compaction test-lifecycle-membership test-lifecycle-compose test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci help
 
 build:
 	@mkdir -p bin
@@ -27,6 +27,9 @@ test-inventory-consistency:
 
 test-inventory-status:
 	@go test -race -count=3 -run '^TestRun_inventoryStatusConvergesAfterAntiEntropy$$' ./...
+
+test-inventory-status-metrics:
+	@go test -race -count=3 -run '^(TestRun_inventoryStatusConvergesAfterAntiEntropy|TestObserveInventoryStatusCountsFailedScan)$$' ./...
 
 test-peer-admission:
 	@go test -race -count=3 -run '^TestRun_maxPeersRejectsSecondRealTCPPeer$$' ./...
@@ -119,4 +122,4 @@ demo-status:
 ci: vet test-race lint
 
 help:
-	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-inventory-status test-peer-admission test-peer-drain test-tls-auth test-mtls test-cli-shutdown test-lifecycle-compaction test-lifecycle-membership test-lifecycle-compose test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
+	@echo "Targets: build run test test-race test-fairness test-inventory-fairness test-eviction-repair test-inventory-consistency test-inventory-status test-inventory-status-metrics test-peer-admission test-peer-drain test-tls-auth test-mtls test-cli-shutdown test-lifecycle-compaction test-lifecycle-membership test-lifecycle-compose test-tls-rotation test-tls-credential-health test-prometheus-format test-health-server test-fuzz test-budgets bench-inventory bench-inventory-wire vet cover lint demo-replication demo-compose demo-auth demo-repair demo-failure demo-continuation demo-inventory-budget demo-status ci"
