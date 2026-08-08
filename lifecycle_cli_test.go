@@ -139,6 +139,49 @@ func TestRunLifecyclePutCommitsAndExits(t *testing.T) {
 	assert.Equal(t, []byte("value"), data)
 }
 
+func TestRunLifecycleMutationsResumeSequenceAndRetainBlobAfterDelete(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	lifecycleDir := t.TempDir()
+	baseArgs := []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", storeDir,
+		"-lifecycle",
+		"-lifecycle-dir", lifecycleDir,
+		"-peer-auth-token", "shared-secret",
+		"-peer-id", "node-a",
+		"-lifecycle-exit-after-mutation",
+	}
+	putArgs := append(append([]string(nil), baseArgs...),
+		"-lifecycle-put-namespace", "demo",
+		"-lifecycle-put-key", "item",
+		"-lifecycle-put-data", "value",
+	)
+	require.NoError(t, run(ctx, putArgs, io.Discard, io.Discard))
+	deleteArgs := append(append([]string(nil), baseArgs...),
+		"-lifecycle-delete-namespace", "demo",
+		"-lifecycle-delete-key", "item",
+	)
+	require.NoError(t, run(ctx, deleteArgs, io.Discard, io.Discard))
+
+	journal, _, err := lifecycle.OpenJournal(filepath.Join(lifecycleDir, "journal"), lifecycle.JournalOptions{})
+	require.NoError(t, err)
+	defer func() { _ = journal.Close() }()
+	records, err := journal.Records(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, lifecycle.StatePresent, records[0].State)
+	assert.Equal(t, lifecycle.StateDeleted, records[1].State)
+	assert.Equal(t, records[0].Version.Epoch, records[1].Version.Epoch)
+	assert.Equal(t, records[0].Version.Sequence+1, records[1].Version.Sequence)
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	data, err := store.Get(ctx, records[0].BlobKey)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value"), data)
+}
+
 func TestRunLifecycleMutationConvergesOverAuthenticatedTCP(t *testing.T) {
 	targetCtx, targetCancel := context.WithCancel(context.Background())
 	defer targetCancel()
