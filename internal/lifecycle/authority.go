@@ -167,6 +167,14 @@ func (a *Authority) Current() Version {
 	return a.current
 }
 
+// AuthorityID returns the configured identity that owns this version stream.
+func (a *Authority) AuthorityID() string {
+	if a == nil {
+		return ""
+	}
+	return a.authorityID
+}
+
 func initialAuthorityVersion(observed Version) (Version, error) {
 	if observed.Epoch != 0 {
 		return observed, nil
