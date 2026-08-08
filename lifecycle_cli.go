@@ -38,6 +38,7 @@ type lifecycleRuntime struct {
 
 	sessionsMu sync.Mutex
 	sessions   map[string]lifecycleSessionEntry
+	sessionsWG sync.WaitGroup
 	metrics    lifecycleRuntimeMetrics
 }
 
@@ -199,6 +200,7 @@ func (r *lifecycleRuntime) Close() error {
 	}
 	r.metrics.SessionsActive.Store(0)
 	r.sessionsMu.Unlock()
+	r.sessionsWG.Wait()
 	return r.journal.Close()
 }
 
@@ -259,9 +261,11 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 	r.sessions[key] = lifecycleSessionEntry{session: session, cancel: cancel}
 	r.metrics.SessionsStarted.Add(1)
 	r.metrics.SessionsActive.Add(1)
+	r.sessionsWG.Add(1)
 	r.sessionsMu.Unlock()
 
 	go func() {
+		defer r.sessionsWG.Done()
 		err := session.Run(sessionCtx)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			r.metrics.SessionErrors.Add(1)
