@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.12.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, bounded journal/snapshot repair planner, durable per-peer watermarks, capability-gated repair frames, and a caller-owned repair session with opt-in CLI scheduling and real-TCP convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, durable authority allocation, bounded journal/snapshot repair planning, durable per-peer watermarks, capability-gated repair frames, caller-owned repair sessions, opt-in CLI put/delete commands, raw-blob preflight, and real-TCP convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
 
 ## Prerequisites
 
@@ -226,6 +226,30 @@ go run . -listen 127.0.0.1:7071 -replicate -dial 127.0.0.1:7070 -peer-auth-token
 
 Peers that cannot complete the auth handshake are rejected before replication frames reach the application handler. `-peer-id` is an explicit application identity label exchanged during that handshake; `-peer-allow-ids` is an exact inbound authorization allowlist and rejects missing or unlisted identities. An empty allowlist preserves token-only compatibility. Use TLS or mTLS as well when the token or identity crosses a network you do not fully control.
 
+For an operator-fenced lifecycle mutation, enable the private sidecar and use one explicit
+command. A present mutation stores and verifies the SHA-256-addressed blob before its journal
+record is published; a delete appends a tombstone and retains the raw blob:
+
+```bash
+go run . -listen 127.0.0.1:7071 -replicate -store-dir ./node-a-blobs \
+  -lifecycle -lifecycle-dir ./node-a-lifecycle \
+  -peer-auth-token "$STREAMHIVE_PEER_TOKEN" -peer-id node-a \
+  -lifecycle-put-namespace demo -lifecycle-put-key item \
+  -lifecycle-put-data "hello lifecycle" -lifecycle-exit-after-mutation
+
+go run . -listen 127.0.0.1:7071 -replicate -store-dir ./node-a-blobs \
+  -lifecycle -lifecycle-dir ./node-a-lifecycle \
+  -peer-auth-token "$STREAMHIVE_PEER_TOKEN" -peer-id node-a \
+  -lifecycle-delete-namespace demo -lifecycle-delete-key item \
+  -lifecycle-exit-after-mutation
+```
+
+Add `-dial` or `-peers` to wait for each authenticated lifecycle replica to acknowledge the
+mutation before exit. `-lifecycle-put-blob-key` may supply a hex SHA-256 key, but it must match
+the put data. The durable `authority` sidecar advances `(epoch, sequence)` across restart;
+failed writes may consume a token, never reuse one. Local mutation counters remain aggregate
+and label-free.
+
 For the verified TLS plus application-auth boundary, including wrong-CA and wrong-hostname
 acceptance paths, see [docs/TLS_AUTH.md](docs/TLS_AUTH.md) and run `make test-tls-auth`.
 
@@ -274,6 +298,10 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-lifecycle-dir` | Private directory for lifecycle journal, checkpoint, and peer watermarks |
 | `-lifecycle-max-records` / `-lifecycle-max-key-bytes` | Bound records and logical-key bytes per lifecycle repair frame |
 | `-lifecycle-max-metadata-bytes` / `-lifecycle-max-frame-bytes` | Bound lifecycle metadata and encoded repair frame bytes |
+| `-lifecycle-put-namespace` / `-lifecycle-put-key` / `-lifecycle-put-data` | One local lifecycle present mutation (requires `-lifecycle`) |
+| `-lifecycle-put-blob-key` | Optional hex SHA-256 key validated against `-lifecycle-put-data` |
+| `-lifecycle-delete-namespace` / `-lifecycle-delete-key` | One local lifecycle tombstone (mutually exclusive with put) |
+| `-lifecycle-exit-after-mutation` / `-lifecycle-mutation-timeout` | Wait for outbound lifecycle acknowledgements, then exit with a bounded deadline |
 | `-list-keys` | Print durable `-store-dir` keys as hex and exit |
 | `-put-key` / `-put-data` | Send one manually keyed blob to outbound peers |
 | `-put-content-key` | Derive the outbound blob key from `SHA-256(-put-data)` |

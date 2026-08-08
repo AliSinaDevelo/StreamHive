@@ -154,6 +154,20 @@ The CLI constructs sessions only with `-lifecycle`; the default invocation does 
 `lifecycle.v1` or schedule lifecycle frames. `/readyz`, `/metrics`, and `/metrics/prometheus`
 expose aggregate lifecycle state when the opt-in runtime is active.
 
+The opt-in CLI also accepts one local mutation at startup. A present command uses
+`-lifecycle-put-namespace`, `-lifecycle-put-key`, and `-lifecycle-put-data`; its raw bytes are
+stored and verified before the lifecycle journal record is appended. `-lifecycle-put-blob-key`
+is optional but must be the matching hex SHA-256 digest. A delete command uses
+`-lifecycle-delete-namespace` and `-lifecycle-delete-key`; it appends a tombstone and never
+deletes the old raw blob. The commands are mutually exclusive and require `-lifecycle`.
+
+The private `authority` sidecar durably advances the configured identity's `(epoch, sequence)`
+stream across restart and adopts a newer journal tail before allocating. A failed raw or journal
+write may consume a token but never reuses one. With `-lifecycle-exit-after-mutation`, a source
+waits up to `-lifecycle-mutation-timeout` for each outbound lifecycle watermark acknowledgement.
+Before sending a lifecycle repair frame, the CLI sends referenced raw blobs through acknowledged
+`blob.put` frames; this preserves the raw-before-logical ordering over a new TCP connection.
+
 ## Message Types
 
 | Type | Fields | Meaning |

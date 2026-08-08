@@ -177,6 +177,33 @@ constructs one cancellable session per authenticated lifecycle-capable peer only
 is enabled; its aggregate readiness and repair counters are exposed without peer labels. The
 default CLI path remains raw-only, while membership and compaction controls remain later work.
 
+### Local Mutation Commands
+
+The opt-in CLI exposes one bounded local mutation at startup:
+
+- `-lifecycle-put-namespace`, `-lifecycle-put-key`, and `-lifecycle-put-data` create one present
+  record. The blob key is derived from SHA-256(data), or supplied through
+  `-lifecycle-put-blob-key` and verified against the bytes.
+- `-lifecycle-delete-namespace` and `-lifecycle-delete-key` create one tombstone. The command
+  never calls raw `BlobStore.Delete`, so immutable bytes remain available for repair or later
+  retention policy.
+- `-lifecycle-exit-after-mutation` waits for all outbound lifecycle acknowledgements within
+  `-lifecycle-mutation-timeout`; without peers it exits after the local durable commit.
+
+The `authority` sidecar stores the configured peer identity and the last allocated token in a
+checksummed, atomically replaced envelope. It is opened against the journal tail and advances
+before a mutation is attempted. A raw-store or journal failure can therefore leave an unused
+token, but can never cause a later mutation to reuse it. A present mutation follows this order:
+
+1. validate namespace, logical key, and optional content key;
+2. durably write and verify raw bytes;
+3. append and fsync the lifecycle record;
+4. publish logical state and allow lifecycle repair to acknowledge it.
+
+Before a lifecycle session sends a present record to a peer, the CLI preflights the referenced
+raw bytes with acknowledged `blob.put` frames. A lifecycle-aware receiver therefore never has
+to publish a present logical record before its verified blob is available locally.
+
 The authority keeps tombstones until every configured lifecycle replica has acknowledged a
 version at or beyond the tombstone and a durable checkpoint includes it. Unknown or removed
 members block automatic compaction until an operator creates a new membership epoch and fences
@@ -221,8 +248,9 @@ There is no automatic rollback that converts logical deletes into raw `BlobStore
 ## Observability And Readiness
 
 Metrics remain aggregate and label-free. The opt-in CLI runtime currently exposes lifecycle
-enablement, active/started/completed repair sessions, received frames, and frame/session errors
-through JSON and Prometheus health endpoints. The full lifecycle observability target remains:
+enablement, active/started/completed repair sessions, received frames, frame/session errors, and
+local mutation started/applied/error counters through JSON and Prometheus health endpoints. The
+full lifecycle observability target remains:
 
 - counters for lifecycle records applied, duplicates, stale records, conflicts, capability
   refusals, invalid blob references, snapshot bootstraps, journal repairs, and compactions;
@@ -254,8 +282,10 @@ verifiable slices:
    durable-watermark boundary is shipped by issue #53; the capability-gated frame codec and
    real-TCP compatibility boundary are shipped by issue #54; automatic network scheduling and
    operations remain separate.
-5. **Operations:** CLI configuration, readiness states, aggregate JSON/Prometheus metrics,
-   compaction controls, migration/rollback runbook, and a deterministic multi-node demo.
+5. **Operations:** CLI configuration, durable authority allocation, one-shot put/delete commands,
+   readiness states, aggregate JSON/Prometheus metrics, compaction controls, migration/rollback
+   runbook, and a deterministic multi-node demo. The first command slice is shipped; compaction,
+   membership, and garbage collection remain separate work.
 
 The deterministic test matrix must include put/delete/reconnect/restart in every order, a stale
 peer returning after compaction, duplicate and reordered records, same-token conflicts, concurrent

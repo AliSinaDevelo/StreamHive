@@ -20,11 +20,20 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   changing the default raw replication path.
 - **CLI**: authenticated lifecycle-capable peers now receive cancellable repair sessions, with
   aggregate lifecycle readiness and JSON/Prometheus repair counters.
+- **Lifecycle CLI**: operator-fenced local put/delete commands now persist an authority allocator,
+  resume `(epoch, sequence)` across restart, verify content-addressed bytes before publishing a
+  present record, retain raw blobs under tombstones, and optionally wait for authenticated repair
+  acknowledgements before exiting.
+- **Lifecycle replication**: repair sessions preflight referenced raw blobs through acknowledged
+  `blob.put` frames before sending lifecycle records, so a present record cannot outrun its bytes
+  on a new TCP connection.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.
 - **Tests**: a race-enabled CLI acceptance path proves a pre-seeded lifecycle tombstone converges
   over authenticated TCP and persists in the target journal after shutdown.
+- **Tests**: race-enabled CLI coverage proves local put/delete ordering, authority sequence resume,
+  failed raw writes without logical publication, and authenticated two-node lifecycle put convergence.
 
 ## [0.12.0] — 2026-08-06
 
