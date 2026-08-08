@@ -50,6 +50,29 @@ If validation fails, the listener may reply with `peer.auth.reject` and closes t
 connection. Dialers treat rejected or malformed auth replies as dial failures. Auth
 successes and failures are exposed as `peer_auth_success` and `peer_auth_failures`.
 
+The authenticated envelope optionally carries a bounded capability list:
+
+```json
+{
+  "type": "peer.auth",
+  "version": "streamhive/1",
+  "token": "shared-token",
+  "capabilities": ["lifecycle.v1"]
+}
+```
+
+`TCPTransport.PeerAuthCapabilities` advertises locally supported capabilities. The current
+implementation supports `lifecycle.v1`; an incoming unknown capability is ignored for forward
+compatibility, while duplicate, invalid, or oversized declarations fail authentication. A local
+unknown capability is rejected during transport configuration. The list is exchanged only with
+shared-token auth, is bounded independently from raw replication frames, and is exposed in
+`TCPPeer.AuthCapabilities`, `PeerSnapshot.Capabilities`, and the health `/peers` response.
+
+The capability status is explicit: `ready` means `lifecycle.v1` was negotiated,
+`optional-raw-only` means a lifecycle-optional namespace may continue raw blob replication, and
+`required-unavailable` means a lifecycle-required namespace must refuse lifecycle exchange. A
+peer without the capability never receives a lifecycle record frame.
+
 The `identity` fields are optional for compatibility with token-only peers. They provide
 an explicit application identity label for snapshots and logs, but this slice does not
 authorize identities by default or provide signed identity claims. To authorize inbound
@@ -80,6 +103,27 @@ Replication payloads are JSON values decoded into `replication.Message`:
 The Go `encoding/json` package encodes `[]byte` fields as base64 strings. This applies
 to `key`, `keys`, and `data` fields on the wire.
 
+Lifecycle records use a separate envelope after `lifecycle.v1` negotiation:
+
+```json
+{
+  "type": "lifecycle.record",
+  "record": {
+    "namespace": "base64-encoded-by-json",
+    "logical_key": "base64-encoded-by-json",
+    "state": "present",
+    "blob_key": "base64-encoded-32-byte-sha256",
+    "version": {"epoch": 4, "sequence": 9},
+    "authority_id": "node-a"
+  }
+}
+```
+
+`internal/lifecycle.DecodeRecord` rejects unknown message types, unknown envelope fields,
+trailing JSON, malformed records, and oversized payloads before any record application. This
+transport slice only validates and decodes the envelope; lifecycle apply, repair, compaction,
+and raw blob deletion remain separate work.
+
 ## Message Types
 
 | Type | Fields | Meaning |
@@ -89,6 +133,7 @@ to `key`, `keys`, and `data` fields on the wire.
 | `blob.missing` | `keys` | Ask the peer to send keys missing locally. |
 | `blob.get` | `key` | Ask the peer to send one key. |
 | `blob.ack` | `key` | Acknowledge that one `blob.put` key was accepted. |
+| `lifecycle.record` | `record` | One logical lifecycle mutation; requires `lifecycle.v1` and is not applied by the current transport slice. |
 
 The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 
@@ -131,6 +176,10 @@ Default replication limits are:
 | Max inventory keys per peer exchange | 16,384 by default; `-max-inventory-keys`, `0` unlimited | Scheduler continues from the exclusive cursor |
 | Max blob payload | `4 << 20` bytes | `replication.ErrDataTooLarge` |
 | Max repair data per `blob.missing` response | `64 << 20` bytes | Remaining keys are deferred |
+| Max peer auth payload | `4 << 10` bytes | `p2p.ErrPeerAuthPayloadTooLarge` |
+| Max peer auth capabilities | 16 entries, 512 aggregate bytes, 64 bytes per entry | `p2p` capability validation errors |
+| Max lifecycle record | `64 << 10` bytes | `lifecycle.ErrRecordTooLarge` |
+| Max lifecycle envelope | `128 << 10` bytes | `lifecycle.ErrLifecyclePayloadTooLarge` |
 
 Empty keys fail with `replication.ErrKeyEmpty`. Empty `keys` lists fail with
 `replication.ErrKeysEmpty`. Unknown message types fail with
@@ -159,6 +208,10 @@ oversized keys/data, and overfull key lists are rejected by `replication.Decode`
 validation error; they are not applied to storage. The bounded `FuzzReadFrame`,
 `FuzzDecode`, and round-trip fuzz targets exercise these boundaries in the CI
 `protocol-fuzz` smoke job, while longer fuzzing remains a manual or scheduled activity.
+
+Lifecycle envelopes use their own bounded decoder. An oversized lifecycle payload is refused
+before JSON decoding; a valid envelope still has to pass the inner lifecycle record limits.
+Unknown lifecycle types and malformed or trailing JSON are rejected without applying a record.
 
 When answering `blob.missing` or `blob.get`, StreamHive treats each requested key as an
 independent send unit until bytes are written to the peer. If one key is unreadable or

@@ -1,8 +1,8 @@
 # v0.13 Versioned Lifecycle Semantics
 
-Status: research decision for v0.13.0, tracked by issue #49. This document extends the
-released v0.12.0 add-only blob contract; it does not change SHV1, the current storage format,
-or any public API.
+Status: v0.13.0 design plus the shipped capability/record-transport boundary from issue #51.
+This document extends the released v0.12.0 add-only blob contract; lifecycle application,
+repair, compaction, and raw blob deletion remain future slices.
 
 ## Problem Statement
 
@@ -17,6 +17,22 @@ StreamHive has two different concepts that must remain separate:
 `BlobStore.Delete` remains local eviction or garbage collection in v0.12. It is not a
 distributed delete. The v0.13 design below adds a bounded logical namespace later, without
 changing the meaning of raw blob operations.
+
+## Transport Slice Shipped
+
+Issue #51 adds the first wire boundary without enabling lifecycle synchronization:
+
+- `p2p.TCPTransport.PeerAuthCapabilities` advertises the bounded `lifecycle.v1` capability in
+  the existing authenticated envelope.
+- Unknown incoming capabilities are ignored for forward compatibility; duplicate, invalid, or
+  oversized declarations are rejected deterministically.
+- `TCPPeer.AuthCapabilities`, `PeerSnapshot.Capabilities`, and `/peers` expose the negotiated
+  set. `ready`, `optional-raw-only`, and `required-unavailable` make mixed-version readiness
+  explicit without adding metric labels.
+- `internal/lifecycle.EncodeRecord` and `DecodeRecord` bound and validate one
+  `lifecycle.record` envelope independently from raw blob limits.
+- No lifecycle frame is sent to a peer without negotiated `lifecycle.v1`, and no decoded record
+  is applied or used to delete a raw blob in this slice. Ordinary `blob.*` traffic is unchanged.
 
 ## Decision
 
@@ -160,7 +176,7 @@ closed with an observable error; history is never dropped to preserve availabili
 
 ## Mixed-Version And Rollback Contract
 
-The future capability is negotiated before lifecycle records are exchanged. A v0.12 peer does
+The lifecycle capability is negotiated before lifecycle records are exchanged. A v0.12 peer does
 not understand lifecycle records and remains on ordinary `blob.has`, `blob.missing`, `blob.get`,
 and `blob.put` behavior. It never receives an unknown lifecycle frame.
 
@@ -198,7 +214,8 @@ verifiable slices:
 1. **Model and storage:** token ordering, idempotency, stale rejection, journal checksums,
    truncated-tail recovery, atomic checkpoints, and compaction watermarks.
 2. **Capability and record transport:** bounded lifecycle negotiation, record encoding limits,
-   explicit v0.12 refusal, and no admission of unknown frames.
+   explicit v0.12 refusal, and no admission of unknown frames. This boundary is shipped by
+   issue #51; application and repair remain separate.
 3. **Apply path:** verified blob-before-record ordering, delete application, duplicate replay,
    partial-write recovery, and raw-blob non-resurrection.
 4. **Repair:** per-peer watermarks, bounded journal batches, snapshot bootstrap, behind-floor
@@ -214,8 +231,8 @@ reordering and duplicate delivery cannot produce a different state from token or
 
 ## Non-Goals
 
-- No wire message, capability flag, public API, CLI flag, or storage-format change is made by
-  issue #49.
+- The research issue #49 made no wire, capability, CLI, or storage-format change; issue #51
+  adds only the negotiated transport boundary and internal record codec.
 - No automatic consensus, leader election, multi-writer merge, TTL expiry, or conflict resolver
   is promised by v0.13's first lifecycle slice.
 - No physical raw-blob deletion is implied by a logical tombstone.

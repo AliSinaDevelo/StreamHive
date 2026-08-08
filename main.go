@@ -1867,13 +1867,14 @@ func (m *replicationMetrics) Snapshot() map[string]int64 {
 }
 
 type peerStatus struct {
-	RemoteAddr     string `json:"remote_addr"`
-	LocalAddr      string `json:"local_addr,omitempty"`
-	Outbound       bool   `json:"outbound"`
-	ConnectedAt    string `json:"connected_at,omitempty"`
-	ConnectedForMS int64  `json:"connected_for_ms"`
-	AuthMethod     string `json:"auth_method"`
-	AuthIdentity   string `json:"auth_identity,omitempty"`
+	RemoteAddr     string   `json:"remote_addr"`
+	LocalAddr      string   `json:"local_addr,omitempty"`
+	Outbound       bool     `json:"outbound"`
+	ConnectedAt    string   `json:"connected_at,omitempty"`
+	ConnectedForMS int64    `json:"connected_for_ms"`
+	AuthMethod     string   `json:"auth_method"`
+	AuthIdentity   string   `json:"auth_identity,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
 }
 
 type peersResponse struct {
@@ -1900,6 +1901,7 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 			ConnectedForMS: connectedForMS,
 			AuthMethod:     peer.AuthMethod,
 			AuthIdentity:   peer.AuthIdentity,
+			Capabilities:   append([]string(nil), peer.Capabilities...),
 		})
 	}
 	sort.Slice(statuses, func(i, j int) bool {

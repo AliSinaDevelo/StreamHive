@@ -2207,6 +2207,15 @@ func TestSnapshotPeersIncludesAuthIdentity(t *testing.T) {
 	assert.Equal(t, "node-a", resp.Peers[0].AuthIdentity)
 }
 
+func TestSnapshotPeersIncludesCapabilities(t *testing.T) {
+	resp := snapshotPeers([]p2p.PeerSnapshot{
+		{RemoteAddr: "127.0.0.1:9001", Capabilities: []string{p2p.CapabilityLifecycleV1}},
+	}, time.Now().UTC())
+
+	require.Len(t, resp.Peers, 1)
+	assert.Equal(t, []string{p2p.CapabilityLifecycleV1}, resp.Peers[0].Capabilities)
+}
+
 func TestValidateReconnectBackoff(t *testing.T) {
 	assert.NoError(t, validateReconnectBackoff(10*time.Millisecond, 20*time.Millisecond))
 	assert.Error(t, validateReconnectBackoff(0, 20*time.Millisecond))
