@@ -121,19 +121,8 @@ func (r Record) Validate(limits Limits) error {
 	if len(r.LogicalKey) > limits.MaxLogicalKeyBytes {
 		return ErrLogicalKeyTooLarge
 	}
-	if r.AuthorityID == "" {
-		return ErrAuthorityEmpty
-	}
-	if len(r.AuthorityID) > limits.MaxAuthorityIDBytes {
-		return ErrAuthorityTooLarge
-	}
-	if !utf8.ValidString(r.AuthorityID) {
-		return ErrAuthorityNotPrintable
-	}
-	for _, character := range r.AuthorityID {
-		if !unicode.IsPrint(character) {
-			return ErrAuthorityNotPrintable
-		}
+	if err := validateAuthorityID(r.AuthorityID, limits); err != nil {
+		return err
 	}
 	if r.Version.IsZero() {
 		return ErrZeroVersion
@@ -157,6 +146,25 @@ func (r Record) Validate(limits Limits) error {
 	}
 	if len(encoded) > limits.MaxRecordBytes {
 		return ErrRecordTooLarge
+	}
+	return nil
+}
+
+func validateAuthorityID(authorityID string, limits Limits) error {
+	limits = limits.normalized()
+	if authorityID == "" {
+		return ErrAuthorityEmpty
+	}
+	if len(authorityID) > limits.MaxAuthorityIDBytes {
+		return ErrAuthorityTooLarge
+	}
+	if !utf8.ValidString(authorityID) {
+		return ErrAuthorityNotPrintable
+	}
+	for _, character := range authorityID {
+		if !unicode.IsPrint(character) {
+			return ErrAuthorityNotPrintable
+		}
 	}
 	return nil
 }
