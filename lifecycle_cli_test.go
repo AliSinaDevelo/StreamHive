@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -268,6 +269,10 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	assert.Greater(t, status.JournalBytes, int64(0))
 	assert.Equal(t, 2, status.LogicalRecords)
 	assert.Equal(t, 1, status.Tombstones)
+	assert.False(t, status.MembershipConfigured)
+	assert.Equal(t, 0, status.MembershipMembers)
+	assert.True(t, status.CompactionBlocked)
+	assert.Equal(t, "membership-missing", status.CompactionBlockedReason)
 	statusBody, err := json.Marshal(status)
 	require.NoError(t, err)
 	assert.NotContains(t, string(statusBody), "present-item")
@@ -284,6 +289,9 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	assert.Equal(t, int64(2), metrics["lifecycle_journal_entries"])
 	assert.Equal(t, int64(2), metrics["lifecycle_logical_records"])
 	assert.Equal(t, int64(1), metrics["lifecycle_tombstones"])
+	assert.Equal(t, int64(0), metrics["lifecycle_membership_configured"])
+	assert.Equal(t, int64(0), metrics["lifecycle_membership_members"])
+	assert.Equal(t, int64(1), metrics["lifecycle_compaction_blocked"])
 
 	response, err = (&http.Client{Timeout: 2 * time.Second}).Get("http://" + health + "/metrics/prometheus")
 	require.NoError(t, err)
@@ -291,6 +299,7 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	_ = response.Body.Close()
 	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_journal_bytes gauge")
+	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_compaction_blocked gauge")
 	assert.Contains(t, string(prometheus), "streamhive_lifecycle_ready 1")
 
 	stop()
@@ -420,6 +429,94 @@ func TestOpenLifecycleRuntimeRestoresDurableState(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, "journal"))
 	assert.FileExists(t, filepath.Join(dir, "watermarks"))
 	assert.FileExists(t, filepath.Join(dir, "authority"))
+}
+
+func TestLifecycleRuntimeCompactionRequiresExplicitMembershipFence(t *testing.T) {
+	ctx := context.Background()
+
+	missingDir := t.TempDir()
+	missing, err := openLifecycleRuntime(ctx, testLifecycleCLIConfig(missingDir), storage.NewMemoryStore(), "token", "node-a")
+	require.NoError(t, err)
+	_, _, err = missing.put(ctx, "demo", "item", []byte("value"), nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, missing.compact(ctx), lifecycle.ErrMembershipNotConfigured)
+	assert.Equal(t, lifecycle.Version{}, missing.journal.Floor())
+	require.NoError(t, missing.Close())
+
+	behindDir := t.TempDir()
+	behindConfig := testLifecycleCLIConfig(behindDir)
+	behindConfig.membershipConfigured = true
+	behindConfig.membershipMembers = []string{"peer-b"}
+	behind, err := openLifecycleRuntime(ctx, behindConfig, storage.NewMemoryStore(), "token", "node-a")
+	require.NoError(t, err)
+	_, _, err = behind.put(ctx, "demo", "item", []byte("value"), nil)
+	require.NoError(t, err)
+	assert.ErrorIs(t, behind.compact(ctx), lifecycle.ErrMembershipBehind)
+	assert.Equal(t, lifecycle.Version{}, behind.journal.Floor())
+	require.NoError(t, behind.Close())
+
+	emptyDir := t.TempDir()
+	emptyConfig := testLifecycleCLIConfig(emptyDir)
+	emptyConfig.membershipConfigured = true
+	emptyConfig.membershipMembers = []string{}
+	empty, err := openLifecycleRuntime(ctx, emptyConfig, storage.NewMemoryStore(), "token", "node-a")
+	require.NoError(t, err)
+	deleted, _, err := empty.delete(ctx, "demo", "item")
+	require.NoError(t, err)
+	require.NoError(t, empty.compact(ctx))
+	assert.Equal(t, deleted.Version, empty.journal.Floor())
+	remaining, err := empty.journal.Records(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, remaining)
+	assert.True(t, empty.membership.Configured())
+	require.NoError(t, empty.Close())
+}
+
+func TestLifecycleRuntimeCompactionRestoresCheckpointAndRefusesCorruption(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := storage.NewMemoryStore()
+	config := testLifecycleCLIConfig(dir)
+	config.membershipConfigured = true
+	config.membershipMembers = []string{"peer-b"}
+	runtime, err := openLifecycleRuntime(ctx, config, store, "token", "node-a")
+	require.NoError(t, err)
+	putRecord, _, err := runtime.put(ctx, "demo", "item", []byte("value"), nil)
+	require.NoError(t, err)
+	deletedRecord, _, err := runtime.delete(ctx, "demo", "item")
+	require.NoError(t, err)
+	require.NoError(t, runtime.coordinator.Acknowledge(ctx, "peer-b", deletedRecord.Version))
+	require.NoError(t, runtime.compact(ctx))
+	assert.Equal(t, deletedRecord.Version, runtime.journal.Floor())
+	assert.Equal(t, deletedRecord.Version, runtime.journal.LastVersion())
+	assert.Equal(t, 0, runtime.journal.Len())
+	checkpoint, err := lifecycle.LoadCheckpoint(ctx, filepath.Join(dir, "checkpoint"), lifecycle.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, deletedRecord.Version, checkpoint.Watermark)
+	assert.Equal(t, []lifecycle.Record{deletedRecord}, checkpoint.Records)
+	data, err := store.Get(ctx, putRecord.BlobKey)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value"), data)
+	require.NoError(t, runtime.Close())
+
+	restarted, err := openLifecycleRuntime(ctx, config, store, "token", "node-a")
+	require.NoError(t, err)
+	assert.Equal(t, deletedRecord.Version, restarted.journal.Floor())
+	assert.Equal(t, deletedRecord.Version, restarted.journal.LastVersion())
+	assert.Equal(t, 0, restarted.journal.Len())
+	assert.True(t, restarted.membership.Configured())
+	got, ok, err := restarted.state.Get([]byte("demo"), []byte("item"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, deletedRecord, got)
+	require.NoError(t, restarted.Close())
+
+	checkpointBytes, err := os.ReadFile(filepath.Join(dir, "checkpoint"))
+	require.NoError(t, err)
+	checkpointBytes[len(checkpointBytes)-1] ^= 0xff
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "checkpoint"), checkpointBytes, 0o600))
+	_, err = openLifecycleRuntime(ctx, config, store, "token", "node-a")
+	assert.ErrorIs(t, err, lifecycle.ErrCheckpointChecksum)
 }
 
 func TestOpenLifecycleRuntimeResumesAuthoritySequence(t *testing.T) {

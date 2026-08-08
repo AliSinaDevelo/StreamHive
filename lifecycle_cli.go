@@ -18,11 +18,13 @@ import (
 )
 
 type lifecycleCLIConfig struct {
-	enabled       bool
-	dir           string
-	repairLimits  lifecycle.RepairLimits
-	recordLimits  lifecycle.Limits
-	journalLimits lifecycle.JournalOptions
+	enabled              bool
+	dir                  string
+	membershipConfigured bool
+	membershipMembers    []string
+	repairLimits         lifecycle.RepairLimits
+	recordLimits         lifecycle.Limits
+	journalLimits        lifecycle.JournalOptions
 }
 
 type lifecycleRawRecordSync func(context.Context, p2p.Peer, []lifecycle.Record) error
@@ -34,6 +36,7 @@ type lifecycleRuntime struct {
 	authority      *lifecycle.Authority
 	blobs          storage.BlobStore
 	watermarks     *lifecycle.WatermarkBook
+	membership     *lifecycle.MembershipBook
 	coordinator    *lifecycle.RepairCoordinator
 	state          *lifecycle.Store
 	applier        *lifecycle.Applier
@@ -65,6 +68,10 @@ type lifecycleStatus struct {
 	JournalBytes            int64             `json:"journal_bytes"`
 	LogicalRecords          int               `json:"logical_records"`
 	Tombstones              int               `json:"tombstones"`
+	MembershipConfigured    bool              `json:"membership_configured"`
+	MembershipMembers       int               `json:"membership_members"`
+	CompactionBlocked       bool              `json:"compaction_blocked"`
+	CompactionBlockedReason string            `json:"compaction_blocked_reason,omitempty"`
 	RepairSessionsActive    int64             `json:"repair_sessions_active"`
 	RepairSessionsStarted   uint64            `json:"repair_sessions_started"`
 	RepairSessionsCompleted uint64            `json:"repair_sessions_completed"`
@@ -86,6 +93,9 @@ func (c lifecycleCLIConfig) validate(blobStore storage.BlobStore, peerAuthToken,
 	if !c.enabled {
 		if c.dir != "" {
 			return errors.New("lifecycle: -lifecycle-dir requires -lifecycle")
+		}
+		if c.membershipConfigured {
+			return errors.New("lifecycle: -lifecycle-members requires -lifecycle")
 		}
 		return nil
 	}
@@ -146,6 +156,15 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: open watermarks: %w", err)
 	}
+	membership, err := lifecycle.OpenMembershipBook(filepath.Join(config.dir, "membership"), lifecycle.MembershipOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("lifecycle: open membership: %w", err)
+	}
+	if config.membershipConfigured {
+		if err := membership.Replace(ctx, config.membershipMembers); err != nil {
+			return nil, fmt.Errorf("lifecycle: configure membership: %w", err)
+		}
+	}
 	state := lifecycle.NewStore(recordLimits)
 	checkpointPath := filepath.Join(config.dir, "checkpoint")
 	checkpoint, err := lifecycle.LoadCheckpoint(ctx, checkpointPath, recordLimits)
@@ -190,6 +209,7 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 		authority:      authority,
 		blobs:          blobs,
 		watermarks:     watermarks,
+		membership:     membership,
 		coordinator:    coordinator,
 		state:          state,
 		applier:        applier,
@@ -342,6 +362,66 @@ func (r *lifecycleRuntime) waitForVersion(ctx context.Context, version lifecycle
 	}
 }
 
+func (r *lifecycleRuntime) compact(ctx context.Context) error {
+	if r == nil || r.journal == nil || r.state == nil || r.membership == nil || r.watermarks == nil {
+		return errors.New("lifecycle: compaction state unavailable")
+	}
+	target := r.journal.LastVersion()
+	if target.Compare(r.journal.Floor()) <= 0 {
+		return lifecycle.ErrCompactionNoProgress
+	}
+	peerWatermarks, err := r.membership.WatermarksAt(ctx, r.watermarks, target)
+	if err != nil {
+		return err
+	}
+	checkpoint := lifecycle.Checkpoint{
+		Watermark: target,
+		Records:   r.state.Snapshot(),
+	}
+	if err := r.journal.Compact(ctx, lifecycle.CompactionRequest{
+		CheckpointPath: r.checkpointPath,
+		Watermark:      target,
+		Records:        checkpoint.Records,
+		Base:           r.Snapshot(),
+		PeerWatermarks: peerWatermarks,
+	}); err != nil {
+		return err
+	}
+	r.snapshotMu.Lock()
+	r.snapshot = &checkpoint
+	r.snapshotMu.Unlock()
+	return nil
+}
+
+func (r *lifecycleRuntime) compactionStatus() (configured bool, members int, blocked bool, reason string) {
+	if r == nil || r.membership == nil {
+		return false, 0, true, "membership-unavailable"
+	}
+	configured = r.membership.Configured()
+	members = len(r.membership.Snapshot())
+	if !configured {
+		return configured, members, true, "membership-missing"
+	}
+	if r.journal == nil || r.watermarks == nil {
+		return configured, members, true, "compaction-state-unavailable"
+	}
+	target := r.journal.LastVersion()
+	if target.Compare(r.journal.Floor()) <= 0 {
+		return configured, members, true, "no-progress"
+	}
+	if _, err := r.membership.WatermarksAt(context.Background(), r.watermarks, target); err != nil {
+		switch {
+		case errors.Is(err, lifecycle.ErrMembershipBehind):
+			return configured, members, true, "member-behind"
+		case errors.Is(err, lifecycle.ErrMembershipNotConfigured):
+			return configured, members, true, "membership-missing"
+		default:
+			return configured, members, true, "membership-invalid"
+		}
+	}
+	return configured, members, false, ""
+}
+
 func (r *lifecycleRuntime) Status() lifecycleStatus {
 	if r == nil {
 		return lifecycleStatus{Ready: true, Readiness: "raw-only"}
@@ -373,6 +453,7 @@ func (r *lifecycleRuntime) Status() lifecycleStatus {
 		status.LogicalRecords = state.Records
 		status.Tombstones = state.Tombstones
 	}
+	status.MembershipConfigured, status.MembershipMembers, status.CompactionBlocked, status.CompactionBlockedReason = r.compactionStatus()
 	return status
 }
 
@@ -553,7 +634,7 @@ func (r *lifecycleRuntime) Ready() bool {
 	if r == nil {
 		return true
 	}
-	return r.journal != nil && r.authority != nil && r.watermarks != nil &&
+	return r.journal != nil && r.authority != nil && r.watermarks != nil && r.membership != nil &&
 		r.coordinator != nil && r.state != nil && r.applier != nil
 }
 
@@ -575,6 +656,9 @@ func (r *lifecycleRuntime) Metrics() map[string]int64 {
 		"lifecycle_journal_bytes":             status.JournalBytes,
 		"lifecycle_logical_records":           int64(status.LogicalRecords),
 		"lifecycle_tombstones":                int64(status.Tombstones),
+		"lifecycle_membership_configured":     boolMetric(status.MembershipConfigured),
+		"lifecycle_membership_members":        int64(status.MembershipMembers),
+		"lifecycle_compaction_blocked":        boolMetric(status.CompactionBlocked),
 		"lifecycle_repair_sessions_started":   int64(r.metrics.SessionsStarted.Load()),
 		"lifecycle_repair_sessions_completed": int64(r.metrics.SessionsCompleted.Load()),
 		"lifecycle_repair_sessions_active":    r.metrics.SessionsActive.Load(),
