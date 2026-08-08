@@ -252,14 +252,6 @@ func (b *MembershipBook) normalizeMembers(members []string) ([]string, error) {
 	return normalized, nil
 }
 
-func (b *MembershipBook) validateState(state membershipState) error {
-	if state.Members == nil {
-		return ErrMembershipCorrupt
-	}
-	_, err := b.normalizeMembers(state.Members)
-	return err
-}
-
 func decodeMembershipState(payload []byte) (membershipState, error) {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
