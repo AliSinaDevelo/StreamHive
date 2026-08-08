@@ -78,6 +78,9 @@ type lifecycleStatus struct {
 	RepairSessionsActive    int64             `json:"repair_sessions_active"`
 	RepairSessionsStarted   uint64            `json:"repair_sessions_started"`
 	RepairSessionsCompleted uint64            `json:"repair_sessions_completed"`
+	RepairSessionErrors     uint64            `json:"repair_session_errors"`
+	RepairFramesReceived    uint64            `json:"repair_frames_received"`
+	RepairFrameErrors       uint64            `json:"repair_frame_errors"`
 }
 
 type lifecycleRuntimeMetrics struct {
@@ -444,6 +447,9 @@ func (r *lifecycleRuntime) Status() lifecycleStatus {
 		RepairSessionsActive:    r.metrics.SessionsActive.Load(),
 		RepairSessionsStarted:   r.metrics.SessionsStarted.Load(),
 		RepairSessionsCompleted: r.metrics.SessionsCompleted.Load(),
+		RepairSessionErrors:     r.metrics.SessionErrors.Load(),
+		RepairFramesReceived:    r.metrics.FramesReceived.Load(),
+		RepairFrameErrors:       r.metrics.FrameErrors.Load(),
 	}
 	if !status.Ready {
 		status.Readiness = "lifecycle-state-unavailable"

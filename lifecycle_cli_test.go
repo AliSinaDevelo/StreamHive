@@ -335,6 +335,12 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	assert.Equal(t, status.JournalTail, status.CompactionTarget)
 	assert.True(t, status.CompactionBlocked)
 	assert.Equal(t, "membership-missing", status.CompactionBlockedReason)
+	assert.Zero(t, status.RepairSessionsActive)
+	assert.Zero(t, status.RepairSessionsStarted)
+	assert.Zero(t, status.RepairSessionsCompleted)
+	assert.Zero(t, status.RepairSessionErrors)
+	assert.Zero(t, status.RepairFramesReceived)
+	assert.Zero(t, status.RepairFrameErrors)
 	statusBody, err := json.Marshal(status)
 	require.NoError(t, err)
 	assert.NotContains(t, string(statusBody), "present-item")
@@ -359,6 +365,9 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	assert.Equal(t, int64(2), metrics["lifecycle_compaction_target_epoch"])
 	assert.Equal(t, int64(2), metrics["lifecycle_compaction_target_sequence"])
 	assert.Equal(t, int64(1), metrics["lifecycle_compaction_blocked"])
+	assert.Equal(t, int64(0), metrics["lifecycle_repair_session_errors"])
+	assert.Equal(t, int64(0), metrics["lifecycle_repair_frames_received"])
+	assert.Equal(t, int64(0), metrics["lifecycle_repair_frame_errors"])
 
 	response, err = (&http.Client{Timeout: 2 * time.Second}).Get("http://" + health + "/metrics/prometheus")
 	require.NoError(t, err)
@@ -368,6 +377,9 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_journal_bytes gauge")
 	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_compaction_blocked gauge")
 	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_compaction_target_sequence gauge")
+	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_repair_session_errors counter")
+	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_repair_frames_received counter")
+	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_repair_frame_errors counter")
 	assert.Contains(t, string(prometheus), "streamhive_lifecycle_ready 1")
 
 	stop()
@@ -382,6 +394,38 @@ func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
 	assert.Equal(t, status.LogicalRecords, restartedStatus.LogicalRecords)
 	restartedStop()
 	require.NoError(t, <-restartedDone, "stdout=%q stderr=%q", restartedOut.String(), restartedErr.String())
+}
+
+func TestLifecycleRuntimeStatusExposesRepairOutcomeCounters(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	runtime, err := openLifecycleRuntime(ctx, testLifecycleCLIConfig(dir), storage.NewMemoryStore(), "token", "node-a")
+	require.NoError(t, err)
+	defer func() { _ = runtime.Close() }()
+
+	runtime.metrics.SessionsStarted.Store(4)
+	runtime.metrics.SessionsCompleted.Store(2)
+	runtime.metrics.SessionsActive.Store(1)
+	runtime.metrics.SessionErrors.Store(3)
+	runtime.metrics.FramesReceived.Store(8)
+	runtime.metrics.FrameErrors.Store(2)
+
+	status := runtime.Status()
+	assert.Equal(t, int64(1), status.RepairSessionsActive)
+	assert.Equal(t, uint64(4), status.RepairSessionsStarted)
+	assert.Equal(t, uint64(2), status.RepairSessionsCompleted)
+	assert.Equal(t, uint64(3), status.RepairSessionErrors)
+	assert.Equal(t, uint64(8), status.RepairFramesReceived)
+	assert.Equal(t, uint64(2), status.RepairFrameErrors)
+
+	metrics := runtime.Metrics()
+	assert.Equal(t, int64(3), metrics["lifecycle_repair_session_errors"])
+	assert.Equal(t, int64(8), metrics["lifecycle_repair_frames_received"])
+	assert.Equal(t, int64(2), metrics["lifecycle_repair_frame_errors"])
+	statusBody, err := json.Marshal(status)
+	require.NoError(t, err)
+	assert.NotContains(t, string(statusBody), "peer-b")
+	assert.NotContains(t, string(statusBody), "secret-key")
 }
 
 func TestRunLifecycleMutationConvergesOverAuthenticatedTCP(t *testing.T) {
