@@ -343,6 +343,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if inventoryScheduler != nil {
 			inventoryScheduler.Start(peer)
 		}
+		if lifecycleState != nil {
+			lifecycleState.AttachPeer(ctx, peer, tr.MaxFrameBytes, log)
+		}
 	}
 	var repairScheduler *repairContinuationScheduler
 	if blobStore != nil {
@@ -351,6 +354,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if blobStore != nil || putTracker != nil {
 		tr.FrameHandler = func(frameCtx context.Context, peer p2p.Peer, payload []byte) error {
+			if lifecycleState != nil && isLifecycleRepairPayload(payload) {
+				return lifecycleState.HandleFrame(frameCtx, peer, payload)
+			}
 			msg, err := replication.Decode(payload, replLimits)
 			if err != nil {
 				replMetrics.ApplyErrors.Add(1)
@@ -373,10 +379,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *peerReconnect {
 		reconnector = newPeerReconnector(ctx, tr, peerList, *peerReconnectMin, *peerReconnectMax, log)
 	}
-	if repairScheduler != nil || reconnector != nil {
+	if lifecycleState != nil || repairScheduler != nil || reconnector != nil {
 		tr.OnPeerDisconnected = func(peer p2p.Peer) {
 			if inventoryScheduler != nil {
 				inventoryScheduler.Forget(peer)
+			}
+			if lifecycleState != nil {
+				lifecycleState.ForgetPeer(peer)
 			}
 			if repairScheduler != nil {
 				repairScheduler.Forget(peer)
@@ -547,7 +556,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	if *health != "" {
 		var err error
-		hsrv, err = startHealth(*health, tr, replMetrics, tlsHealth, log)
+		hsrv, err = startHealth(*health, tr, replMetrics, tlsHealth, lifecycleState, log)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
@@ -1951,14 +1960,14 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 	}
 }
 
-func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, tlsHealth *tlsCredentialHealth, log *slog.Logger) (*http.Server, error) {
+func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if !tr.Ready() || !tlsHealth.Ready(time.Now().UTC()) {
+		if !tr.Ready() || !tlsHealth.Ready(time.Now().UTC()) || !lifecycleState.Ready() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -1972,6 +1981,9 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 			snapshot[key] = value
 		}
 		for key, value := range tlsHealth.Snapshot(time.Now().UTC()) {
+			snapshot[key] = value
+		}
+		for key, value := range lifecycleState.Metrics() {
 			snapshot[key] = value
 		}
 		enc := json.NewEncoder(w)
@@ -1991,6 +2003,9 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 			snapshot[key] = value
 		}
 		for key, value := range tlsHealth.Snapshot(time.Now().UTC()) {
+			snapshot[key] = value
+		}
+		for key, value := range lifecycleState.Metrics() {
 			snapshot[key] = value
 		}
 		writePrometheusMetrics(w, snapshot)

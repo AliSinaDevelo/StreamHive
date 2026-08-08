@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/AliSinaDevelo/StreamHive/internal/lifecycle"
+	"github.com/AliSinaDevelo/StreamHive/p2p"
 	"github.com/AliSinaDevelo/StreamHive/storage"
 )
 
@@ -22,6 +26,7 @@ type lifecycleCLIConfig struct {
 
 type lifecycleRuntime struct {
 	checkpointPath string
+	repairLimits   lifecycle.RepairLimits
 	journal        *lifecycle.Journal
 	watermarks     *lifecycle.WatermarkBook
 	coordinator    *lifecycle.RepairCoordinator
@@ -30,6 +35,24 @@ type lifecycleRuntime struct {
 
 	snapshotMu sync.RWMutex
 	snapshot   *lifecycle.Checkpoint
+
+	sessionsMu sync.Mutex
+	sessions   map[string]lifecycleSessionEntry
+	metrics    lifecycleRuntimeMetrics
+}
+
+type lifecycleSessionEntry struct {
+	session *lifecycle.RepairSession
+	cancel  context.CancelFunc
+}
+
+type lifecycleRuntimeMetrics struct {
+	SessionsStarted   atomic.Uint64
+	SessionsCompleted atomic.Uint64
+	SessionErrors     atomic.Uint64
+	SessionsActive    atomic.Int64
+	FramesReceived    atomic.Uint64
+	FrameErrors       atomic.Uint64
 }
 
 func (c lifecycleCLIConfig) validate(blobStore storage.BlobStore, peerAuthToken, peerID string) error {
@@ -128,11 +151,13 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 	}
 	runtime := &lifecycleRuntime{
 		checkpointPath: checkpointPath,
+		repairLimits:   config.repairLimits,
 		journal:        journal,
 		watermarks:     watermarks,
 		coordinator:    coordinator,
 		state:          state,
 		applier:        applier,
+		sessions:       make(map[string]lifecycleSessionEntry),
 	}
 	if hasCheckpoint {
 		runtime.snapshot = &checkpoint
@@ -167,6 +192,13 @@ func (r *lifecycleRuntime) Close() error {
 	if r == nil || r.journal == nil {
 		return nil
 	}
+	r.sessionsMu.Lock()
+	for key, entry := range r.sessions {
+		entry.cancel()
+		delete(r.sessions, key)
+	}
+	r.metrics.SessionsActive.Store(0)
+	r.sessionsMu.Unlock()
 	return r.journal.Close()
 }
 
@@ -182,4 +214,135 @@ func (r *lifecycleRuntime) Snapshot() *lifecycle.Checkpoint {
 	checkpoint := *r.snapshot
 	checkpoint.Records = append([]lifecycle.Record(nil), r.snapshot.Records...)
 	return &checkpoint
+}
+
+func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFrameBytes int, log *slog.Logger) {
+	if r == nil || peer == nil || !lifecycle.HasLifecycleCapability(authCapabilitiesForPeer(peer)) {
+		return
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	framePeer, ok := peer.(lifecycle.RepairFramePeer)
+	if !ok {
+		r.metrics.SessionErrors.Add(1)
+		log.Warn("lifecycle peer does not expose repair frames", "remote", peer.RemoteAddr().String())
+		return
+	}
+	remoteID := authIdentityForPeer(peer)
+	if remoteID == "" {
+		r.metrics.SessionErrors.Add(1)
+		log.Warn("lifecycle peer has no authenticated identity", "remote", peer.RemoteAddr().String())
+		return
+	}
+	session, err := lifecycle.NewRepairSession(lifecycle.RepairSessionOptions{
+		Peer:           framePeer,
+		Coordinator:    r.coordinator,
+		Applier:        r.applier,
+		PeerID:         remoteID,
+		Snapshot:       r.Snapshot(),
+		CheckpointPath: r.checkpointPath,
+		MaxFrameBytes:  maxFrameBytes,
+	})
+	if err != nil {
+		r.metrics.SessionErrors.Add(1)
+		log.Warn("lifecycle repair session rejected", "remote", peer.RemoteAddr().String(), "err", err)
+		return
+	}
+	sessionCtx, cancel := context.WithCancel(ctx)
+	key := repairPeerKey(peer)
+	r.sessionsMu.Lock()
+	if previous, exists := r.sessions[key]; exists {
+		previous.cancel()
+		r.metrics.SessionsActive.Add(-1)
+	}
+	r.sessions[key] = lifecycleSessionEntry{session: session, cancel: cancel}
+	r.metrics.SessionsStarted.Add(1)
+	r.metrics.SessionsActive.Add(1)
+	r.sessionsMu.Unlock()
+
+	go func() {
+		err := session.Run(sessionCtx)
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			r.metrics.SessionErrors.Add(1)
+			log.Warn("lifecycle repair session", "remote", peer.RemoteAddr().String(), "err", err)
+		} else if err == nil {
+			r.metrics.SessionsCompleted.Add(1)
+		}
+	}()
+}
+
+func (r *lifecycleRuntime) ForgetPeer(peer p2p.Peer) {
+	if r == nil || peer == nil {
+		return
+	}
+	key := repairPeerKey(peer)
+	r.sessionsMu.Lock()
+	entry, exists := r.sessions[key]
+	if exists {
+		delete(r.sessions, key)
+		entry.cancel()
+		r.metrics.SessionsActive.Add(-1)
+	}
+	r.sessionsMu.Unlock()
+}
+
+func (r *lifecycleRuntime) HandleFrame(ctx context.Context, peer p2p.Peer, payload []byte) error {
+	if r == nil || peer == nil {
+		return lifecycle.ErrLifecycleCapabilityRequired
+	}
+	key := repairPeerKey(peer)
+	r.sessionsMu.Lock()
+	entry, exists := r.sessions[key]
+	r.sessionsMu.Unlock()
+	if !exists {
+		return errors.New("lifecycle: repair session unavailable")
+	}
+	r.metrics.FramesReceived.Add(1)
+	if err := entry.session.Handle(ctx, payload); err != nil {
+		r.metrics.FrameErrors.Add(1)
+		return err
+	}
+	return nil
+}
+
+func (r *lifecycleRuntime) Ready() bool {
+	return r == nil || r.journal != nil
+}
+
+func (r *lifecycleRuntime) Metrics() map[string]int64 {
+	if r == nil {
+		return map[string]int64{}
+	}
+	return map[string]int64{
+		"lifecycle_enabled":                   1,
+		"lifecycle_repair_sessions_started":   int64(r.metrics.SessionsStarted.Load()),
+		"lifecycle_repair_sessions_completed": int64(r.metrics.SessionsCompleted.Load()),
+		"lifecycle_repair_sessions_active":    r.metrics.SessionsActive.Load(),
+		"lifecycle_repair_session_errors":     int64(r.metrics.SessionErrors.Load()),
+		"lifecycle_repair_frames_received":    int64(r.metrics.FramesReceived.Load()),
+		"lifecycle_repair_frame_errors":       int64(r.metrics.FrameErrors.Load()),
+	}
+}
+
+func authCapabilitiesForPeer(peer p2p.Peer) []string {
+	if provider, ok := peer.(interface{ AuthCapabilities() []string }); ok {
+		return provider.AuthCapabilities()
+	}
+	return nil
+}
+
+func isLifecycleRepairPayload(payload []byte) bool {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return false
+	}
+	switch envelope.Type {
+	case lifecycle.RepairBatchMessageType, lifecycle.RepairSnapshotMessageType, lifecycle.RepairAckMessageType:
+		return true
+	default:
+		return false
+	}
 }
