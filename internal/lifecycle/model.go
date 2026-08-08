@@ -313,6 +313,27 @@ func (s *Store) Snapshot() []Record {
 	return records
 }
 
+// ReplaceSnapshot atomically replaces the logical view with a validated,
+// duplicate-free checkpoint set. Callers persist the corresponding journal
+// checkpoint before publishing this in-memory view.
+func (s *Store) ReplaceSnapshot(records []Record) error {
+	next := make(map[logicalKey]Record, len(records))
+	for _, record := range records {
+		if err := record.Validate(s.limits); err != nil {
+			return err
+		}
+		key := logicalKey{namespace: string(record.Namespace), logicalKey: string(record.LogicalKey)}
+		if _, exists := next[key]; exists {
+			return ErrDuplicateLogicalKey
+		}
+		next[key] = record.clone()
+	}
+	s.mu.Lock()
+	s.records = next
+	s.mu.Unlock()
+	return nil
+}
+
 func normalizeCheckpointRecords(records []Record, watermark Version, limits Limits) ([]Record, error) {
 	limits = limits.normalized()
 	if watermark.IsZero() && len(records) > 0 {

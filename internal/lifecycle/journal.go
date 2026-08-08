@@ -34,6 +34,7 @@ var (
 	ErrCompactionWatermark    = errors.New("lifecycle: invalid compaction watermark")
 	ErrCompactionBaseMismatch = errors.New("lifecycle: compaction base mismatch")
 	ErrPeerBehindWatermark    = errors.New("lifecycle: peer is behind compaction watermark")
+	ErrSnapshotStale          = errors.New("lifecycle: snapshot is older than journal")
 	ErrNilCheckpointPath      = errors.New("lifecycle: empty checkpoint path")
 )
 
@@ -483,6 +484,51 @@ func (j *Journal) Compact(ctx context.Context, request CompactionRequest) error 
 	if len(j.records) > 0 {
 		j.last = j.records[len(j.records)-1].Version
 	}
+	return nil
+}
+
+// InstallSnapshot durably installs a complete remote checkpoint and advances
+// the journal floor. It is used for a peer that cannot be repaired from the
+// retained journal tail; older local history is never retained as a suffix.
+func (j *Journal) InstallSnapshot(ctx context.Context, checkpointPath string, checkpoint Checkpoint) error {
+	if checkpointPath == "" {
+		return ErrNilCheckpointPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.ensureOpenLocked(); err != nil {
+		return err
+	}
+	if filepath.Clean(checkpointPath) == filepath.Clean(j.path) {
+		return ErrCompactionUnsafe
+	}
+	normalized, _, err := normalizeCheckpoint(checkpoint, j.limits)
+	if err != nil {
+		return err
+	}
+	if normalized.Watermark.Compare(j.last) < 0 {
+		return ErrSnapshotStale
+	}
+	if err := SaveCheckpoint(ctx, checkpointPath, normalized, j.limits); err != nil {
+		return err
+	}
+	newFile, newSize, err := j.rewriteLocked(ctx, normalized.Watermark, nil)
+	if err != nil {
+		return err
+	}
+	oldFile := j.file
+	if err := oldFile.Close(); err != nil {
+		_ = newFile.Close()
+		return err
+	}
+	j.file = newFile
+	j.floor = normalized.Watermark
+	j.last = normalized.Watermark
+	j.records = nil
+	j.size = newSize
 	return nil
 }
 

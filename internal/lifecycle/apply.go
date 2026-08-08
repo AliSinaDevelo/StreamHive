@@ -78,6 +78,39 @@ func (a *Applier) Apply(ctx context.Context, capabilities []string, record Recor
 	return a.state.Apply(record)
 }
 
+// ApplySnapshot verifies every referenced blob, durably installs the checkpoint,
+// then publishes the complete logical view. The watermark acknowledgement must
+// be sent by the caller only after this method returns successfully.
+func (a *Applier) ApplySnapshot(ctx context.Context, capabilities []string, snapshot Checkpoint, checkpointPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !HasLifecycleCapability(capabilities) {
+		return ErrLifecycleCapabilityRequired
+	}
+	if checkpointPath == "" {
+		return ErrNilCheckpointPath
+	}
+	normalized, _, err := normalizeCheckpoint(snapshot, a.limits)
+	if err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, record := range normalized.Records {
+		if record.State == StatePresent {
+			if err := a.ensureBlob(ctx, record.BlobKey, nil); err != nil {
+				return err
+			}
+		}
+	}
+	if err := a.journal.InstallSnapshot(ctx, checkpointPath, normalized); err != nil {
+		return err
+	}
+	return a.state.ReplaceSnapshot(normalized.Records)
+}
+
 func (a *Applier) ensureBlob(ctx context.Context, key, suppliedBlob []byte) error {
 	if a.blobs == nil {
 		return ErrNilApplierBlobStore
