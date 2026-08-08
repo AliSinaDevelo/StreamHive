@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -180,6 +182,129 @@ func TestRunLifecycleMutationsResumeSequenceAndRetainBlobAfterDelete(t *testing.
 	data, err := store.Get(ctx, records[0].BlobKey)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("value"), data)
+}
+
+func TestRunLifecycleStatusRestoresAggregateStateAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	lifecycleDir := t.TempDir()
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	data := []byte("status value")
+	blobKey := storage.SHA256Key(data)
+	require.NoError(t, store.Put(ctx, blobKey, data))
+	j, _, err := lifecycle.OpenJournal(filepath.Join(lifecycleDir, "journal"), lifecycle.JournalOptions{})
+	require.NoError(t, err)
+	records := []lifecycle.Record{
+		{
+			Namespace:   []byte("demo"),
+			LogicalKey:  []byte("present-item"),
+			State:       lifecycle.StatePresent,
+			BlobKey:     blobKey,
+			Version:     lifecycle.Version{Epoch: 2, Sequence: 1},
+			AuthorityID: "node-a",
+		},
+		{
+			Namespace:   []byte("demo"),
+			LogicalKey:  []byte("deleted-item"),
+			State:       lifecycle.StateDeleted,
+			Version:     lifecycle.Version{Epoch: 2, Sequence: 2},
+			AuthorityID: "node-a",
+		},
+	}
+	for _, record := range records {
+		require.NoError(t, j.Append(ctx, record))
+	}
+	require.NoError(t, j.Close())
+
+	start := func() (context.CancelFunc, <-chan error, *safeBuffer, *safeBuffer, string) {
+		nodeCtx, cancel := context.WithCancel(context.Background())
+		var out, stderr safeBuffer
+		done := make(chan error, 1)
+		go func() {
+			done <- run(nodeCtx, []string{
+				"-listen", "127.0.0.1:0",
+				"-health", "127.0.0.1:0",
+				"-replicate",
+				"-store-dir", storeDir,
+				"-lifecycle",
+				"-lifecycle-dir", lifecycleDir,
+				"-peer-auth-token", "shared-secret",
+				"-peer-id", "node-a",
+			}, &out, &stderr)
+		}()
+		var health string
+		healthPattern := regexp.MustCompile(`msg=health addr=([0-9a-fA-F.:]+)`)
+		require.Eventually(t, func() bool {
+			match := healthPattern.FindStringSubmatch(stderr.String())
+			if len(match) != 2 {
+				return false
+			}
+			health = match[1]
+			return strings.Contains(out.String(), "listening on")
+		}, 3*time.Second, 10*time.Millisecond, "stdout=%q stderr=%q", out.String(), stderr.String())
+		return cancel, done, &out, &stderr, health
+	}
+
+	readStatus := func(health string) lifecycleStatus {
+		response, getErr := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + health + "/lifecycle/status")
+		require.NoError(t, getErr)
+		defer func() { _ = response.Body.Close() }()
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		var status lifecycleStatus
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&status))
+		return status
+	}
+
+	stop, done, out, stderr, health := start()
+	status := readStatus(health)
+	assert.True(t, status.Enabled)
+	assert.True(t, status.Ready)
+	assert.Equal(t, "ready", status.Readiness)
+	assert.Equal(t, "node-a", status.AuthorityID)
+	assert.Equal(t, lifecycle.Version{Epoch: 2, Sequence: 2}, status.AuthorityVersion)
+	assert.Equal(t, lifecycle.Version{Epoch: 2, Sequence: 2}, status.JournalTail)
+	assert.Equal(t, 2, status.JournalEntries)
+	assert.Greater(t, status.JournalBytes, int64(0))
+	assert.Equal(t, 2, status.LogicalRecords)
+	assert.Equal(t, 1, status.Tombstones)
+	statusBody, err := json.Marshal(status)
+	require.NoError(t, err)
+	assert.NotContains(t, string(statusBody), "present-item")
+	assert.NotContains(t, string(statusBody), "deleted-item")
+
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + health + "/metrics")
+	require.NoError(t, err)
+	var metrics map[string]int64
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&metrics))
+	_ = response.Body.Close()
+	assert.Equal(t, int64(1), metrics["lifecycle_ready"])
+	assert.Equal(t, int64(2), metrics["lifecycle_authority_epoch"])
+	assert.Equal(t, int64(2), metrics["lifecycle_authority_sequence"])
+	assert.Equal(t, int64(2), metrics["lifecycle_journal_entries"])
+	assert.Equal(t, int64(2), metrics["lifecycle_logical_records"])
+	assert.Equal(t, int64(1), metrics["lifecycle_tombstones"])
+
+	response, err = (&http.Client{Timeout: 2 * time.Second}).Get("http://" + health + "/metrics/prometheus")
+	require.NoError(t, err)
+	prometheus, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	_ = response.Body.Close()
+	assert.Contains(t, string(prometheus), "# TYPE streamhive_lifecycle_journal_bytes gauge")
+	assert.Contains(t, string(prometheus), "streamhive_lifecycle_ready 1")
+
+	stop()
+	require.NoError(t, <-done, "stdout=%q stderr=%q", out.String(), stderr.String())
+
+	restartedStop, restartedDone, restartedOut, restartedErr, restartedHealth := start()
+	restartedStatus := readStatus(restartedHealth)
+	assert.Equal(t, status.AuthorityID, restartedStatus.AuthorityID)
+	assert.Equal(t, status.AuthorityVersion, restartedStatus.AuthorityVersion)
+	assert.Equal(t, status.JournalFloor, restartedStatus.JournalFloor)
+	assert.Equal(t, status.JournalTail, restartedStatus.JournalTail)
+	assert.Equal(t, status.LogicalRecords, restartedStatus.LogicalRecords)
+	restartedStop()
+	require.NoError(t, <-restartedDone, "stdout=%q stderr=%q", restartedOut.String(), restartedErr.String())
 }
 
 func TestRunLifecycleMutationConvergesOverAuthenticatedTCP(t *testing.T) {
