@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -50,6 +51,92 @@ func TestLifecycleCLIConfigRequiresExplicitRuntimeDependencies(t *testing.T) {
 		"lifecycle: -lifecycle requires -peer-id",
 	)
 	assert.NoError(t, testLifecycleCLIConfig(t.TempDir()).validate(store, "token", "node-a"))
+}
+
+func TestRunLifecycleMutationFlagsAreStrict(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "requires opt in",
+			args: []string{"-lifecycle-put-namespace", "demo", "-lifecycle-put-key", "item", "-lifecycle-put-data", "value"},
+			want: "lifecycle: local mutation requires -lifecycle",
+		},
+		{
+			name: "put and delete are exclusive",
+			args: []string{"-lifecycle", "-lifecycle-put-namespace", "demo", "-lifecycle-put-key", "item", "-lifecycle-put-data", "value", "-lifecycle-delete-namespace", "demo", "-lifecycle-delete-key", "item"},
+			want: "lifecycle: put and delete commands are mutually exclusive",
+		},
+		{
+			name: "put requires namespace and key",
+			args: []string{"-lifecycle", "-lifecycle-put-data", "value"},
+			want: "lifecycle: put requires -lifecycle-put-namespace and -lifecycle-put-key",
+		},
+		{
+			name: "delete requires namespace and key",
+			args: []string{"-lifecycle", "-lifecycle-delete-namespace", "demo"},
+			want: "lifecycle: delete requires -lifecycle-delete-namespace and -lifecycle-delete-key",
+		},
+		{
+			name: "exit requires mutation",
+			args: []string{"-lifecycle-exit-after-mutation"},
+			want: "lifecycle: -lifecycle-exit-after-mutation requires a local mutation",
+		},
+		{
+			name: "timeout is positive",
+			args: []string{"-lifecycle-mutation-timeout", "0s"},
+			want: "lifecycle: -lifecycle-mutation-timeout must be greater than zero",
+		},
+		{
+			name: "blob key is hex sha256",
+			args: []string{"-lifecycle", "-lifecycle-put-namespace", "demo", "-lifecycle-put-key", "item", "-lifecycle-put-data", "value", "-lifecycle-put-blob-key", "bad"},
+			want: "lifecycle: invalid -lifecycle-put-blob-key",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := run(context.Background(), tt.args, io.Discard, io.Discard)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestRunLifecyclePutCommitsAndExits(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	lifecycleDir := t.TempDir()
+	var out safeBuffer
+	err := run(ctx, []string{
+		"-listen", "127.0.0.1:0",
+		"-replicate",
+		"-store-dir", storeDir,
+		"-lifecycle",
+		"-lifecycle-dir", lifecycleDir,
+		"-peer-auth-token", "shared-secret",
+		"-peer-id", "node-a",
+		"-lifecycle-put-namespace", "demo",
+		"-lifecycle-put-key", "item",
+		"-lifecycle-put-data", "value",
+		"-lifecycle-exit-after-mutation",
+	}, &out, io.Discard)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "lifecycle mutation committed state=present")
+
+	journal, _, err := lifecycle.OpenJournal(filepath.Join(lifecycleDir, "journal"), lifecycle.JournalOptions{})
+	require.NoError(t, err)
+	defer func() { _ = journal.Close() }()
+	records, err := journal.Records(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, lifecycle.StatePresent, records[0].State)
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	data, err := store.Get(ctx, records[0].BlobKey)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value"), data)
 }
 
 func TestOpenLifecycleRuntimeRestoresDurableState(t *testing.T) {

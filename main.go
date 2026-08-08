@@ -110,6 +110,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	lifecycleMaxKeyBytes := fs.Int("lifecycle-max-key-bytes", lifecycle.DefaultMaxRepairLogicalKeyBytes, "max lifecycle logical-key bytes per repair frame")
 	lifecycleMaxMetadataBytes := fs.Int("lifecycle-max-metadata-bytes", lifecycle.DefaultMaxRepairMetadataBytes, "max lifecycle metadata bytes per repair frame")
 	lifecycleMaxFrameBytes := fs.Int("lifecycle-max-frame-bytes", lifecycle.DefaultMaxRepairFrameBytes, "max encoded lifecycle repair frame bytes")
+	lifecyclePutNamespace := fs.String("lifecycle-put-namespace", "", "create one lifecycle present record in this namespace")
+	lifecyclePutKey := fs.String("lifecycle-put-key", "", "logical key for one lifecycle present record")
+	lifecyclePutData := fs.String("lifecycle-put-data", "", "data for one lifecycle present record")
+	lifecyclePutBlobKey := fs.String("lifecycle-put-blob-key", "", "optional hex SHA-256 key to validate for lifecycle put data")
+	lifecycleDeleteNamespace := fs.String("lifecycle-delete-namespace", "", "create one lifecycle tombstone in this namespace")
+	lifecycleDeleteKey := fs.String("lifecycle-delete-key", "", "logical key for one lifecycle tombstone")
+	lifecycleExitAfterMutation := fs.Bool("lifecycle-exit-after-mutation", false, "wait for lifecycle acknowledgements, then exit after one local mutation")
+	lifecycleMutationTimeout := fs.Duration("lifecycle-mutation-timeout", 10*time.Second, "bounded wait for lifecycle mutation acknowledgements")
 
 	tlsCert := fs.String("tls-cert", "", "path to PEM certificate (enables TLS on listener)")
 	tlsKey := fs.String("tls-key", "", "path to PEM private key for -tls-cert")
@@ -143,11 +151,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	peerTargets := combinePeerTargets(dialTarget, peerList)
 	putRequested := *putKey != "" || *putContentKey
+	lifecyclePutRequested := *lifecyclePutNamespace != "" || *lifecyclePutKey != "" || *lifecyclePutData != "" || *lifecyclePutBlobKey != ""
+	lifecycleDeleteRequested := *lifecycleDeleteNamespace != "" || *lifecycleDeleteKey != ""
+	lifecycleMutationRequested := lifecyclePutRequested || lifecycleDeleteRequested
 	if putRequested && len(peerTargets) == 0 {
 		return fmt.Errorf("replication: -put-key or -put-content-key requires -dial or -peers")
 	}
 	if *putContentKey && *putKey != "" {
 		return fmt.Errorf("replication: -put-content-key cannot be combined with -put-key")
+	}
+	if lifecyclePutRequested && lifecycleDeleteRequested {
+		return fmt.Errorf("lifecycle: put and delete commands are mutually exclusive")
+	}
+	if lifecycleMutationRequested && putRequested {
+		return fmt.Errorf("lifecycle: local mutation cannot be combined with raw blob put")
+	}
+	if lifecycleMutationRequested && !*lifecycleEnabled {
+		return fmt.Errorf("lifecycle: local mutation requires -lifecycle")
+	}
+	if lifecyclePutRequested && (*lifecyclePutNamespace == "" || *lifecyclePutKey == "") {
+		return fmt.Errorf("lifecycle: put requires -lifecycle-put-namespace and -lifecycle-put-key")
+	}
+	if lifecycleDeleteRequested && (*lifecycleDeleteNamespace == "" || *lifecycleDeleteKey == "") {
+		return fmt.Errorf("lifecycle: delete requires -lifecycle-delete-namespace and -lifecycle-delete-key")
+	}
+	if *lifecycleExitAfterMutation && !lifecycleMutationRequested {
+		return fmt.Errorf("lifecycle: -lifecycle-exit-after-mutation requires a local mutation")
+	}
+	if *lifecycleMutationTimeout <= 0 {
+		return fmt.Errorf("lifecycle: -lifecycle-mutation-timeout must be greater than zero")
 	}
 	if *peerReconnect {
 		if len(peerList) == 0 {
@@ -155,6 +187,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		if putRequested {
 			return fmt.Errorf("replication: -peer-reconnect cannot be combined with -put-key or -put-content-key")
+		}
+		if lifecycleMutationRequested {
+			return fmt.Errorf("replication: -peer-reconnect cannot be combined with a lifecycle mutation")
 		}
 		if err := validateReconnectBackoff(*peerReconnectMin, *peerReconnectMax); err != nil {
 			return err
@@ -220,6 +255,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *lifecycleMaxRecords < 0 || *lifecycleMaxKeyBytes < 0 || *lifecycleMaxMetadataBytes < 0 || *lifecycleMaxFrameBytes < 0 {
 		return fmt.Errorf("lifecycle: repair limits must be zero or greater")
+	}
+	var lifecyclePutBlobKeyBytes []byte
+	if *lifecyclePutBlobKey != "" {
+		lifecyclePutBlobKeyBytes, err = storage.ParseSHA256KeyHex(*lifecyclePutBlobKey)
+		if err != nil {
+			return fmt.Errorf("lifecycle: invalid -lifecycle-put-blob-key: %w", err)
+		}
 	}
 	if *tlsExpiryWarning < 0 {
 		return fmt.Errorf("tls: -tls-expiry-warning must be zero or greater")
@@ -494,6 +536,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	var hsrv *http.Server
+	var lifecycleMutationRecord lifecycle.Record
+	lifecycleMutationCommitted := false
 	gracefulShutdown := false
 	requestShutdown := func() {
 		gracefulShutdown = true
@@ -521,6 +565,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "listening on %s\n", addr.String()); err != nil {
 		return err
 	}
+	if lifecycleMutationRequested {
+		var result lifecycle.ApplyResult
+		if lifecyclePutRequested {
+			lifecycleMutationRecord, result, err = lifecycleState.put(ctx, *lifecyclePutNamespace, *lifecyclePutKey, []byte(*lifecyclePutData), lifecyclePutBlobKeyBytes)
+		} else {
+			lifecycleMutationRecord, result, err = lifecycleState.delete(ctx, *lifecycleDeleteNamespace, *lifecycleDeleteKey)
+		}
+		if err != nil {
+			return fmt.Errorf("lifecycle: local mutation: %w", err)
+		}
+		lifecycleMutationCommitted = true
+		if _, err := fmt.Fprintf(stdout, "lifecycle mutation committed state=%s version=%d/%d outcome=%s\n", lifecycleMutationRecord.State, lifecycleMutationRecord.Version.Epoch, lifecycleMutationRecord.Version.Sequence, result.Outcome); err != nil {
+			return err
+		}
+	}
 
 	if dialTarget != "" {
 		if err := tr.Dial(ctx, dialTarget); err != nil {
@@ -535,6 +594,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 				return fmt.Errorf("dial %s: %w", target, err)
 			}
 		}
+	}
+	if lifecycleMutationCommitted && *lifecycleExitAfterMutation {
+		waitCtx, cancel := context.WithTimeout(ctx, *lifecycleMutationTimeout)
+		waitErr := lifecycleState.waitForVersion(waitCtx, lifecycleMutationRecord.Version, len(peerTargets))
+		cancel()
+		if waitErr != nil {
+			return fmt.Errorf("lifecycle: mutation acknowledgements: %w", waitErr)
+		}
+		requestShutdown()
+		return nil
 	}
 	if *exitAfterPut && putResult != nil {
 		waitTimeout := putWaitTimeout(*putAckTimeout, *putRetryDelay, *putRetries)

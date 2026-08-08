@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/AliSinaDevelo/StreamHive/internal/lifecycle"
 	"github.com/AliSinaDevelo/StreamHive/p2p"
@@ -294,6 +295,33 @@ func (r *lifecycleRuntime) recordsForRawSync(ctx context.Context, peerID string)
 		}
 	}
 	return selected, nil
+}
+
+func (r *lifecycleRuntime) waitForVersion(ctx context.Context, version lifecycle.Version, peerCount int) error {
+	if r == nil || r.watermarks == nil {
+		return errors.New("lifecycle: repair acknowledgements unavailable")
+	}
+	if peerCount <= 0 {
+		return nil
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		acknowledged := 0
+		for _, watermark := range r.watermarks.Snapshot() {
+			if watermark.Compare(version) >= 0 {
+				acknowledged++
+			}
+		}
+		if acknowledged >= peerCount {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func verifyLifecycleRecords(ctx context.Context, blobs storage.BlobStore, records []lifecycle.Record) error {
