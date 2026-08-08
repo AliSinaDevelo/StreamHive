@@ -119,6 +119,75 @@ func inventoryBudgetPrometheus(t *testing.T, node *inventoryBudgetNode) string {
 	return string(body)
 }
 
+func inventoryBudgetStatus(t *testing.T, node *inventoryBudgetNode) inventoryStatusResponse {
+	t.Helper()
+	status, err := tryInventoryBudgetStatus(node)
+	require.NoError(t, err)
+	return status
+}
+
+func tryInventoryBudgetStatus(node *inventoryBudgetNode) (inventoryStatusResponse, error) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://" + node.health + "/inventory/status")
+	if err != nil {
+		return inventoryStatusResponse{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return inventoryStatusResponse{}, fmt.Errorf("inventory status: %s", resp.Status)
+	}
+	var status inventoryStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return inventoryStatusResponse{}, err
+	}
+	return status, nil
+}
+
+func TestRun_inventoryStatusConvergesAfterAntiEntropy(t *testing.T) {
+	ctx := context.Background()
+	sourceDir := t.TempDir()
+	targetDir := t.TempDir()
+	sourceStore, err := storage.NewFileStore(sourceDir)
+	require.NoError(t, err)
+
+	var keys [][]byte
+	for i := 0; i < 5; i++ {
+		data := []byte(fmt.Sprintf("streamhive-inventory-status-blob-%02d", i))
+		key := storage.SHA256Key(data)
+		require.NoError(t, sourceStore.Put(ctx, key, data))
+		keys = append(keys, key)
+	}
+
+	target := startInventoryBudgetNode(t, targetDir, "")
+	t.Cleanup(func() { target.stop(t) })
+	targetBefore := inventoryBudgetStatus(t, target)
+	assert.True(t, targetBefore.Enabled)
+	assert.True(t, targetBefore.Ready)
+	assert.Equal(t, 0, targetBefore.Keys)
+
+	source := startInventoryBudgetNode(t, sourceDir, target.listen)
+	t.Cleanup(func() { source.stop(t) })
+	sourceStatus := inventoryBudgetStatus(t, source)
+	assert.Equal(t, len(keys), sourceStatus.Keys)
+	assert.Equal(t, int64(len(keys)*storage.SHA256KeyBytes), sourceStatus.KeyBytes)
+	assert.NotEqual(t, targetBefore.Digest, sourceStatus.Digest)
+
+	var targetAfter inventoryStatusResponse
+	require.Eventually(t, func() bool {
+		status, statusErr := tryInventoryBudgetStatus(target)
+		if statusErr != nil {
+			return false
+		}
+		targetAfter = status
+		return status.Enabled && status.Ready &&
+			status.Keys == sourceStatus.Keys &&
+			status.KeyBytes == sourceStatus.KeyBytes &&
+			status.Digest == sourceStatus.Digest
+	}, 8*time.Second, 20*time.Millisecond, "inventory status did not converge: before=%+v source=%+v target=%+v source stderr=%q target stderr=%q", targetBefore, sourceStatus, targetAfter, source.err.String(), target.err.String())
+
+	assert.Equal(t, sourceStatus, targetAfter)
+}
+
 func TestRun_budgetedInventoryConvergesAfterTargetRestart(t *testing.T) {
 	ctx := context.Background()
 	sourceDir := t.TempDir()
