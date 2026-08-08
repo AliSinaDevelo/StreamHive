@@ -234,6 +234,18 @@ func NewStore(limits Limits) *Store {
 	}
 }
 
+// Classify validates a record and reports its outcome without changing state.
+func (s *Store) Classify(record Record) (ApplyResult, error) {
+	if err := record.Validate(s.limits); err != nil {
+		return ApplyResult{}, err
+	}
+	key := logicalKey{namespace: string(record.Namespace), logicalKey: string(record.LogicalKey)}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	previous, exists := s.records[key]
+	return classifyRecord(record, previous, exists)
+}
+
 // Apply applies a record according to version and same-token conflict rules.
 func (s *Store) Apply(record Record) (ApplyResult, error) {
 	if err := record.Validate(s.limits); err != nil {
@@ -243,14 +255,22 @@ func (s *Store) Apply(record Record) (ApplyResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	previous, exists := s.records[key]
-	if !exists {
+	result, err := classifyRecord(record, previous, exists)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if result.Outcome == OutcomeApplied {
 		s.records[key] = record.clone()
+	}
+	return result, nil
+}
+
+func classifyRecord(record, previous Record, exists bool) (ApplyResult, error) {
+	if !exists {
 		return ApplyResult{Outcome: OutcomeApplied, Version: record.Version}, nil
 	}
-
 	switch comparison := record.Version.Compare(previous.Version); {
 	case comparison > 0:
-		s.records[key] = record.clone()
 		return ApplyResult{Outcome: OutcomeApplied, Version: record.Version}, nil
 	case comparison < 0:
 		return ApplyResult{Outcome: OutcomeStale, Version: previous.Version}, nil

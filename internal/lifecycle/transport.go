@@ -9,6 +9,8 @@ import (
 )
 
 const (
+	// LifecycleCapabilityV1 identifies the capability required for lifecycle records.
+	LifecycleCapabilityV1 = "lifecycle.v1"
 	// LifecycleRecordMessageType identifies a logical lifecycle mutation envelope.
 	LifecycleRecordMessageType = "lifecycle.record"
 	// DefaultMaxLifecyclePayloadBytes bounds the JSON envelope independently from raw blobs.
@@ -24,6 +26,8 @@ var (
 	ErrLifecycleEnvelopeTrailingData = errors.New("lifecycle: trailing transport envelope data")
 	// ErrLifecycleMessageType is returned when a lifecycle decoder receives another protocol message.
 	ErrLifecycleMessageType = errors.New("lifecycle: unexpected transport message type")
+	// ErrLifecycleCapabilityRequired is returned before decoding when a peer is not lifecycle-ready.
+	ErrLifecycleCapabilityRequired = errors.New("lifecycle: capability is required")
 )
 
 // TransportLimits bounds a lifecycle record envelope and its inner record separately.
@@ -44,6 +48,16 @@ func (l TransportLimits) normalized() TransportLimits {
 type RecordEnvelope struct {
 	Type   string `json:"type"`
 	Record Record `json:"record"`
+}
+
+// HasLifecycleCapability reports whether a peer negotiated lifecycle.v1.
+func HasLifecycleCapability(capabilities []string) bool {
+	for _, capability := range capabilities {
+		if capability == LifecycleCapabilityV1 {
+			return true
+		}
+	}
+	return false
 }
 
 // EncodeRecord validates and encodes one lifecycle record without applying it.
@@ -92,4 +106,12 @@ func DecodeRecord(payload []byte, limits TransportLimits) (Record, error) {
 		return Record{}, errors.Join(ErrLifecycleEnvelopeMalformed, err)
 	}
 	return envelope.Record, nil
+}
+
+// DecodeRecordForPeer refuses lifecycle data before decoding when the peer lacks lifecycle.v1.
+func DecodeRecordForPeer(payload []byte, capabilities []string, limits TransportLimits) (Record, error) {
+	if !HasLifecycleCapability(capabilities) {
+		return Record{}, ErrLifecycleCapabilityRequired
+	}
+	return DecodeRecord(payload, limits)
 }
