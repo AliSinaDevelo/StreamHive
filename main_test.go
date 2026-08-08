@@ -1882,6 +1882,41 @@ func TestSendRequestedBlobsSkipsUnsendableBlobAndContinues(t *testing.T) {
 	assert.Equal(t, uint64(1), metrics.RepairBlobsSent.Load())
 }
 
+func TestSendRequestedBlobsSkipsCorruptContentAddressedSource(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemoryStore()
+	key := storage.SHA256Key([]byte("expected"))
+	require.NoError(t, store.Put(ctx, key, []byte("tampered")))
+	require.NoError(t, store.Put(ctx, []byte("opaque"), []byte("value")))
+	metrics := &replicationMetrics{}
+	peer := &capturePeer{}
+
+	err := sendRequestedBlobs(
+		ctx,
+		peer,
+		store,
+		[][]byte{key, []byte("opaque")},
+		replication.Limits{},
+		0,
+		metrics,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		true,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, peer.payloads, 1)
+	msg, decodeErr := replication.Decode(peer.payloads[0], replication.Limits{})
+	require.NoError(t, decodeErr)
+	assert.Equal(t, replication.MessageTypeBlobPut, msg.Type)
+	assert.Equal(t, []byte("opaque"), msg.Key)
+	assert.Equal(t, []byte("value"), msg.Data)
+	assert.Equal(t, uint64(1), metrics.CorruptBlobsDetected.Load())
+	assert.Equal(t, uint64(1), metrics.BlobsSkipped.Load())
+	assert.Equal(t, uint64(1), metrics.BlobsSent.Load())
+	assert.Equal(t, uint64(1), metrics.RepairBlobsSent.Load())
+	assert.Equal(t, uint64(0), metrics.SendErrors.Load())
+}
+
 func TestSendRequestedBlobsDefersAfterRepairByteBudgetAndRecovers(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()

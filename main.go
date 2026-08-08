@@ -1335,6 +1335,12 @@ func sendRequestedBlobsResult(
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil
 			}
+			if errors.Is(err, storage.ErrSHA256Mismatch) {
+				metrics.CorruptBlobsDetected.Add(1)
+				metrics.BlobsSkipped.Add(1)
+				log.Warn("replicated corrupt blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "delivery", "anti-entropy")
+				return nil
+			}
 			if err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return ctxErr
@@ -1349,6 +1355,12 @@ func sendRequestedBlobsResult(
 			}
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if err := verifyContentKeyIfSHA256(key, data); err != nil {
+				metrics.CorruptBlobsDetected.Add(1)
+				metrics.BlobsSkipped.Add(1)
+				log.Warn("replicated corrupt blob skipped", "remote", peer.RemoteAddr().String(), "key", formatBlobKey(key), "delivery", "anti-entropy")
+				return nil
 			}
 			if repair && repairBytes > 0 && repairBytes+len(data) > repairBudget {
 				deferred := len(keys) - i
