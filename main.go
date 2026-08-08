@@ -374,7 +374,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	tr.PeerAuthIdentity = *peerID
 	tr.PeerAuthAllowedIdentities = peerAllowedIDs
 	if lifecycleState != nil {
-		tr.PeerAuthCapabilities = []string{p2p.CapabilityLifecycleV1}
+		tr.PeerAuthCapabilities = []string{
+			p2p.CapabilityLifecycleV1,
+			p2p.CapabilityLifecycleRepairReconcileV1,
+		}
 	}
 	tr.DialTimeout = *dialTimeout
 	tr.ReadIdleTimeout = *readIdle

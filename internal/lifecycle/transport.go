@@ -11,6 +11,8 @@ import (
 const (
 	// LifecycleCapabilityV1 identifies the capability required for lifecycle records.
 	LifecycleCapabilityV1 = "lifecycle.v1"
+	// LifecycleRepairReconcileCapabilityV1 enables startup watermark reconciliation.
+	LifecycleRepairReconcileCapabilityV1 = "lifecycle.repair-reconcile.v1"
 	// LifecycleRecordMessageType identifies a logical lifecycle mutation envelope.
 	LifecycleRecordMessageType = "lifecycle.record"
 	// DefaultMaxLifecyclePayloadBytes bounds the JSON envelope independently from raw blobs.
@@ -54,6 +56,17 @@ type RecordEnvelope struct {
 func HasLifecycleCapability(capabilities []string) bool {
 	for _, capability := range capabilities {
 		if capability == LifecycleCapabilityV1 {
+			return true
+		}
+	}
+	return false
+}
+
+// HasRepairReconciliationCapability reports whether a peer supports startup
+// watermark reconciliation for lifecycle repair sessions.
+func HasRepairReconciliationCapability(capabilities []string) bool {
+	for _, capability := range capabilities {
+		if capability == LifecycleRepairReconcileCapabilityV1 {
 			return true
 		}
 	}

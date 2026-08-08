@@ -31,6 +31,9 @@ type RepairSessionOptions struct {
 	Snapshot       *Checkpoint
 	CheckpointPath string
 	MaxFrameBytes  int
+	ReconcilePeer  bool
+	// BeforeRepair runs after startup watermark reconciliation and before the first repair frame.
+	BeforeRepair func(context.Context) error
 }
 
 // RepairSession plans, sends, receives, applies, and acknowledges bounded
@@ -43,8 +46,13 @@ type RepairSession struct {
 	snapshot       *Checkpoint
 	checkpointPath string
 	maxFrameBytes  int
+	reconcilePeer  bool
+	beforeRepair   func(context.Context) error
 	sendMu         sync.Mutex
 	ackNotify      chan struct{}
+	helloMu        sync.Mutex
+	helloReceived  bool
+	helloNotify    chan struct{}
 }
 
 // NewRepairSession constructs a cancellation-safe session. Applier is optional
@@ -74,7 +82,10 @@ func NewRepairSession(options RepairSessionOptions) (*RepairSession, error) {
 		snapshot:       options.Snapshot,
 		checkpointPath: options.CheckpointPath,
 		maxFrameBytes:  maxFrameBytes,
+		reconcilePeer:  options.ReconcilePeer,
+		beforeRepair:   options.BeforeRepair,
 		ackNotify:      make(chan struct{}, 1),
+		helloNotify:    make(chan struct{}, 1),
 	}, nil
 }
 
@@ -82,6 +93,21 @@ func NewRepairSession(options RepairSessionOptions) (*RepairSession, error) {
 // before planning the next frame. It stops after the current journal tail;
 // callers can start it again after a reconnect or when new records exist.
 func (s *RepairSession) Run(ctx context.Context) error {
+	if s.reconcilePeer {
+		if err := s.sendStartupWatermark(ctx); err != nil {
+			return err
+		}
+		if !s.coordinator.journal.LastVersion().IsZero() {
+			if err := s.waitForStartupWatermark(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	if s.beforeRepair != nil {
+		if err := s.beforeRepair(ctx); err != nil {
+			return err
+		}
+	}
 	for {
 		plan, err := s.SendNext(ctx)
 		if err != nil {
@@ -137,6 +163,14 @@ func (s *RepairSession) Handle(ctx context.Context, payload []byte) error {
 	}
 	switch {
 	case frame.Ack != nil:
+		if s.reconcilePeer && s.acceptStartupWatermark(frame.Ack.Watermark) {
+			if !s.coordinator.journal.LastVersion().IsZero() {
+				if err := s.coordinator.Reconcile(ctx, s.peerID, frame.Ack.Watermark); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		if err := s.coordinator.Acknowledge(ctx, s.peerID, frame.Ack.Watermark); err != nil {
 			return err
 		}
@@ -152,6 +186,39 @@ func (s *RepairSession) Handle(ctx context.Context, payload []byte) error {
 	default:
 		return ErrRepairMalformed
 	}
+}
+
+func (s *RepairSession) sendStartupWatermark(ctx context.Context) error {
+	return s.writeAck(ctx, s.coordinator.watermarks.Watermark(s.peerID))
+}
+
+func (s *RepairSession) waitForStartupWatermark(ctx context.Context) error {
+	s.helloMu.Lock()
+	received := s.helloReceived
+	s.helloMu.Unlock()
+	if received {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.helloNotify:
+		return nil
+	}
+}
+
+func (s *RepairSession) acceptStartupWatermark(watermark Version) bool {
+	s.helloMu.Lock()
+	defer s.helloMu.Unlock()
+	if s.helloReceived {
+		return false
+	}
+	s.helloReceived = true
+	select {
+	case s.helloNotify <- struct{}{}:
+	default:
+	}
+	return true
 }
 
 func (s *RepairSession) handleBatch(ctx context.Context, batch RepairBatch) error {

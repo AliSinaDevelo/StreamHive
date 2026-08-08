@@ -320,3 +320,69 @@ func TestRepairSessionRunWaitsForDurableAcknowledgements(t *testing.T) {
 	require.NoError(t, <-runDone)
 	assert.Equal(t, second.Version, coordinator.watermarks.Watermark("target"))
 }
+
+func TestRepairSessionReconcilesStartupWatermarkBeforePlanning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	record := testRecord(1, "live", StateDeleted, nil)
+	journal, _ := openTestJournal(t, JournalOptions{})
+	defer func() { _ = journal.Close() }()
+	appendTestRecords(t, journal, record)
+
+	book, err := OpenWatermarkBook(filepath.Join(t.TempDir(), "watermarks"), WatermarkOptions{})
+	require.NoError(t, err)
+	require.NoError(t, book.Acknowledge(context.Background(), "target", record.Version))
+	coordinator, err := NewRepairCoordinator(journal, book, RepairLimits{})
+	require.NoError(t, err)
+	peer := newRepairSessionPeer()
+	peer.caps = append(peer.caps, LifecycleRepairReconcileCapabilityV1)
+	beforeRepair := make(chan Version, 1)
+	session, err := NewRepairSession(RepairSessionOptions{
+		Peer:          peer,
+		Coordinator:   coordinator,
+		PeerID:        "target",
+		ReconcilePeer: true,
+		BeforeRepair: func(context.Context) error {
+			beforeRepair <- book.Watermark("target")
+			return nil
+		},
+	})
+	require.NoError(t, err)
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- session.Run(ctx) }()
+
+	var startupPayload []byte
+	require.Eventually(t, func() bool {
+		var ok bool
+		startupPayload, ok = peer.latestWrite()
+		if !ok {
+			return false
+		}
+		ack, decodeErr := DecodeRepairAck(startupPayload, RepairLimits{})
+		return decodeErr == nil && ack.Watermark == record.Version
+	}, time.Second, time.Millisecond)
+
+	startupAck, err := EncodeRepairAck(RepairAck{Watermark: Version{}}, RepairLimits{})
+	require.NoError(t, err)
+	require.NoError(t, session.Handle(context.Background(), startupAck))
+	assert.Equal(t, Version{}, book.Watermark("target"))
+	assert.Equal(t, Version{}, <-beforeRepair)
+
+	var repairPayload []byte
+	require.Eventually(t, func() bool {
+		var ok bool
+		repairPayload, ok = peer.latestWrite()
+		if !ok || bytes.Equal(startupPayload, repairPayload) {
+			return false
+		}
+		batch, decodeErr := DecodeRepairBatch(repairPayload, RepairLimits{})
+		return decodeErr == nil && batch.From.IsZero() && batch.To == record.Version
+	}, time.Second, time.Millisecond)
+
+	ack, err := EncodeRepairAck(RepairAck{Watermark: record.Version}, RepairLimits{})
+	require.NoError(t, err)
+	require.NoError(t, session.Handle(context.Background(), ack))
+	require.NoError(t, <-runDone)
+	assert.Equal(t, record.Version, book.Watermark("target"))
+}

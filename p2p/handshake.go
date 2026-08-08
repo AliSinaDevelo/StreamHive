@@ -29,6 +29,9 @@ const MaxPeerAuthIdentityBytes = 128
 const (
 	// CapabilityLifecycleV1 identifies the first logical lifecycle record protocol.
 	CapabilityLifecycleV1 = "lifecycle.v1"
+	// CapabilityLifecycleRepairReconcileV1 enables startup watermark reconciliation
+	// for lifecycle peers that may have lost local repair metadata.
+	CapabilityLifecycleRepairReconcileV1 = "lifecycle.repair-reconcile.v1"
 	// MaxPeerAuthCapabilities bounds the number of declarations in one auth frame.
 	MaxPeerAuthCapabilities = 16
 	// MaxPeerAuthCapabilityBytes bounds one capability declaration.
@@ -205,7 +208,7 @@ func normalizePeerAuthCapabilities(capabilities []string, rejectUnknown bool) ([
 			return nil, ErrPeerAuthCapabilityDuplicate
 		}
 		seen[capability] = struct{}{}
-		if capability != CapabilityLifecycleV1 {
+		if capability != CapabilityLifecycleV1 && capability != CapabilityLifecycleRepairReconcileV1 {
 			if rejectUnknown {
 				return nil, ErrPeerAuthCapabilityUnknown
 			}

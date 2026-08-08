@@ -55,6 +55,25 @@ func TestWatermarkBookSupportsForgetAndEmptyAcknowledgement(t *testing.T) {
 	assert.Empty(t, reopened.Snapshot())
 }
 
+func TestWatermarkBookReconcilesPeerMetadataLoss(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "watermarks")
+	book, err := OpenWatermarkBook(path, WatermarkOptions{})
+	require.NoError(t, err)
+
+	initial := Version{Epoch: 3, Sequence: 8}
+	current := Version{Epoch: 3, Sequence: 13}
+	require.NoError(t, book.Acknowledge(ctx, "peer-a", current))
+	require.NoError(t, book.Reconcile(ctx, "peer-a", initial))
+	assert.Equal(t, initial, book.Watermark("peer-a"))
+	require.NoError(t, book.Reconcile(ctx, "peer-a", Version{}))
+	assert.Equal(t, Version{}, book.Watermark("peer-a"))
+
+	reopened, err := OpenWatermarkBook(path, WatermarkOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, reopened.Snapshot())
+}
+
 func TestWatermarkBookBoundsAndCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bounded")
 	book, err := OpenWatermarkBook(path, WatermarkOptions{
@@ -149,6 +168,7 @@ func TestRepairCoordinatorValidatesPeerAndDependencies(t *testing.T) {
 	_, err = coordinator.Plan(context.Background(), "", nil)
 	assert.ErrorIs(t, err, ErrWatermarkPeerInvalid)
 	assert.ErrorIs(t, coordinator.Acknowledge(context.Background(), "peer-a", Version{Epoch: 1, Sequence: 1}), ErrRepairAcknowledgement)
+	assert.ErrorIs(t, coordinator.Reconcile(context.Background(), "peer-a", Version{Epoch: 1, Sequence: 1}), ErrRepairAcknowledgement)
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()

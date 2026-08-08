@@ -950,9 +950,6 @@ func TestRunLifecycleSnapshotRepairsStalePeerAfterCompaction(t *testing.T) {
 	assert.Equal(t, sourceTail, checkpoint.Watermark)
 	require.Len(t, checkpoint.Records, 2)
 
-	sourceWatermarks, err := lifecycle.OpenWatermarkBook(filepath.Join(sourceLifecycleDir, "watermarks"), lifecycle.WatermarkOptions{})
-	require.NoError(t, err)
-	require.NoError(t, sourceWatermarks.Forget(ctx, "target"))
 	targetStore, err := storage.NewFileStore(targetStoreDir)
 	require.NoError(t, err)
 	require.NoError(t, targetStore.Delete(ctx, liveBlobKey))

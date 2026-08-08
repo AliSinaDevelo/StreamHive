@@ -31,6 +31,11 @@ func TestNormalizePeerAuthCapabilities(t *testing.T) {
 			wantErr:       ErrPeerAuthCapabilityUnknown,
 		},
 		{
+			name:         "known lifecycle repair reconciliation capability",
+			capabilities: []string{CapabilityLifecycleRepairReconcileV1, CapabilityLifecycleV1},
+			want:         []string{CapabilityLifecycleRepairReconcileV1, CapabilityLifecycleV1},
+		},
+		{
 			name:         "duplicate capability",
 			capabilities: []string{CapabilityLifecycleV1, CapabilityLifecycleV1},
 			wantErr:      ErrPeerAuthCapabilityDuplicate,

@@ -163,6 +163,41 @@ func (b *WatermarkBook) Acknowledge(ctx context.Context, peer string, version Ve
 	return nil
 }
 
+// Reconcile replaces one peer watermark with the authenticated peer's current
+// view. Unlike Acknowledge, it permits a durable reset after peer metadata loss.
+func (b *WatermarkBook) Reconcile(ctx context.Context, peer string, version Version) error {
+	if b == nil {
+		return ErrNilWatermarkBook
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := b.validatePeer(peer); err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current, exists := b.watermarks[peer]
+	if exists && current == version {
+		return nil
+	}
+	next := cloneWatermarks(b.watermarks)
+	if version.IsZero() {
+		delete(next, peer)
+	} else {
+		if !exists && len(b.watermarks) >= b.maxPeers {
+			return ErrWatermarkLimit
+		}
+		next[peer] = version
+	}
+	if err := b.persistLocked(ctx, next); err != nil {
+		return err
+	}
+	b.watermarks = next
+	return nil
+}
+
 // Forget removes one peer acknowledgement durably. It is idempotent for an
 // unknown peer and is intended for explicit membership removal by an operator.
 func (b *WatermarkBook) Forget(ctx context.Context, peer string) error {
@@ -331,4 +366,22 @@ func (c *RepairCoordinator) Acknowledge(ctx context.Context, peer string, versio
 		return ErrRepairAcknowledgement
 	}
 	return c.watermarks.Acknowledge(ctx, peer, version)
+}
+
+// Reconcile accepts an authenticated peer's startup watermark, including a
+// reset to zero after that peer loses its local lifecycle metadata.
+func (c *RepairCoordinator) Reconcile(ctx context.Context, peer string, version Version) error {
+	if c == nil {
+		return ErrNilRepairWatermarks
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := c.watermarks.validatePeer(peer); err != nil {
+		return err
+	}
+	if !version.IsZero() && version.Compare(c.journal.LastVersion()) > 0 {
+		return ErrRepairAcknowledgement
+	}
+	return c.watermarks.Reconcile(ctx, peer, version)
 }

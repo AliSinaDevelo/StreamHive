@@ -544,6 +544,20 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 		log.Warn("lifecycle peer has no authenticated identity", "remote", peer.RemoteAddr().String())
 		return
 	}
+	var beforeRepair func(context.Context) error
+	if rawSync != nil {
+		beforeRepair = func(syncCtx context.Context) error {
+			records, syncErr := r.recordsForRawSync(syncCtx, remoteID)
+			if syncErr == nil {
+				syncErr = rawSync(syncCtx, peer, records)
+			}
+			if syncErr != nil && !errors.Is(syncErr, context.Canceled) && !errors.Is(syncErr, context.DeadlineExceeded) {
+				r.metrics.SessionErrors.Add(1)
+				log.Warn("lifecycle raw blob preflight", "remote", peer.RemoteAddr().String(), "err", syncErr)
+			}
+			return syncErr
+		}
+	}
 	session, err := lifecycle.NewRepairSession(lifecycle.RepairSessionOptions{
 		Peer:           framePeer,
 		Coordinator:    r.coordinator,
@@ -552,6 +566,8 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 		Snapshot:       r.Snapshot(),
 		CheckpointPath: r.checkpointPath,
 		MaxFrameBytes:  maxFrameBytes,
+		ReconcilePeer:  lifecycle.HasRepairReconciliationCapability(authCapabilitiesForPeer(peer)),
+		BeforeRepair:   beforeRepair,
 	})
 	if err != nil {
 		r.metrics.SessionErrors.Add(1)
@@ -576,19 +592,6 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 	go func() {
 		defer r.sessionsWG.Done()
 		defer r.finishSession(key, session)
-		if rawSync != nil {
-			records, syncErr := r.recordsForRawSync(sessionCtx, remoteID)
-			if syncErr == nil {
-				syncErr = rawSync(sessionCtx, peer, records)
-			}
-			if syncErr != nil {
-				if !errors.Is(syncErr, context.Canceled) && !errors.Is(syncErr, context.DeadlineExceeded) {
-					r.metrics.SessionErrors.Add(1)
-					log.Warn("lifecycle raw blob preflight", "remote", peer.RemoteAddr().String(), "err", syncErr)
-				}
-				return
-			}
-		}
 		err := session.Run(sessionCtx)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			r.metrics.SessionErrors.Add(1)
