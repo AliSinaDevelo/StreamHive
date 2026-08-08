@@ -4,6 +4,11 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Ops**: `/inventory/status` exposes aggregate live-scan key count, key-byte total, and a
+  deterministic length-prefixed SHA-256 inventory fingerprint without peer, key, content, or
+  deletion labels.
+- **Tests/CI**: `make test-inventory-status` proves source/target fingerprint mismatch before
+  bounded anti-entropy and equality after real-TCP repair under three race-enabled repetitions.
 - **Ops**: `/lifecycle/status` now includes aggregate repair session errors, received frame
   count, and frame errors alongside active, started, and completed session counters; the
   JSON and Prometheus surfaces remain label-free and do not expose peer or logical data.

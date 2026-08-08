@@ -379,13 +379,17 @@ inventory counters make whole-exchange pressure visible before that decision.
 
 ## Observability
 
-Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, and
-`/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
+Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, `/inventory/status`
+for the aggregate live key fingerprint, and `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
 replication counters, including `peer_auth_identity_rejections` for inbound identity
 allowlist failures and the aggregate anti-entropy counters described above. `/peers`
 includes remote address, local address, direction,
 connection timestamp, connection age in milliseconds, `auth_method` (`none` or
 `shared-token`), and optional `auth_identity`.
+
+`/inventory/status` reports only the live-scan marker, key count, key-byte total, and
+length-prefixed SHA-256 fingerprint. It is not a snapshot or deletion signal; it does not
+expose blob keys, raw content, peer labels, or a new wire message.
 
 The Prometheus endpoint emits a sorted, label-free family for every JSON metric. Each family
 has exactly one `# HELP`, one `# TYPE`, and one sample line; metric names and sample values are

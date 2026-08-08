@@ -12,7 +12,7 @@ flowchart TD
   rep --> st["Storage (storage)<br/>BlobStore"]
   st --> mem["MemoryStore"]
   st --> file["FileStore (durable)"]
-  tr -. exposes .-> health["HTTP /livez /readyz /peers /metrics"]
+  tr -. exposes .-> health["HTTP /livez /readyz /peers /metrics /inventory/status"]
 ```
 
 ## Layers

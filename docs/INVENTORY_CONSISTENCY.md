@@ -23,6 +23,35 @@ This keeps the current pager, aggregate byte/key budgets, and mixed-version `blo
 messages small. It also makes the required operational setting explicit: a long-lived mutable
 store needs a finite periodic inventory interval or an equivalent reconnect path.
 
+## Fingerprint Status
+
+The optional health server exposes `/inventory/status` as an aggregate local inventory signal.
+For a replicated node it reports:
+
+- `keys`: the number of keys observed during the scan;
+- `key_bytes`: the total byte length of those keys, excluding digest length prefixes;
+- `digest`: lowercase SHA-256 over each key's four-byte big-endian uint32 length followed by
+  the key bytes, in bytewise key order; and
+- `scan_consistency: "live"`, making the non-snapshot boundary explicit.
+
+Native `BlobKeyPager` implementations are consumed one bounded page at a time. Legacy
+`BlobKeyLister` implementations remain supported through their complete-list fallback. The
+summary does not add a wire message, revision, generation, tombstone, or deletion meaning. A
+scan can observe keys added or evicted between pages, so equal fingerprints are evidence that
+the two live scans observed the same ordered key inventory, not a transactionally pinned view.
+
+Raw-only nodes return `enabled: false`, `ready: true`, and no digest because they do not have a
+blob-key lister. If a configured lister cannot be scanned, the endpoint returns `503` with a
+bounded generic response and does not expose storage errors. The focused real-TCP proof is
+repeatable with:
+
+```bash
+make test-inventory-status
+```
+
+It captures an empty target before connection, proves a different source/target fingerprint,
+then waits for ordinary bounded anti-entropy to make key count, key bytes, and digest equal.
+
 ## Mutation Matrix
 
 | Mutation relative to the cursor | Current exchange | Recovery path |

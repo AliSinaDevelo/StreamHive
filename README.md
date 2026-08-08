@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml/badge.svg)](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml)
 
-StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/lifecycle/status`).
+StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/lifecycle/status`).
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.13.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, durable authority allocation, bounded journal/snapshot repair planning, durable per-peer watermarks, capability-gated repair frames, caller-owned repair sessions, negotiated startup-watermark reconciliation, opt-in CLI put/delete commands, raw-blob preflight, operator-authored membership fences, checkpoint-first compaction, and real-TCP plus three-node Compose convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction, and lifecycle compaction never deletes raw blobs; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, deterministic live inventory fingerprint status, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, durable authority allocation, bounded journal/snapshot repair planning, durable per-peer watermarks, capability-gated repair frames, caller-owned repair sessions, negotiated startup-watermark reconciliation, opt-in CLI put/delete commands, raw-blob preflight, operator-authored membership fences, checkpoint-first compaction, and real-TCP plus three-node Compose convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction, and lifecycle compaction never deletes raw blobs; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ go test ./...
 go run . -version
 make run
 ./bin/fs -listen :7070 -dial 127.0.0.1:8080
-./bin/fs -listen 127.0.0.1:0 -health 127.0.0.1:8080   # HTTP live/ready/peers/metrics
+./bin/fs -listen 127.0.0.1:0 -health 127.0.0.1:8080   # HTTP live/ready/peers/metrics/inventory
 ```
 
 ### Two-node replication demo
@@ -185,6 +185,18 @@ This race-enabled target inserts a new SHA-256 key behind an active bounded curs
 startup-only work does not pretend to be a snapshot, and proves the configured periodic pass
 repairs the key. See [docs/INVENTORY_CONSISTENCY.md](docs/INVENTORY_CONSISTENCY.md).
 
+To inspect a local inventory fingerprint without exposing blob keys or peer labels:
+
+```bash
+curl -fsS http://127.0.0.1:8080/inventory/status
+```
+
+The response reports `keys`, `key_bytes`, and a lowercase SHA-256 `digest` over the ordered
+length-prefixed key inventory. It also marks the scan as `live`; pages can observe mutations
+between calls, so the result is a convergence signal rather than a snapshot. Raw-only nodes
+return `enabled: false` with a ready live-scan status, and a failed store scan returns `503`.
+Run `make test-inventory-status` for the three-race-repeat real-TCP mismatch/equality proof.
+
 Deletion scope is explicit: `FileStore.Delete` is local eviction or garbage collection. A peer
 may rehydrate that blob through the current add-only anti-entropy path; distributed logical
 deletion is deferred to a separate versioned namespace design. See
@@ -332,7 +344,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-peer-reconnect` | Retry `-peers` with exponential backoff |
 | `-peer-reconnect-min` / `-peer-reconnect-max` | Reconnect backoff bounds |
 | `-sync-interval` | Periodically advertise local blob keys to connected peers (0 = startup only) |
-| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics`, `/lifecycle/status` |
+| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/lifecycle/status` |
 | `-max-peers` | Cap simultaneous peers (0 = unlimited) |
 | `-peer-auth-token` / `-peer-auth-timeout` | Optional shared-token peer auth before peer registration |
 | `-peer-id` | Optional application identity exchanged during shared-token auth (requires `-peer-auth-token`) |
