@@ -89,10 +89,22 @@ func TestRepairSessionAppliesBoundedBatchAndPersistsAcknowledgement(t *testing.T
 	plan, err := sender.SendNext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, RepairPlanJournal, plan.Mode)
-	require.NoError(t, receiver.Handle(ctx, sourcePeer.lastWrite(t)))
+	firstPayload := sourcePeer.lastWrite(t)
+	require.NoError(t, receiver.Handle(ctx, firstPayload))
 	require.NoError(t, sender.Handle(ctx, targetPeer.lastWrite(t)))
 	assert.Equal(t, first.Version, sourceBook.Watermark("target"))
 	assert.Equal(t, first.Version, targetBook.Watermark("source"))
+	assert.Equal(t, 1, targetJournal.Len())
+	require.NoError(t, receiver.Handle(ctx, firstPayload))
+	assert.Equal(t, 1, targetJournal.Len())
+	gap, err := EncodeRepairFrame(RepairFrame{Batch: &RepairBatch{
+		Type:    RepairBatchMessageType,
+		From:    Version{},
+		To:      second.Version,
+		Records: []Record{second},
+	}}, RepairLimits{MaxRecords: 1})
+	require.NoError(t, err)
+	assert.ErrorIs(t, receiver.Handle(ctx, gap), ErrRepairWatermarkMismatch)
 	assert.Equal(t, 1, targetJournal.Len())
 
 	plan, err = sender.SendNext(ctx)
