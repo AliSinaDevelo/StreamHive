@@ -2,7 +2,8 @@
 
 Status: v0.13.0 design plus the shipped capability, record-transport, apply, internal repair,
 capability-gated repair-frame, caller-owned repair-session, operator membership, checkpoint-first
-compaction, and stale-peer snapshot-repair boundaries from issues #51 through #60. This document
+compaction, stale-peer startup reconciliation, and three-node snapshot-repair boundaries from
+issues #51 through #61. This document
 extends the
 released v0.12.0 add-only blob contract. Raw blob deletion remains a separate retention concern.
 
@@ -257,6 +258,15 @@ the raw blob store is never physically deleted.
 The deterministic race-enabled proof is `make test-lifecycle-compaction` and exercises source
 compaction, target metadata restart behind the floor, source restart, raw blob rehydration, and
 logical present/tombstone restoration over real authenticated TCP.
+
+The Compose proof is `make test-lifecycle-compose`. It keeps node1 as the source, waits for two
+authenticated lifecycle members, compacts after both acknowledgements, restarts the source, and
+removes only node3's lifecycle directory while retaining its raw store. Node3 reconnects with the
+new startup-reconciliation capability, causes the source watermark to reset to its empty view,
+receives raw preflight followed by the compacted checkpoint, and verifies the present record,
+tombstone, checkpoint floor, and SHA-256 blob bytes. The topology deliberately uses node1 as the
+repair authority for node2 and node3; it does not add membership discovery, authority election,
+new lifecycle messages, distributed garbage collection, or conflict resolution.
 
 ## Option Comparison
 

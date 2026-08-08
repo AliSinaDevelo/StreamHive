@@ -6,7 +6,7 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.12.0**, pre-1.0).
 
-**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, durable authority allocation, bounded journal/snapshot repair planning, durable per-peer watermarks, capability-gated repair frames, caller-owned repair sessions, opt-in CLI put/delete commands, raw-blob preflight, operator-authored membership fences, checkpoint-first compaction, and real-TCP convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction, and lifecycle compaction never deletes raw blobs; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
+**Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, durable authority allocation, bounded journal/snapshot repair planning, durable per-peer watermarks, capability-gated repair frames, caller-owned repair sessions, negotiated startup-watermark reconciliation, opt-in CLI put/delete commands, raw-blob preflight, operator-authored membership fences, checkpoint-first compaction, and real-TCP plus three-node Compose convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction, and lifecycle compaction never deletes raw blobs; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
 
 ## Prerequisites
 
@@ -105,6 +105,17 @@ For a 3-node Docker Compose demo with durable stores and node restart rehydratio
 ```bash
 make demo-compose
 ```
+
+For the authenticated lifecycle compaction and stale-peer snapshot proof:
+
+```bash
+STREAMHIVE_LIFECYCLE_TOKEN="replace-with-a-local-demo-token" make test-lifecycle-compose
+```
+
+The acceptance demo seeds a present record and tombstone, waits for both replicas, compacts and
+restarts the source, then removes only node3's lifecycle metadata. Node3 reconnects with an empty
+repair journal, receives the compacted checkpoint, and proves logical state plus the retained raw
+SHA-256 blob. Compose cleanup runs on success, failure, or interruption.
 
 For the authenticated Compose variant, set one shared token. The demo proves matching
 tokens replicate, expected identities are authorized, unlisted identities and wrong tokens
@@ -277,6 +288,12 @@ watermark, the compaction target, `compaction_blocked`, and a bounded reason; th
 Prometheus metrics expose the same aggregate state without member IDs or peer labels. The focused
 stale-peer snapshot proof is repeatable with `make test-lifecycle-compaction`.
 
+When both authenticated peers advertise `lifecycle.repair-reconcile.v1`, each repair session first
+reports its durable startup watermark. A source accepts a lower or zero report only through that
+negotiated capability, then runs raw-blob preflight against the reconciled watermark before
+planning a journal batch or checkpoint snapshot. Peers that advertise only `lifecycle.v1` retain
+the monotonic acknowledgement path and raw compatibility.
+
 For the verified TLS plus application-auth boundary, including wrong-CA and wrong-hostname
 acceptance paths, see [docs/TLS_AUTH.md](docs/TLS_AUTH.md) and run `make test-tls-auth`.
 
@@ -344,7 +361,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
 | `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
-See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-lifecycle-compaction`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
+See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-lifecycle-compaction`, `test-lifecycle-compose`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
 
 ## Architecture (summary)
 

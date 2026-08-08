@@ -57,12 +57,13 @@ The authenticated envelope optionally carries a bounded capability list:
   "type": "peer.auth",
   "version": "streamhive/1",
   "token": "shared-token",
-  "capabilities": ["lifecycle.v1"]
+  "capabilities": ["lifecycle.repair-reconcile.v1", "lifecycle.v1"]
 }
 ```
 
 `TCPTransport.PeerAuthCapabilities` advertises locally supported capabilities. The current
-implementation supports `lifecycle.v1`; an incoming unknown capability is ignored for forward
+implementation supports `lifecycle.v1` and the optional `lifecycle.repair-reconcile.v1` startup
+watermark handshake; an incoming unknown capability is ignored for forward
 compatibility, while duplicate, invalid, or oversized declarations fail authentication. A local
 unknown capability is rejected during transport configuration. The list is exchanged only with
 shared-token auth, is bounded independently from raw replication frames, and is exposed in
@@ -72,6 +73,14 @@ The capability status is explicit: `ready` means `lifecycle.v1` was negotiated,
 `optional-raw-only` means a lifecycle-optional namespace may continue raw blob replication, and
 `required-unavailable` means a lifecycle-required namespace must refuse lifecycle exchange. A
 peer without the capability never receives a lifecycle record frame.
+
+When both peers negotiate `lifecycle.repair-reconcile.v1`, the first lifecycle repair `ack` on a
+connection is the authenticated peer's startup watermark. A source may replace its durable
+outbound watermark with that report, including a reset to zero after peer metadata loss. A
+non-empty source waits for this report before raw-blob preflight and repair planning; an empty
+source does not wait, so a newly initialized target cannot be blocked by the source's old
+watermark. This reuses `lifecycle.repair.ack` and adds no new frame type. Peers without the
+optional capability continue using monotonic acknowledgement semantics.
 
 The `identity` fields are optional for compatibility with token-only peers. They provide
 an explicit application identity label for snapshots and logs, but this slice does not
@@ -193,7 +202,10 @@ never implied.
 | `blob.missing` | `keys` | Ask the peer to send keys missing locally. |
 | `blob.get` | `key` | Ask the peer to send one key. |
 | `blob.ack` | `key` | Acknowledge that one `blob.put` key was accepted. |
-| `lifecycle.record` | `record` | One logical lifecycle mutation; requires `lifecycle.v1` and is not applied by the current transport slice. |
+| `lifecycle.record` | `record` | One logical lifecycle mutation; requires `lifecycle.v1`. |
+| `lifecycle.repair.batch` | `from`, `to`, `more`, `records` | Bounded ordered journal repair batch; requires `lifecycle.v1`. |
+| `lifecycle.repair.snapshot` | `watermark`, `records` | Complete checkpoint fallback for a peer behind the retained journal floor; requires `lifecycle.v1`. |
+| `lifecycle.repair.ack` | `watermark` | Durable repair acknowledgement, also used as the optional startup watermark report. |
 
 The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 

@@ -36,6 +36,13 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 - **Ops**: `/lifecycle/status` and Prometheus now expose membership configuration, member count,
   acknowledged count, minimum acknowledged watermark, compaction target, and aggregate
   compaction-blocked state without logical keys, member IDs, or peer labels.
+- **Lifecycle**: authenticated peers that negotiate `lifecycle.repair-reconcile.v1` now report
+  their startup watermark before repair; a source can durably reset a stale outbound watermark
+  after peer metadata loss, and raw-blob preflight runs after that reconciliation before snapshot
+  planning. Older `lifecycle.v1` peers retain the monotonic compatibility path.
+- **Tests/CI**: `make test-lifecycle-compose` adds a cleanup-safe authenticated three-node proof
+  for present and tombstone convergence, source compaction and restart, target lifecycle metadata
+  loss, checkpoint recovery, and raw SHA-256 retention.
 - **Tests**: lifecycle repair coverage includes empty/non-empty watermarks, reordered and
   duplicate delivery, frame limits, missing referenced blobs, compaction-floor snapshot fallback,
   restart reload, and corruption rejection.

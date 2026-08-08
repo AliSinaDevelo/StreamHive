@@ -158,6 +158,19 @@ It runs three race-enabled repetitions covering cooperative handler shutdown,
 pending authentication closure, deadline force-close, repeated drain calls, and
 rejection of new admissions after the transport enters its draining state.
 
+The lifecycle compaction and stale-peer snapshot acceptance targets are:
+
+```bash
+make test-lifecycle-compaction
+make test-lifecycle-compose
+```
+
+The first runs the race-enabled real-TCP proof. The second builds the authenticated three-node
+Compose topology, verifies present and tombstone convergence, compacts and restarts the source,
+removes only the target lifecycle metadata, and checks checkpoint recovery plus raw SHA-256
+retention. The Compose script bounds health polling and cleans up its project on success, failure,
+or interruption.
+
 The Prometheus exposition acceptance target is:
 
 ```bash
@@ -234,6 +247,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `govulncheck ./...` on a current patched Go toolchain (separate from the compatibility matrix)
 - `make demo-replication` with fixed localhost ports
 - `make demo-compose` to verify 3-node durable rehydration
+- `make test-lifecycle-compose` to verify authenticated three-node lifecycle compaction, source restart, and stale-peer checkpoint recovery
 - `make demo-auth` to verify authenticated peer identities, allowlist and token rejection before blob storage, and restart repair in one acceptance path
 - `make demo-repair` to overwrite durable content, observe `replication_corrupt_blobs_detected`, and verify a positive `replication_repair_blobs_sent` outcome plus recovered SHA-256 bytes
 - `make demo-failure` to verify peer reconnect plus repair after a node restart

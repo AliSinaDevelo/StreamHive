@@ -53,6 +53,19 @@ the expected remote identities, rejects an unlisted identity and a different tok
 storage, restarts node3 with an empty durable directory, and verifies periodic anti-entropy
 rehydrates the exact content-addressed key. The final output is a compact audit summary.
 
+Run the authenticated lifecycle compaction proof:
+
+```bash
+STREAMHIVE_LIFECYCLE_TOKEN="replace-with-a-local-demo-token" make test-lifecycle-compose
+```
+
+This separate topology keeps node1 as the lifecycle source and gives node2 and node3 durable
+stores, journals, checkpoints, watermarks, and operator-authored membership. It seeds one present
+record and one tombstone, waits for both acknowledgements, compacts and restarts node1, then
+restarts node3 after removing only its lifecycle directory. The demo requires node3 to restore the
+checkpointed logical state and retain the expected raw SHA-256 blob, with bounded health polling
+and Compose cleanup on every exit path.
+
 Inspect a running Compose cluster:
 
 ```bash
@@ -194,7 +207,7 @@ Define error budgets once you expose a workload to users. Baseline probes:
 - **Readiness**: `/readyz` reflects a bound listener and currently valid configured TLS identities; without TLS credentials it retains listener-only behavior.
 - **TLS credential health**: `tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, and `tls_certificates_expiring_soon` expose aggregate leaf-identity health through JSON and Prometheus without certificate or peer labels.
 - **Prometheus exposition**: `/metrics/prometheus` emits one sorted `# HELP`/`# TYPE` pair per sample. Event counters are typed `counter`; active, pending, in-flight, queued, and TLS health values are typed `gauge`.
-- **Lifecycle compaction**: `lifecycle_membership_configured`, `lifecycle_membership_members`, `lifecycle_membership_acknowledged`, `lifecycle_membership_min_epoch`, `lifecycle_membership_min_sequence`, `lifecycle_compaction_target_epoch`, `lifecycle_compaction_target_sequence`, and `lifecycle_compaction_blocked` expose the bounded operator fence and progress without member or peer labels. A missing membership file blocks `-lifecycle-compact`; an explicitly persisted empty membership is valid for a standalone node. Run `make test-lifecycle-compaction` for the real-TCP stale-peer snapshot proof.
+- **Lifecycle compaction**: `lifecycle_membership_configured`, `lifecycle_membership_members`, `lifecycle_membership_acknowledged`, `lifecycle_membership_min_epoch`, `lifecycle_membership_min_sequence`, `lifecycle_compaction_target_epoch`, `lifecycle_compaction_target_sequence`, and `lifecycle_compaction_blocked` expose the bounded operator fence and progress without member or peer labels. A missing membership file blocks `-lifecycle-compact`; an explicitly persisted empty membership is valid for a standalone node. Run `make test-lifecycle-compaction` for the focused real-TCP proof or `make test-lifecycle-compose` for the authenticated three-node checkpoint recovery proof.
 - **Health HTTP resource envelope**: request headers are bounded at 5 seconds and 1 MiB, reads/writes at 10 seconds, and idle connections at 60 seconds; cancellation closes the listener through graceful server shutdown.
 - **Peer visibility**: `/peers` returns active connected peers with remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 - **Saturation/auth/replication**: JSON `/metrics` fields `active_peers`, `peers_rejected`, `peer_auth_success`, `peer_auth_failures`, `peer_auth_identity_rejections`, `replication_blob_acks_sent`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_acks_pending`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, `replication_blob_write_errors`, `replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_sent`, `replication_inventory_keys_probed`, `replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`, `replication_inventory_exchanges_active`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`, and `replication_corrupt_blobs_detected`, or Prometheus samples from `/metrics/prometheus`. The anti-entropy counters are aggregate: advertisements count successful `blob.has` frames, keys sent count advertised keys, missing-key requests count keys in `blob.missing` messages, exchange-limited counts budgeted continuations, repair sends count successful repair `blob.put` frames, deferred counts keys held back by the per-response repair budget, and corruption counts damaged content-addressed files replaced by a verified repair.
