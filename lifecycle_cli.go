@@ -24,11 +24,14 @@ type lifecycleCLIConfig struct {
 	journalLimits lifecycle.JournalOptions
 }
 
+type lifecycleRawRecordSync func(context.Context, p2p.Peer, []lifecycle.Record) error
+
 type lifecycleRuntime struct {
 	checkpointPath string
 	repairLimits   lifecycle.RepairLimits
 	journal        *lifecycle.Journal
 	authority      *lifecycle.Authority
+	blobs          storage.BlobStore
 	watermarks     *lifecycle.WatermarkBook
 	coordinator    *lifecycle.RepairCoordinator
 	state          *lifecycle.Store
@@ -166,6 +169,7 @@ func openLifecycleRuntime(ctx context.Context, config lifecycleCLIConfig, blobs 
 		repairLimits:   config.repairLimits,
 		journal:        journal,
 		authority:      authority,
+		blobs:          blobs,
 		watermarks:     watermarks,
 		coordinator:    coordinator,
 		state:          state,
@@ -256,6 +260,42 @@ func (r *lifecycleRuntime) delete(ctx context.Context, namespace, logicalKey str
 	return record, result, nil
 }
 
+func (r *lifecycleRuntime) recordsForRawSync(ctx context.Context, peerID string) ([]lifecycle.Record, error) {
+	if r == nil || r.journal == nil || r.watermarks == nil {
+		return nil, errors.New("lifecycle: raw sync state unavailable")
+	}
+	records, err := r.journal.Records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	watermark := r.watermarks.Watermark(peerID)
+	seen := make(map[string]struct{})
+	selected := make([]lifecycle.Record, 0, len(records))
+	appendRecord := func(record lifecycle.Record) {
+		if record.State != lifecycle.StatePresent || record.Version.Compare(watermark) <= 0 {
+			return
+		}
+		key := string(record.BlobKey)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		selected = append(selected, record)
+	}
+	for _, record := range records {
+		appendRecord(record)
+	}
+	if watermark.Compare(r.journal.Floor()) < 0 {
+		checkpoint := r.Snapshot()
+		if checkpoint != nil {
+			for _, record := range checkpoint.Records {
+				appendRecord(record)
+			}
+		}
+	}
+	return selected, nil
+}
+
 func verifyLifecycleRecords(ctx context.Context, blobs storage.BlobStore, records []lifecycle.Record) error {
 	for _, record := range records {
 		if err := ctx.Err(); err != nil {
@@ -307,7 +347,7 @@ func (r *lifecycleRuntime) Snapshot() *lifecycle.Checkpoint {
 	return &checkpoint
 }
 
-func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFrameBytes int, log *slog.Logger) {
+func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFrameBytes int, log *slog.Logger, rawSync lifecycleRawRecordSync) {
 	if r == nil || peer == nil || !lifecycle.HasLifecycleCapability(authCapabilitiesForPeer(peer)) {
 		return
 	}
@@ -355,6 +395,19 @@ func (r *lifecycleRuntime) AttachPeer(ctx context.Context, peer p2p.Peer, maxFra
 
 	go func() {
 		defer r.sessionsWG.Done()
+		if rawSync != nil {
+			records, syncErr := r.recordsForRawSync(sessionCtx, remoteID)
+			if syncErr == nil {
+				syncErr = rawSync(sessionCtx, peer, records)
+			}
+			if syncErr != nil {
+				if !errors.Is(syncErr, context.Canceled) && !errors.Is(syncErr, context.DeadlineExceeded) {
+					r.metrics.SessionErrors.Add(1)
+					log.Warn("lifecycle raw blob preflight", "remote", peer.RemoteAddr().String(), "err", syncErr)
+				}
+				return
+			}
+		}
 		err := session.Run(sessionCtx)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			r.metrics.SessionErrors.Add(1)

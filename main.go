@@ -262,6 +262,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		putTracker = newPutAckTracker(replMetrics)
 		replMetrics.ackTracker = putTracker
 	}
+	if *lifecycleEnabled && putTracker == nil {
+		putTracker = newPutAckTracker(replMetrics)
+		replMetrics.ackTracker = putTracker
+	}
 	lifecycleConfig := lifecycleCLIConfig{
 		enabled: *lifecycleEnabled,
 		dir:     *lifecycleDir,
@@ -300,6 +304,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	var inventoryScheduler *inventoryExchangeScheduler
 	if keyLister != nil {
 		inventoryScheduler = newInventoryExchangeScheduler(ctx, keyLister, replLimits, tr.MaxFrameBytes, inventoryBudget, replMetrics, log, repairContinuationDelay)
+	}
+	var lifecycleRawSync lifecycleRawRecordSync
+	if lifecycleState != nil {
+		lifecycleRawSync = func(syncCtx context.Context, peer p2p.Peer, records []lifecycle.Record) error {
+			return syncLifecycleRawRecords(syncCtx, peer, lifecycleState.blobs, records, replLimits, tr.MaxFrameBytes, putTracker, *putAckTimeout, *putRetries, *putRetryDelay, replMetrics, log)
+		}
 	}
 	tr.OnPeer = func(peer p2p.Peer) {
 		if ctx.Err() != nil {
@@ -344,7 +354,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			inventoryScheduler.Start(peer)
 		}
 		if lifecycleState != nil {
-			lifecycleState.AttachPeer(ctx, peer, tr.MaxFrameBytes, log)
+			lifecycleState.AttachPeer(ctx, peer, tr.MaxFrameBytes, log, lifecycleRawSync)
 		}
 	}
 	var repairScheduler *repairContinuationScheduler
@@ -782,6 +792,48 @@ func sendBlobWithAck(
 		}
 	}
 	return &blobDeliveryError{kind: blobOutcomeAckTimeout, attempts: retries + 1, err: errBlobAckTimeout}
+}
+
+func syncLifecycleRawRecords(
+	ctx context.Context,
+	peer p2p.Peer,
+	store storage.BlobStore,
+	records []lifecycle.Record,
+	limits replication.Limits,
+	maxFrameBytes int,
+	tracker *putAckTracker,
+	ackTimeout time.Duration,
+	retries int,
+	retryDelay time.Duration,
+	metrics *replicationMetrics,
+	log *slog.Logger,
+) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if store == nil {
+		return errors.New("lifecycle: raw blob preflight store unavailable")
+	}
+	for _, record := range records {
+		data, err := store.Get(ctx, record.BlobKey)
+		if errors.Is(err, storage.ErrNotFound) {
+			return errors.Join(lifecycle.ErrLifecycleBlobMissing, err)
+		}
+		if err != nil {
+			return err
+		}
+		if err := storage.VerifySHA256Key(record.BlobKey, data); err != nil {
+			return err
+		}
+		payload, err := replication.EncodeBlobPut(record.BlobKey, data, limits)
+		if err != nil {
+			return err
+		}
+		if err := sendBlobWithAck(ctx, peer, payload, record.BlobKey, len(data), maxFrameBytes, tracker, ackTimeout, retries, retryDelay, metrics, log); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func retryDelayForAttempt(base time.Duration, attempt int) time.Duration {
