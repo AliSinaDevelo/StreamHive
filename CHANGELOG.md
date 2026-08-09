@@ -13,6 +13,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   identity as fixed-shape aggregate JSON without peer, credential, filesystem, host, or commit details.
 - **Tests**: health acceptance coverage verifies the runtime identity response alongside the existing
   liveness, readiness, lifecycle, storage, inventory, JSON metrics, and Prometheus surfaces.
+- **Tests/CLI**: shutdown acceptance now drives a real durable-store repair continuation over TCP and
+  proves application cancellation prevents the deferred repair frame from being written.
+- **Docs**: the peer-drain contract now records the verified CLI cancellation boundary and keeps the
+  scheduler, ACK, inventory, repair, and reconnect ordering explicit.
 
 ## [0.14.0] — 2026-08-09
 

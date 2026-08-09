@@ -1,8 +1,9 @@
 # Graceful P2P Peer Drain
 
-Status: v0.12 implementation contract, researched in issue #45 and implemented
-in issue #46. The transport core now implements the local lifecycle described
-here; CLI scheduler integration remains a separate follow-up.
+Status: v0.14 implementation contract, researched in issue #45, implemented in
+issue #46, and covered through the CLI shutdown boundary in issue #72. The
+transport core and CLI scheduler integration implement the local lifecycle
+described here.
 
 ## Behavior before #46
 
@@ -25,7 +26,10 @@ The CLI already cancels its application context on process shutdown. Its deferre
 health-server shutdown runs before the transport close, while replication waiters,
 inventory/repair schedulers, and reconnect backoff observe that application
 cancellation. The existing fallback for interrupted replication is a later
-inventory pass or reconnect; there is no remote shutdown message.
+inventory pass or reconnect; there is no remote shutdown message. The real CLI
+acceptance path also drives a durable-store `blob.missing` request past the repair
+byte budget, cancels while the continuation is delayed, and proves no deferred
+repair frame is written after cancellation.
 
 ## Decision and implementation
 
@@ -148,9 +152,9 @@ graceful path needs a caller-owned deadline and a force-close fallback.
 - `Transport` remains source-compatible with existing implementations.
 - No peer discovery, delivery guarantee, distributed transaction, or remote drain
   acknowledgment is introduced.
-- CLI scheduler integration is intentionally separate: the application still
-  owns cancellation for ACK, inventory, repair, and reconnect workers before it
-  calls the transport drain.
+- The application owns cancellation for ACK, inventory, repair, and reconnect
+  workers before it calls the transport drain; the real CLI ordering is covered
+  by `make test-cli-shutdown`.
 
 ## Verification plan
 
@@ -165,8 +169,10 @@ The #46 acceptance target now includes focused real-TCP coverage for:
 5. zero active peers and zero tracked goroutines after cooperative return, under
    `-race`.
 
-The follow-up CLI integration should add delayed one-shot ACK, pending repair
-continuation, and reconnect-backoff coverage after application cancellation.
+The CLI shutdown acceptance target covers delayed one-shot ACK cancellation,
+pending repair continuation cancellation over a durable store and real TCP peer,
+and reconnect cancellation after application shutdown begins. Keep those checks
+in the full matrix when changing scheduler or drain behavior.
 
 The existing full matrix, TLS/mTLS, replication, fuzz, demo, vulnerability, and
 SBOM checks remain required for every implementation slice.

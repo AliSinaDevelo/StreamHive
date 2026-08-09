@@ -150,7 +150,7 @@ make test-cli-shutdown
 
 It runs three race-enabled repetitions covering non-positive grace validation, normal and
 repeated context cancellation, pending one-shot ACK cancellation, forced transport deadline
-expiry, reconnect cancellation, and repair-continuation shutdown behavior.
+expiry, reconnect cancellation, and real CLI durable-store repair-continuation shutdown behavior.
 
 The bounded P2P drain acceptance target is:
 
