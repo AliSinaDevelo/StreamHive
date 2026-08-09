@@ -225,10 +225,15 @@ curl -fsS http://127.0.0.1:8080/storage/status
 ```
 
 The scan verifies every 32-byte key against its current bytes, counts opaque keys without a
-content-addressing contract, and reports corrupt or missing inventory entries. It is live rather
-than snapshot-consistent, uses bounded native inventory pages when available, and returns `503`
-with a generic message when storage enumeration or reads fail. It does not change `/readyz`, delete
-blobs, or initiate repair. Run `make test-storage-integrity` for the focused race-enabled proof.
+content-addressing contract, and reports corrupt or missing inventory entries. FileStore inventory
+accepts only regular files with hex-encoded names; temporary files, directories, symlinks, and
+other non-regular entries are ignored. A malformed regular filename fails the scan with
+`storage.ErrInvalidKeyFilename`; `/storage/status` returns `503` with the generic message when
+enumeration or reads fail. Direct `Get` calls reject non-regular paths with
+`storage.ErrNonRegularEntry`, while `Has` reports them as absent. The scan is live rather than
+snapshot-consistent, uses bounded native inventory pages when available, and does not change
+`/readyz`, delete blobs, or initiate repair. Run `make test-storage-integrity` for the focused
+race-enabled proof.
 
 For an offline maintenance preflight against a durable store, run:
 
@@ -237,8 +242,9 @@ go run . -store-dir /var/lib/streamhive/blobs -verify-store
 ```
 
 `-verify-store` prints the same aggregate JSON fields as `/storage/status`, requires no listener or
-`-replicate` flag, returns a non-zero status for corrupt or missing entries, and never mutates the
-store. It does not expose blob keys, raw content, peer identities, or raw storage errors.
+`-replicate` flag, returns a non-zero status for corrupt, missing, malformed, or unreadable entries,
+and never mutates the store. It does not expose blob keys, raw content, peer identities, or raw
+storage errors.
 
 Deletion scope is explicit: `FileStore.Delete` is local eviction or garbage collection. A peer
 may rehydrate that blob through the current add-only anti-entropy path; distributed logical

@@ -27,6 +27,12 @@ storage errors:
 `enabled: false`, `healthy: true`, `scan_consistency: "live"`, and zero counts. A configured-store
 enumeration or read failure returns HTTP `503` with the generic body `storage unavailable`.
 
+FileStore inventory treats only regular files with hex-encoded names as blob entries. Temporary
+files, directories, symlinks, and other non-regular entries are ignored. A malformed regular name
+fails enumeration with `storage.ErrInvalidKeyFilename`; the HTTP endpoint keeps the generic `503`
+boundary. Direct `FileStore.Get` calls return `storage.ErrNonRegularEntry` for a non-regular path,
+and `Has` reports that path as absent without reading through it.
+
 ## Offline Verification
 
 The CLI can run the same aggregate scan without opening a TCP or health listener:
@@ -36,10 +42,10 @@ go run . -store-dir /var/lib/streamhive/blobs -verify-store
 ```
 
 `-verify-store` prints the status JSON above and exits successfully only when the scan is healthy.
-Corrupt or missing entries produce the JSON result followed by a non-zero exit status; enumeration
-or read failures also fail the command. The command never rewrites, deletes, repairs, or quarantines
-data, and its output remains aggregate-only. It does not require `-replicate` and cannot be combined
-with `-list-keys`.
+Corrupt or missing entries produce the JSON result followed by a non-zero exit status; malformed
+regular filenames and other enumeration or read failures fail the command before a result is
+printed. The command never rewrites, deletes, repairs, or quarantines data, and its output remains
+aggregate-only. It does not require `-replicate` and cannot be combined with `-list-keys`.
 
 ## Classification
 
@@ -49,6 +55,8 @@ with `-list-keys`.
 - A non-32-byte key is opaque. Present bytes contribute to `opaque_bytes`, while the key remains in
   `opaque_keys` even if its read is missing.
 - `missing_keys` counts listed keys whose current value cannot be read because it is absent.
+- Only regular, hex-named files become listed keys. Non-regular entries are outside the inventory;
+  they are not counted as missing or corrupt blobs.
 
 The scan does not rewrite, delete, repair, or quarantine any blob. Corruption and missing entries
 are observations for an operator or later anti-entropy pass.

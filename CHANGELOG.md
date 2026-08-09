@@ -9,6 +9,11 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   entries without mutating the store.
 - **Tests/CI**: `make test-storage-verify` covers healthy output, validation, corruption failure,
   and non-mutation under three race-enabled repetitions in a dedicated Actions job.
+- **Storage**: `FileStore` inventory now accepts only regular hex-named files, ignores temporary and
+  other non-regular entries, classifies malformed regular names with `storage.ErrInvalidKeyFilename`,
+  and rejects direct non-regular reads with `storage.ErrNonRegularEntry`.
+- **Tests/CI**: storage integrity and offline verification gates prove malformed filename failure,
+  non-regular entry exclusion, and the generic health/CLI error boundaries under the race detector.
 - **Health**: `/version` exposes the semver, `streamhive/1` handshake version, and `SHV1` framing
   identity as fixed-shape aggregate JSON without peer, credential, filesystem, host, or commit details.
 - **Tests**: health acceptance coverage verifies the runtime identity response alongside the existing
