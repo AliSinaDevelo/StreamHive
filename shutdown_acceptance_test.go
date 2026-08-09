@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/AliSinaDevelo/StreamHive/p2p"
+	"github.com/AliSinaDevelo/StreamHive/replication"
+	"github.com/AliSinaDevelo/StreamHive/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,6 +93,82 @@ func TestRun_exitAfterPutCancellationDrainsTransport(t *testing.T) {
 	}
 	assert.Less(t, time.Since(started), 2*time.Second)
 	assert.Contains(t, stderr.String(), `msg="shutdown started"`)
+	assert.Contains(t, stderr.String(), `msg="shutdown complete"`)
+}
+
+func TestRun_cancellationStopsDeferredRepairContinuation(t *testing.T) {
+	server := p2p.NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	missingPayload, err := replication.EncodeBlobMissing([][]byte{[]byte("a"), []byte("b")}, replication.Limits{})
+	require.NoError(t, err)
+	firstPut := make(chan struct{})
+	writeErr := make(chan error, 1)
+	var putCount atomic.Int32
+	server.OnPeer = func(peer p2p.Peer) {
+		writer, ok := peer.(interface {
+			WriteFrame([]byte, int) error
+		})
+		if !ok {
+			writeErr <- errors.New("connected peer does not expose framed writes")
+			return
+		}
+		if err := writer.WriteFrame(missingPayload, p2p.DefaultMaxFrameBytes); err != nil {
+			writeErr <- err
+		}
+	}
+	server.FrameHandler = func(_ context.Context, _ p2p.Peer, payload []byte) error {
+		msg, err := replication.Decode(payload, replication.Limits{})
+		if err != nil {
+			return err
+		}
+		if msg.Type == replication.MessageTypeBlobPut && putCount.Add(1) == 1 {
+			close(firstPut)
+		}
+		return nil
+	}
+	require.NoError(t, server.ListenAndAccept(context.Background()))
+	defer func() { _ = server.Close() }()
+
+	storeDir := t.TempDir()
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	require.NoError(t, store.Put(context.Background(), []byte("a"), []byte("value-a")))
+	require.NoError(t, store.Put(context.Background(), []byte("b"), []byte("value-b")))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out, stderr safeBuffer
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(ctx, []string{
+			"-listen", "127.0.0.1:0",
+			"-dial", server.Addr().String(),
+			"-replicate",
+			"-store-dir", storeDir,
+			"-max-repair-bytes", "1",
+			"-shutdown-grace", "500ms",
+		}, &out, &stderr)
+	}()
+
+	select {
+	case err := <-writeErr:
+		require.NoError(t, err)
+	case <-firstPut:
+	}
+	require.Eventually(t, func() bool {
+		return strings.Contains(stderr.String(), "replication repair continuation scheduled")
+	}, 3*time.Second, 10*time.Millisecond, "stdout=%q stderr=%q", out.String(), stderr.String())
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "stderr=%q", stderr.String())
+	case <-time.After(3 * time.Second):
+		t.Fatal("run did not stop after deferred repair cancellation")
+	}
+
+	time.Sleep(2 * repairContinuationDelay)
+	assert.Equal(t, int32(1), putCount.Load())
 	assert.Contains(t, stderr.String(), `msg="shutdown complete"`)
 }
 
