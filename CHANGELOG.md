@@ -17,6 +17,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   proves application cancellation prevents the deferred repair frame from being written.
 - **Docs**: the peer-drain contract now records the verified CLI cancellation boundary and keeps the
   scheduler, ACK, inventory, repair, and reconnect ordering explicit.
+- **Health**: `-peer-reconnect` exposes label-free target, active-loop, attempt, failure, and success
+  metrics through JSON and Prometheus without changing readiness, shutdown, or wire behavior.
+- **Tests/CI**: `make test-peer-reconnect` proves unavailable-target retries and real-TCP recovery under
+  the race detector in a dedicated Actions job.
 
 ## [0.14.0] — 2026-08-09
 

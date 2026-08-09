@@ -23,6 +23,13 @@ Configured leaf identities are parsed and checked for `NotBefore`/`NotAfter` bef
 readiness. `/readyz` becomes unavailable if a configured identity later expires; CA bundles are
 not included in the identity count or expiry timestamp.
 
+For a long-lived node, `-peer-reconnect` retries only the comma-separated `-peers` targets with
+the configured exponential backoff; `-dial` remains a one-shot attempt. The health metrics
+`peer_reconnect_targets`, `peer_reconnect_active`, `peer_reconnect_attempts`,
+`peer_reconnect_failures`, and `peer_reconnect_successes` show configured retry targets, live retry
+loops, attempts, non-shutdown failures, and successful connections without target or error labels.
+Use the active gauge and failure counter for alerts; reconnect activity does not change `/readyz`.
+
 For private clusters where every node shares an operator-managed secret, add
 `-peer-auth-token` to each node. Add a stable `-peer-id` to make the remote application
 visible in `/peers` and connection logs. Add `-peer-allow-ids` to each listener when only
@@ -207,6 +214,7 @@ Define error budgets once you expose a workload to users. Baseline probes:
 - **Readiness**: `/readyz` reflects a bound listener and currently valid configured TLS identities; without TLS credentials it retains listener-only behavior.
 - **Runtime identity**: `/version` returns only the semver, `streamhive/1` handshake version, and `SHV1` framing magic, with no peer, credential, filesystem, host, or commit metadata.
 - **TLS credential health**: `tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, and `tls_certificates_expiring_soon` expose aggregate leaf-identity health through JSON and Prometheus without certificate or peer labels.
+- **Static peer reconnect**: `peer_reconnect_targets`, `peer_reconnect_active`, `peer_reconnect_attempts`, `peer_reconnect_failures`, and `peer_reconnect_successes` expose retry pressure and recovery without target, address, credential, or error labels. Shutdown cancellation is excluded from failures; reconnect state does not make `/readyz` depend on remote peer availability.
 - **Prometheus exposition**: `/metrics/prometheus` emits one sorted `# HELP`/`# TYPE` pair per sample. Event counters are typed `counter`; active, pending, in-flight, queued, and TLS health values are typed `gauge`.
 - **Lifecycle compaction**: `lifecycle_membership_configured`, `lifecycle_membership_members`, `lifecycle_membership_acknowledged`, `lifecycle_membership_min_epoch`, `lifecycle_membership_min_sequence`, `lifecycle_compaction_target_epoch`, `lifecycle_compaction_target_sequence`, and `lifecycle_compaction_blocked` expose the bounded operator fence and progress without member or peer labels. A missing membership file blocks `-lifecycle-compact`; an explicitly persisted empty membership is valid for a standalone node. Run `make test-lifecycle-compaction` for the focused real-TCP proof or `make test-lifecycle-compose` for the authenticated three-node checkpoint recovery proof.
 - **Health HTTP resource envelope**: request headers are bounded at 5 seconds and 1 MiB, reads/writes at 10 seconds, and idle connections at 60 seconds; cancellation closes the listener through graceful server shutdown.

@@ -78,6 +78,17 @@ make test-peer-admission
 It runs three race-enabled repetitions with a one-peer server cap and two clients, and checks
 that the cap rejects exactly the excess connection while the admitted peer remains active.
 
+The static-peer reconnect health acceptance target is:
+
+```bash
+make test-peer-reconnect
+```
+
+It runs three race-enabled repetitions with an unavailable `-peers` target, observes active retry
+work and failures through the health metrics, starts a real TCP listener at the target address, and
+requires a successful reconnect with no active retry loop left behind. JSON and Prometheus output
+remain aggregate and label-free.
+
 The TLS and application-auth acceptance target is:
 
 ```bash
@@ -286,6 +297,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-inventory-status-metrics` to repeat successful and failed inventory-status accounting, including JSON/Prometheus samples, under the race detector
 - `make test-storage-verify` to repeat offline aggregate durable-store verification, including non-zero corruption handling, under the race detector
 - `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
+- `make test-peer-reconnect` to repeat static-peer retry, failure, recovery, and aggregate health accounting under the race detector
 - `make test-tls-auth` to repeat TLS certificate verification, application identity admission, and pre-registration certificate failures under the race detector
 - `make test-mtls` to repeat library mTLS admission, bounded TLS failure handling, and frame exchange under the race detector
 - `make test-mtls-cli` to repeat CLI mTLS certificate admission, pre-registration rejection, and fail-closed flag validation under the race detector
