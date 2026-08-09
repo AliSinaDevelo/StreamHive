@@ -12,7 +12,7 @@ docker run --rm -p 7070:7070 -p 8080:8080 streamhive:local \
 ```
 
 - **7070** — P2P TCP listener (example).
-- **8080** — HTTP `/livez`, `/readyz`, `/peers` (JSON peer metadata), `/metrics` (JSON counters), `/metrics/prometheus` (Prometheus text), `/inventory/status` (aggregate live key fingerprint), `/storage/status` (aggregate live blob integrity), and `/lifecycle/status` (aggregate opt-in lifecycle state).
+- **8080** — HTTP `/livez`, `/readyz`, `/version` (aggregate runtime identity), `/peers` (JSON peer metadata), `/metrics` (JSON counters), `/metrics/prometheus` (Prometheus text), `/inventory/status` (aggregate live key fingerprint), `/storage/status` (aggregate live blob integrity), and `/lifecycle/status` (aggregate opt-in lifecycle state).
 
 Use TLS flags (`-tls-cert`, `-tls-key`, `-tls-ca`, `-tls-server-name`) when exposing services beyond a lab network. The verified certificate and application-auth ordering is documented in [TLS_AUTH.md](TLS_AUTH.md) and exercised by `make test-tls-auth`. Reserve `-tls-insecure-skip-verify` for local development. For CLI mTLS, add `-tls-client-ca -tls-require-client-cert` on the listener and `-tls-client-cert -tls-client-key` on outbound peers. Use `-tls-expiry-warning` to set the aggregate short-lived-credential warning window (`720h` by default, `0` disables the warning). For custom trust policy, configure `p2p.TCPTransport.TLSServerConfig` and `TLSClientConfig` in library code.
 
@@ -205,6 +205,7 @@ Define error budgets once you expose a workload to users. Baseline probes:
 
 - **Availability**: `/livez` success rate.
 - **Readiness**: `/readyz` reflects a bound listener and currently valid configured TLS identities; without TLS credentials it retains listener-only behavior.
+- **Runtime identity**: `/version` returns only the semver, `streamhive/1` handshake version, and `SHV1` framing magic, with no peer, credential, filesystem, host, or commit metadata.
 - **TLS credential health**: `tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, and `tls_certificates_expiring_soon` expose aggregate leaf-identity health through JSON and Prometheus without certificate or peer labels.
 - **Prometheus exposition**: `/metrics/prometheus` emits one sorted `# HELP`/`# TYPE` pair per sample. Event counters are typed `counter`; active, pending, in-flight, queued, and TLS health values are typed `gauge`.
 - **Lifecycle compaction**: `lifecycle_membership_configured`, `lifecycle_membership_members`, `lifecycle_membership_acknowledged`, `lifecycle_membership_min_epoch`, `lifecycle_membership_min_sequence`, `lifecycle_compaction_target_epoch`, `lifecycle_compaction_target_sequence`, and `lifecycle_compaction_blocked` expose the bounded operator fence and progress without member or peer labels. A missing membership file blocks `-lifecycle-compact`; an explicitly persisted empty membership is valid for a standalone node. Run `make test-lifecycle-compaction` for the focused real-TCP proof or `make test-lifecycle-compose` for the authenticated three-node checkpoint recovery proof.

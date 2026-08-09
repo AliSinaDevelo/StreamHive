@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml/badge.svg)](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml)
 
-StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/storage/status`, `/lifecycle/status`).
+StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/version`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/storage/status`, `/lifecycle/status`).
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.14.0**, pre-1.0).
 
@@ -68,6 +68,10 @@ Raw-only nodes return `enabled: false`, `healthy: true`, and zero counts. See
 The optional health server bounds request headers to 1 MiB, reads and writes to 10 seconds, header
 parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
 process context is canceled; see `make test-health-server` for the race-enabled proof.
+
+`/version` returns a fixed-shape aggregate JSON response with the running semver, the application
+handshake version (`streamhive/1`), and the wire framing identifier (`SHV1`). It intentionally omits
+peer addresses, credentials, filesystem paths, host details, and commit metadata.
 
 `replication_corrupt_blobs_detected` counts damaged content-addressed data found during verified
 receive or repair-source reads. A corrupt source is skipped and never emitted as an unverified
@@ -383,7 +387,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-peer-reconnect` | Retry `-peers` with exponential backoff |
 | `-peer-reconnect-min` / `-peer-reconnect-max` | Reconnect backoff bounds |
 | `-sync-interval` | Periodically advertise local blob keys to connected peers (0 = startup only) |
-| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/storage/status`, `/lifecycle/status` |
+| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/version`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/storage/status`, `/lifecycle/status` |
 | `-max-peers` | Cap simultaneous peers (0 = unlimited) |
 | `-peer-auth-token` / `-peer-auth-timeout` | Optional shared-token peer auth before peer registration |
 | `-peer-id` | Optional application identity exchanged during shared-token auth (requires `-peer-auth-token`) |

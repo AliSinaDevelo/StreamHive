@@ -9,6 +9,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   entries without mutating the store.
 - **Tests/CI**: `make test-storage-verify` covers healthy output, validation, corruption failure,
   and non-mutation under three race-enabled repetitions in a dedicated Actions job.
+- **Health**: `/version` exposes the semver, `streamhive/1` handshake version, and `SHV1` framing
+  identity as fixed-shape aggregate JSON without peer, credential, filesystem, host, or commit details.
+- **Tests**: health acceptance coverage verifies the runtime identity response alongside the existing
+  liveness, readiness, lifecycle, storage, inventory, JSON metrics, and Prometheus surfaces.
 
 ## [0.14.0] — 2026-08-09
 

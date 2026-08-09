@@ -138,6 +138,10 @@ It runs three race-enabled repetitions, rejects an oversized request header with
 limit, serves normal liveness traffic, and verifies context cancellation closes the health listener
 across repeated starts.
 
+The main health endpoint acceptance test also checks that `/version` returns the exact aggregate
+runtime identity contract: the semver, `streamhive/1` handshake version, and `SHV1` framing magic,
+without additional deployment metadata.
+
 The CLI shutdown acceptance target is:
 
 ```bash
@@ -289,6 +293,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-tls-credential-health` to repeat aggregate TLS identity validity, expiry warning, startup rejection, and readiness checks under the race detector
 - `make test-prometheus-format` to repeat typed, sorted, label-free `HELP`/`TYPE` health exposition checks under the race detector
 - `make test-health-server` to repeat bounded health HTTP request and graceful-shutdown checks under the race detector
+- Main health endpoint acceptance coverage for liveness, readiness, runtime identity, and existing JSON/Prometheus surfaces
 - `make test-peer-drain` to repeat bounded P2P drain, admission, and forced-close checks under the race detector
 - Coverage profile upload as a workflow artifact (`coverage-<go-version>.out`)
 - **SBOM** job: CycloneDX JSON via `cyclonedx-gomod`, uploaded as `sbom-cyclonedx`
