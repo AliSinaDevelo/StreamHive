@@ -515,6 +515,78 @@ func TestRun_listKeysPrintsDurableKeysAsHex(t *testing.T) {
 	assert.Equal(t, "61\n62\n", out.String())
 }
 
+func TestRun_verifyStoreRequiresStoreDir(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-verify-store"}, &out, io.Discard)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-verify-store requires -store-dir")
+}
+
+func TestRun_verifyStorePrintsHealthyAggregateJSON(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	content := []byte("durable content")
+	require.NoError(t, store.Put(ctx, storage.SHA256Key(content), content))
+	require.NoError(t, store.Put(ctx, []byte("opaque"), []byte("opaque value")))
+
+	var out bytes.Buffer
+	err = run(ctx, []string{"-store-dir", storeDir, "-verify-store"}, &out, io.Discard)
+	require.NoError(t, err)
+
+	var status storageIntegrityStatusResponse
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	assert.True(t, status.Enabled)
+	assert.True(t, status.Healthy)
+	assert.Equal(t, "live", status.ScanConsistency)
+	assert.Equal(t, 2, status.Keys)
+	assert.Equal(t, 1, status.ContentAddressedKeys)
+	assert.Equal(t, 1, status.VerifiedKeys)
+	assert.Equal(t, int64(len(content)), status.VerifiedBytes)
+	assert.Equal(t, 1, status.OpaqueKeys)
+	assert.Equal(t, int64(len("opaque value")), status.OpaqueBytes)
+	assert.Zero(t, status.CorruptKeys)
+	assert.Zero(t, status.MissingKeys)
+}
+
+func TestRun_verifyStoreFailsOnCorruptionWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	content := []byte("durable content")
+	key := storage.SHA256Key(content)
+	require.NoError(t, store.Put(ctx, key, content))
+	tampered := []byte("tampered content")
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, storage.SHA256KeyHex(content)), tampered, 0o600))
+
+	var out bytes.Buffer
+	err = run(ctx, []string{"-store-dir", storeDir, "-verify-store"}, &out, io.Discard)
+	require.EqualError(t, err, "storage: integrity check failed")
+
+	var status storageIntegrityStatusResponse
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	assert.True(t, status.Enabled)
+	assert.False(t, status.Healthy)
+	assert.Equal(t, 1, status.ContentAddressedKeys)
+	assert.Zero(t, status.VerifiedKeys)
+	assert.Equal(t, 1, status.CorruptKeys)
+	assert.Zero(t, status.MissingKeys)
+	got, readErr := os.ReadFile(filepath.Join(storeDir, storage.SHA256KeyHex(content)))
+	require.NoError(t, readErr)
+	assert.Equal(t, tampered, got)
+}
+
+func TestRun_verifyStoreRejectsListKeys(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-store-dir", t.TempDir(), "-verify-store", "-list-keys"}, &out, io.Discard)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-verify-store cannot be combined with -list-keys")
+}
+
 func TestRun_peerReconnectRequiresPeers(t *testing.T) {
 	var out bytes.Buffer
 	err := run(context.Background(), []string{"-peer-reconnect"}, &out, io.Discard)

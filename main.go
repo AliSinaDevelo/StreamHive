@@ -92,6 +92,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	replicate := fs.Bool("replicate", false, "enable in-memory blob replication from framed peers")
 	storeDir := fs.String("store-dir", "", "directory for durable replicated blobs (requires -replicate)")
 	listKeys := fs.Bool("list-keys", false, "print durable store keys as hex and exit (requires -store-dir)")
+	verifyStore := fs.Bool("verify-store", false, "scan durable store integrity and print aggregate JSON (requires -store-dir)")
 	putKey := fs.String("put-key", "", "send one replicated blob key to -dial peer")
 	putData := fs.String("put-data", "", "send one replicated blob value to -dial peer")
 	putContentKey := fs.Bool("put-content-key", false, "derive the replicated blob key from SHA-256(-put-data)")
@@ -219,6 +220,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err := validateReconnectBackoff(*peerReconnectMin, *peerReconnectMax); err != nil {
 			return err
 		}
+	}
+	if *verifyStore && *listKeys {
+		return fmt.Errorf("storage: -verify-store cannot be combined with -list-keys")
+	}
+	if *verifyStore {
+		if *storeDir == "" {
+			return fmt.Errorf("storage: -verify-store requires -store-dir")
+		}
+		store, err := storage.NewFileStore(*storeDir)
+		if err != nil {
+			return fmt.Errorf("storage: open file store: %w", err)
+		}
+		status, err := snapshotStorageIntegrityStatus(ctx, store, store)
+		if err != nil {
+			return errors.New("storage: integrity scan failed")
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(status); err != nil {
+			return err
+		}
+		if !status.Healthy {
+			return errors.New("storage: integrity check failed")
+		}
+		return nil
 	}
 	if *listKeys {
 		if *storeDir == "" {
