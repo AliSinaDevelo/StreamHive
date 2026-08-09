@@ -126,6 +126,35 @@ func TestDial_registersOutboundPeer(t *testing.T) {
 	})
 }
 
+func TestDialRecordsConfiguredTarget(t *testing.T) {
+	ctx := context.Background()
+	server := NewTCPTransport("127.0.0.1:0")
+	server.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	require.NoError(t, server.ListenAndAccept(ctx))
+	defer func() { _ = server.Close() }()
+
+	client := NewTCPTransport("127.0.0.1:0")
+	client.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	target := server.Addr().String()
+	seen := make(chan string, 1)
+	client.OnPeer = func(peer Peer) {
+		tcpPeer, ok := peer.(*TCPPeer)
+		if ok {
+			seen <- tcpPeer.DialTarget()
+		}
+	}
+	require.NoError(t, client.ListenAndAccept(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Dial(ctx, target))
+	select {
+	case got := <-seen:
+		assert.Equal(t, target, got)
+	case <-time.After(time.Second):
+		t.Fatal("outbound peer target was not observed")
+	}
+}
+
 func TestPeerAuthAcceptsMatchingToken(t *testing.T) {
 	ctx := context.Background()
 	server := NewTCPTransport("127.0.0.1:0")

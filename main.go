@@ -417,6 +417,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return syncLifecycleRawRecords(syncCtx, peer, lifecycleState.blobs, records, replLimits, tr.MaxFrameBytes, putTracker, *putAckTimeout, *putRetries, *putRetryDelay, replMetrics, log)
 		}
 	}
+	reconnectMetrics := &peerReconnectMetrics{}
+	var reconnector *peerReconnector
 	tr.OnPeer = func(peer p2p.Peer) {
 		if ctx.Err() != nil {
 			_ = peer.Close()
@@ -491,8 +493,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
-	reconnectMetrics := &peerReconnectMetrics{}
-	var reconnector *peerReconnector
 	if *peerReconnect {
 		reconnector = newPeerReconnector(ctx, tr, peerList, *peerReconnectMin, *peerReconnectMax, log, reconnectMetrics)
 	}
@@ -1815,6 +1815,9 @@ func (r *peerReconnector) OnPeerDisconnected(peer p2p.Peer) {
 		return
 	}
 	target := peer.RemoteAddr().String()
+	if dialPeer, ok := peer.(interface{ DialTarget() string }); ok && dialPeer.DialTarget() != "" {
+		target = dialPeer.DialTarget()
+	}
 	if _, ok := r.target[target]; !ok {
 		return
 	}

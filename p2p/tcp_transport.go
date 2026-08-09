@@ -40,6 +40,7 @@ type TCPPeer struct {
 	reader           *bufio.Reader
 	writeMu          sync.Mutex
 	outbound         bool
+	dialTarget       string
 	connectedAt      time.Time
 	authMethod       string
 	authIdentity     string
@@ -68,6 +69,10 @@ func (p *TCPPeer) Close() error { return p.conn.Close() }
 
 // IsOutbound reports whether this peer was created from a dial (outbound).
 func (p *TCPPeer) IsOutbound() bool { return p.outbound }
+
+// DialTarget returns the configured outbound address for this peer.
+// It is empty for inbound peers and peers created outside TCPTransport.Dial.
+func (p *TCPPeer) DialTarget() string { return p.dialTarget }
 
 // ConnectedAt reports when this peer was registered locally.
 func (p *TCPPeer) ConnectedAt() time.Time { return p.connectedAt }
@@ -628,6 +633,7 @@ func (t *TCPTransport) Dial(ctx context.Context, addr string) error {
 		return err
 	}
 	tp := NewTCPPeer(conn, true)
+	tp.dialTarget = addr
 	if !t.trackConnection(tp) {
 		_ = tp.Close()
 		t.metrics.DialErrors.Add(1)
