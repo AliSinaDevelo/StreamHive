@@ -230,6 +230,7 @@ func TestPeerReconnector_doesNotScheduleAfterCancellation(t *testing.T) {
 		time.Millisecond,
 		time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 	)
 	reconnector.Start()
 	reconnector.schedule("127.0.0.1:1", 0)

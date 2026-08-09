@@ -379,6 +379,16 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Zero(t, metrics["replication_storage_integrity_corrupt_keys"])
 	assert.Zero(t, metrics["replication_storage_integrity_missing_keys"])
 	assert.Contains(t, metrics, "peer_auth_identity_rejections")
+	assert.Contains(t, metrics, "peer_reconnect_targets")
+	assert.Contains(t, metrics, "peer_reconnect_active")
+	assert.Contains(t, metrics, "peer_reconnect_attempts")
+	assert.Contains(t, metrics, "peer_reconnect_failures")
+	assert.Contains(t, metrics, "peer_reconnect_successes")
+	assert.Zero(t, metrics["peer_reconnect_targets"])
+	assert.Zero(t, metrics["peer_reconnect_active"])
+	assert.Zero(t, metrics["peer_reconnect_attempts"])
+	assert.Zero(t, metrics["peer_reconnect_failures"])
+	assert.Zero(t, metrics["peer_reconnect_successes"])
 	assert.Zero(t, metrics["tls_certificates_configured"])
 	assert.Zero(t, metrics["tls_certificate_expiry_timestamp_seconds"])
 	assert.Zero(t, metrics["tls_certificates_expired"])
@@ -431,6 +441,11 @@ func TestRun_healthEndpoints(t *testing.T) {
 	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_in_flight")
 	assert.Contains(t, string(body), "streamhive_replication_repair_io_ops_queued")
 	assert.Contains(t, string(body), "streamhive_peer_auth_identity_rejections")
+	assert.Contains(t, string(body), "streamhive_peer_reconnect_targets 0\n")
+	assert.Contains(t, string(body), "streamhive_peer_reconnect_active 0\n")
+	assert.Contains(t, string(body), "streamhive_peer_reconnect_attempts 0\n")
+	assert.Contains(t, string(body), "streamhive_peer_reconnect_failures 0\n")
+	assert.Contains(t, string(body), "streamhive_peer_reconnect_successes 0\n")
 	assert.Contains(t, string(body), "streamhive_tls_certificates_configured 0\n")
 	assert.Contains(t, string(body), "streamhive_tls_certificate_expiry_timestamp_seconds 0\n")
 
@@ -2478,6 +2493,7 @@ func TestPeerReconnector_dialsWhenPeerAppears(t *testing.T) {
 	require.NoError(t, err)
 	addr := reserved.Addr().String()
 	require.NoError(t, reserved.Close())
+	metrics := &peerReconnectMetrics{}
 
 	reconnector := newPeerReconnector(
 		ctx,
@@ -2486,8 +2502,15 @@ func TestPeerReconnector_dialsWhenPeerAppears(t *testing.T) {
 		10*time.Millisecond,
 		20*time.Millisecond,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		metrics,
 	)
 	reconnector.Start()
+	require.Eventually(t, func() bool {
+		return metrics.Targets.Load() == 1 &&
+			metrics.Active.Load() == 1 &&
+			metrics.Attempts.Load() > 0 &&
+			metrics.Failures.Load() > 0
+	}, time.Second, 10*time.Millisecond)
 
 	var seen atomic.Int32
 	server := p2p.NewTCPTransport(addr)
@@ -2501,4 +2524,7 @@ func TestPeerReconnector_dialsWhenPeerAppears(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return seen.Load() == 1
 	}, 3*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return metrics.Successes.Load() >= 1 && metrics.Active.Load() == 0
+	}, time.Second, 10*time.Millisecond)
 }

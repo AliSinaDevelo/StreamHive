@@ -24,6 +24,9 @@ func TestWritePrometheusMetricsEmitsTypedMetadataForEveryHealthMetric(t *testing
 	for key := range (&replicationMetrics{}).Snapshot() {
 		snapshot[key] = int64(len(snapshot) + 1)
 	}
+	for key := range (&peerReconnectMetrics{}).Snapshot() {
+		snapshot[key] = int64(len(snapshot) + 1)
+	}
 	for key := range (&tlsCredentialHealth{}).Snapshot(time.Unix(1_800_000_000, 0).UTC()) {
 		snapshot[key] = int64(len(snapshot) + 1)
 	}
@@ -44,6 +47,9 @@ func TestWritePrometheusMetricsEmitsTypedMetadataForEveryHealthMetric(t *testing
 		assert.Equal(t, prometheusMetricType(key), got.typeName)
 	}
 	assert.Equal(t, "gauge", metadata["streamhive_active_peers"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_peer_reconnect_targets"].typeName)
+	assert.Equal(t, "gauge", metadata["streamhive_peer_reconnect_active"].typeName)
+	assert.Equal(t, "counter", metadata["streamhive_peer_reconnect_successes"].typeName)
 	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_enabled"].typeName)
 	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_ready"].typeName)
 	assert.Equal(t, "gauge", metadata["streamhive_lifecycle_authority_epoch"].typeName)

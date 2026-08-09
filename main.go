@@ -491,9 +491,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 	}
+	reconnectMetrics := &peerReconnectMetrics{}
 	var reconnector *peerReconnector
 	if *peerReconnect {
-		reconnector = newPeerReconnector(ctx, tr, peerList, *peerReconnectMin, *peerReconnectMax, log)
+		reconnector = newPeerReconnector(ctx, tr, peerList, *peerReconnectMin, *peerReconnectMax, log, reconnectMetrics)
 	}
 	if lifecycleState != nil || repairScheduler != nil || reconnector != nil {
 		tr.OnPeerDisconnected = func(peer p2p.Peer) {
@@ -699,7 +700,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	if *health != "" {
 		var err error
-		hsrv, err = startHealth(*health, tr, replMetrics, blobStore, keyLister, tlsHealth, lifecycleState, log)
+		hsrv, err = startHealth(*health, tr, replMetrics, blobStore, keyLister, tlsHealth, lifecycleState, reconnectMetrics, log)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
@@ -1743,22 +1744,53 @@ func missingKeysFromStore(ctx context.Context, store storage.BlobStore, remoteKe
 	return missing, nil
 }
 
+type peerReconnectMetrics struct {
+	Targets   atomic.Int64
+	Active    atomic.Int64
+	Attempts  atomic.Uint64
+	Failures  atomic.Uint64
+	Successes atomic.Uint64
+}
+
+func (m *peerReconnectMetrics) Snapshot() map[string]int64 {
+	if m == nil {
+		return map[string]int64{
+			"peer_reconnect_targets":   0,
+			"peer_reconnect_active":    0,
+			"peer_reconnect_attempts":  0,
+			"peer_reconnect_failures":  0,
+			"peer_reconnect_successes": 0,
+		}
+	}
+	return map[string]int64{
+		"peer_reconnect_targets":   m.Targets.Load(),
+		"peer_reconnect_active":    m.Active.Load(),
+		"peer_reconnect_attempts":  int64(m.Attempts.Load()),
+		"peer_reconnect_failures":  int64(m.Failures.Load()),
+		"peer_reconnect_successes": int64(m.Successes.Load()),
+	}
+}
+
 type peerReconnector struct {
-	ctx    context.Context
-	tr     *p2p.TCPTransport
-	min    time.Duration
-	max    time.Duration
-	log    *slog.Logger
-	target map[string]struct{}
+	ctx     context.Context
+	tr      *p2p.TCPTransport
+	min     time.Duration
+	max     time.Duration
+	log     *slog.Logger
+	metrics *peerReconnectMetrics
+	target  map[string]struct{}
 
 	mu      sync.Mutex
 	dialing map[string]bool
 }
 
-func newPeerReconnector(ctx context.Context, tr *p2p.TCPTransport, targets []string, minBackoff, maxBackoff time.Duration, log *slog.Logger) *peerReconnector {
+func newPeerReconnector(ctx context.Context, tr *p2p.TCPTransport, targets []string, minBackoff, maxBackoff time.Duration, log *slog.Logger, metrics *peerReconnectMetrics) *peerReconnector {
 	targetMap := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
 		targetMap[target] = struct{}{}
+	}
+	if metrics != nil {
+		metrics.Targets.Store(int64(len(targetMap)))
 	}
 	return &peerReconnector{
 		ctx:     ctx,
@@ -1766,6 +1798,7 @@ func newPeerReconnector(ctx context.Context, tr *p2p.TCPTransport, targets []str
 		min:     minBackoff,
 		max:     maxBackoff,
 		log:     log,
+		metrics: metrics,
 		target:  targetMap,
 		dialing: make(map[string]bool, len(targets)),
 	}
@@ -1798,6 +1831,9 @@ func (r *peerReconnector) schedule(target string, initialDelay time.Duration) {
 		return
 	}
 	r.dialing[target] = true
+	if r.metrics != nil {
+		r.metrics.Active.Add(1)
+	}
 	r.mu.Unlock()
 
 	go r.loop(target, initialDelay)
@@ -1808,6 +1844,9 @@ func (r *peerReconnector) loop(target string, initialDelay time.Duration) {
 		r.mu.Lock()
 		delete(r.dialing, target)
 		r.mu.Unlock()
+		if r.metrics != nil {
+			r.metrics.Active.Add(-1)
+		}
 	}()
 
 	delay := r.min
@@ -1821,10 +1860,19 @@ func (r *peerReconnector) loop(target string, initialDelay time.Duration) {
 		if err := r.ctx.Err(); err != nil {
 			return
 		}
+		if r.metrics != nil {
+			r.metrics.Attempts.Add(1)
+		}
 		err := r.tr.Dial(r.ctx, target)
 		if err == nil {
+			if r.metrics != nil {
+				r.metrics.Successes.Add(1)
+			}
 			r.log.Info("peer reconnect established", "target", target)
 			return
+		}
+		if r.metrics != nil && r.ctx.Err() == nil {
+			r.metrics.Failures.Add(1)
 		}
 		r.log.Warn("peer reconnect failed", "target", target, "err", err, "next", delay)
 		if !sleepContext(r.ctx, delay) {
@@ -2334,7 +2382,7 @@ func observeStorageIntegrityStatus(ctx context.Context, store storage.BlobStore,
 	return status, nil
 }
 
-func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, blobStore storage.BlobStore, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, log *slog.Logger) (*http.Server, error) {
+func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, blobStore storage.BlobStore, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, reconnectMetrics *peerReconnectMetrics, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -2364,6 +2412,9 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 			snapshot[key] = value
 		}
 		for key, value := range lifecycleState.Metrics() {
+			snapshot[key] = value
+		}
+		for key, value := range reconnectMetrics.Snapshot() {
 			snapshot[key] = value
 		}
 		enc := json.NewEncoder(w)
@@ -2416,6 +2467,9 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		for key, value := range lifecycleState.Metrics() {
 			snapshot[key] = value
 		}
+		for key, value := range reconnectMetrics.Snapshot() {
+			snapshot[key] = value
+		}
 		writePrometheusMetrics(w, snapshot)
 	})
 
@@ -2455,6 +2509,8 @@ func writePrometheusMetrics(w io.Writer, snapshot map[string]int64) {
 
 var prometheusGaugeMetrics = map[string]struct{}{
 	"active_peers":                                 {},
+	"peer_reconnect_targets":                       {},
+	"peer_reconnect_active":                        {},
 	"lifecycle_enabled":                            {},
 	"lifecycle_ready":                              {},
 	"lifecycle_authority_epoch":                    {},
