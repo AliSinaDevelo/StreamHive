@@ -4,7 +4,11 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
-No unreleased changes yet.
+- **CLI**: `-verify-store -store-dir DIR` runs an offline aggregate durable-store integrity scan,
+  prints the `/storage/status`-compatible JSON result, and exits non-zero for corrupt or missing
+  entries without mutating the store.
+- **Tests/CI**: `make test-storage-verify` covers healthy output, validation, corruption failure,
+  and non-mutation under three race-enabled repetitions in a dedicated Actions job.
 
 ## [0.14.0] — 2026-08-09
 

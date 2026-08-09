@@ -27,6 +27,20 @@ storage errors:
 `enabled: false`, `healthy: true`, `scan_consistency: "live"`, and zero counts. A configured-store
 enumeration or read failure returns HTTP `503` with the generic body `storage unavailable`.
 
+## Offline Verification
+
+The CLI can run the same aggregate scan without opening a TCP or health listener:
+
+```bash
+go run . -store-dir /var/lib/streamhive/blobs -verify-store
+```
+
+`-verify-store` prints the status JSON above and exits successfully only when the scan is healthy.
+Corrupt or missing entries produce the JSON result followed by a non-zero exit status; enumeration
+or read failures also fail the command. The command never rewrites, deletes, repairs, or quarantines
+data, and its output remains aggregate-only. It does not require `-replicate` and cannot be combined
+with `-list-keys`.
+
 ## Classification
 
 - Every listed key contributes to `keys` and `key_bytes`.
@@ -62,4 +76,5 @@ Run the focused proof with:
 
 ```bash
 make test-storage-integrity
+make test-storage-verify
 ```

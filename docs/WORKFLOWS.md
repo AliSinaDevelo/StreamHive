@@ -192,6 +192,17 @@ content-addressed verification, opaque-key accounting, missing and corrupt entri
 raw-only health output, generic failure responses, and JSON/Prometheus metric accounting over a
 real durable store.
 
+The offline durable-store verification acceptance target is:
+
+```bash
+make test-storage-verify
+```
+
+It runs three race-enabled repetitions covering the healthy aggregate JSON contract, required
+`-store-dir` validation, flag exclusivity, corruption failure status, and the guarantee that a
+failed verification does not mutate the durable bytes. The command is offline and does not open a
+listener.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -269,6 +280,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-inventory-consistency` to repeat periodic repair after a behind-cursor mutation under the race detector
 - `make test-inventory-status` to repeat live inventory fingerprint mismatch/equality after bounded real-TCP repair under the race detector
 - `make test-inventory-status-metrics` to repeat successful and failed inventory-status accounting, including JSON/Prometheus samples, under the race detector
+- `make test-storage-verify` to repeat offline aggregate durable-store verification, including non-zero corruption handling, under the race detector
 - `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
 - `make test-tls-auth` to repeat TLS certificate verification, application identity admission, and pre-registration certificate failures under the race detector
 - `make test-mtls` to repeat library mTLS admission, bounded TLS failure handling, and frame exchange under the race detector

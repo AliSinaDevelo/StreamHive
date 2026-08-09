@@ -226,6 +226,16 @@ than snapshot-consistent, uses bounded native inventory pages when available, an
 with a generic message when storage enumeration or reads fail. It does not change `/readyz`, delete
 blobs, or initiate repair. Run `make test-storage-integrity` for the focused race-enabled proof.
 
+For an offline maintenance preflight against a durable store, run:
+
+```bash
+go run . -store-dir /var/lib/streamhive/blobs -verify-store
+```
+
+`-verify-store` prints the same aggregate JSON fields as `/storage/status`, requires no listener or
+`-replicate` flag, returns a non-zero status for corrupt or missing entries, and never mutates the
+store. It does not expose blob keys, raw content, peer identities, or raw storage errors.
+
 Deletion scope is explicit: `FileStore.Delete` is local eviction or garbage collection. A peer
 may rehydrate that blob through the current add-only anti-entropy path; distributed logical
 deletion is deferred to a separate versioned namespace design. See
@@ -399,6 +409,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-lifecycle-delete-namespace` / `-lifecycle-delete-key` | One local lifecycle tombstone (mutually exclusive with put) |
 | `-lifecycle-exit-after-mutation` / `-lifecycle-mutation-timeout` | Wait for outbound lifecycle acknowledgements, then exit with a bounded deadline |
 | `-list-keys` | Print durable `-store-dir` keys as hex and exit |
+| `-verify-store` | Scan durable `-store-dir` integrity, print aggregate JSON, and exit non-zero when unhealthy |
 | `-put-key` / `-put-data` | Send one manually keyed blob to outbound peers |
 | `-put-content-key` | Derive the outbound blob key from `SHA-256(-put-data)` |
 | `-put-ack-timeout` | Time to wait for each one-shot blob acknowledgment |
@@ -411,7 +422,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
 | `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
-See the [Makefile](Makefile) for focused `test-inventory-status`, `test-inventory-status-metrics`, `test-content-integrity`, `test-storage-integrity`, `test-peer-admission`, `test-peer-drain`, `test-tls-auth`, `test-mtls`, `test-mtls-cli`, `test-tls-rotation`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `test-cli-shutdown`, `test-lifecycle-compaction`, and `test-lifecycle-compose` gates, plus `test-race`, `test-fuzz`, `test-budgets`, `vet`, `cover`, `lint`, benchmarks, and demos.
+See the [Makefile](Makefile) for focused `test-inventory-status`, `test-inventory-status-metrics`, `test-content-integrity`, `test-storage-integrity`, `test-storage-verify`, `test-peer-admission`, `test-peer-drain`, `test-tls-auth`, `test-mtls`, `test-mtls-cli`, `test-tls-rotation`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `test-cli-shutdown`, `test-lifecycle-compaction`, and `test-lifecycle-compose` gates, plus `test-race`, `test-fuzz`, `test-budgets`, `vet`, `cover`, `lint`, benchmarks, and demos.
 
 ## Architecture (summary)
 
