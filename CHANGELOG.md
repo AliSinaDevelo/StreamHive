@@ -4,6 +4,11 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Integrity**: `replication.Apply` now rejects mismatched 32-byte SHA-256 content keys before
+  mutating storage, and anti-entropy validates data returned by every `BlobStore` before emitting
+  `blob.put`; corrupt repair sources are skipped and counted without changing opaque-key behavior.
+- **Tests/CI**: `make test-content-integrity` proves library apply rejection, generic repair-source
+  validation, opaque-key continuation, and durable corruption replacement under the race detector.
 - **Metrics**: `/inventory/status` scan attempts, outcomes, observed key/byte totals, and
   cumulative duration are now exposed as aggregate `replication_inventory_status_*` counters in
   JSON and Prometheus; raw-only nodes remain at zero.

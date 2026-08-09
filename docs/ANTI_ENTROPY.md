@@ -184,6 +184,30 @@ The deletion decision is recorded in [DELETION_SEMANTICS.md](DELETION_SEMANTICS.
 current add-only contract, a local delete is an eviction that a peer may repair; a future logical
 delete must live in a separate versioned namespace with explicit retention and compaction rules.
 
+## Content-Addressed Source Integrity
+
+Every anti-entropy source read is checked before encoding a `blob.put`. A 32-byte key is a
+SHA-256 content address, so bytes that do not hash to that key are skipped rather than sent to
+another peer. This check also covers generic `BlobStore` implementations whose `Get` method does
+not validate content itself; `FileStore` may report the same mismatch during its own read path.
+
+The existing aggregate `replication_corrupt_blobs_detected` counter increments for both a
+corrupt receiver value found before a verified replacement and a corrupt source value found
+during repair. `replication_blobs_skipped` records the skipped delivery, while ordinary source
+read failures retain their existing send-error accounting. No peer, key, content, or raw error
+label is added, and opaque keys continue to use the existing replace behavior.
+
+The focused proof is:
+
+```bash
+make test-content-integrity
+```
+
+It covers the public `replication.Apply` helper, generic in-memory repair sources, opaque-key
+continuation, and the durable corruption-replacement handler under the race detector. This is a
+local integrity boundary; it does not add a wire message, tombstone, revision, or claim that a
+source store is globally healthy.
+
 ## v0.12 Live Cursor Consistency
 
 The inventory cursor is a live ordered-store cursor, not a snapshot. If a source mutation inserts

@@ -207,12 +207,19 @@ never implied.
 | `lifecycle.repair.snapshot` | `watermark`, `records` | Complete checkpoint fallback for a peer behind the retained journal floor; requires `lifecycle.v1`. |
 | `lifecycle.repair.ack` | `watermark` | Durable repair acknowledgement, also used as the optional startup watermark report. |
 
+Any 32-byte blob key is treated as a SHA-256 content address. The CLI receiver and
+`replication.Apply` verify that the payload hashes to that key before calling
+`BlobStore.Put`; a mismatch is rejected before storage mutation and does not receive a
+`blob.ack`. Keys of other lengths remain opaque and retain replace semantics. The
+anti-entropy sender applies the same check to bytes returned by every `BlobStore`, so a
+generic store cannot emit corrupt content under a SHA-256 key.
+
 The CLI replication handler uses `blob.has` and `blob.missing` for anti-entropy:
 
 1. A peer advertises local keys on connect.
 2. When `-sync-interval` is set, a peer advertises local keys periodically.
 3. A receiver computes which advertised keys it lacks and sends `blob.missing`.
-4. The owner answers with `blob.put` for keys it can still read.
+4. The owner verifies readable bytes against 32-byte content keys and answers with `blob.put` only for valid data.
 5. If the repair byte budget defers keys, the owner schedules one bounded continuation.
 6. The receiver answers accepted `blob.put` messages with `blob.ack`.
 
@@ -356,8 +363,11 @@ have no peer, blob, or key labels. `replication_missing_keys_requested` counts k
 `blob.missing` messages, and
 `replication_repair_blobs_sent` counts successful repair `blob.put` frames, while
 `replication_repair_blobs_deferred` counts requested keys held back by the per-response
-repair budget. `replication_corrupt_blobs_detected` counts damaged content-addressed
-files observed while accepting a verified repair and replacing the bad bytes.
+repair budget. `replication_corrupt_blobs_detected` counts damaged content-addressed data
+observed while accepting a verified repair or while reading a repair source. Source corruption
+is skipped and can be requested again by a later inventory pass; it is never emitted as an
+unverified `blob.put`. The metric is aggregate and has no peer, key, content, or error-string
+labels.
 `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` count delayed continuation batches without peer

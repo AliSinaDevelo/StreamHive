@@ -8,6 +8,10 @@ StreamHive is a **Go library and CLI** for experimenting with distributed, conte
 
 **Status:** networking, framing, local storage, content-addressed blob keys, static-peer replication, shared-token auth with optional peer identities and inbound allowlists, bounded ACK-driven retries for one-shot puts, startup and periodic anti-entropy sync, paged native inventory enumeration, ordered MemoryStore and FileStore cursor paths, aggregate-bounded per-peer inventory exchanges with cursor continuation, deterministic live inventory fingerprint status, bounded repair responses with delayed continuation, durable stores, real-TCP restart-convergence acceptance coverage, self-repair demos, Prometheus metrics, CLI TLS/mTLS credential validity and expiry signals, bounded health HTTP resources, and an explicit resource-budget envelope with global repair I/O admission and staged P2P drain are implemented. The v0.13 lifecycle boundary now also has an internal capability-gated record applier, durable authority allocation, bounded journal/snapshot repair planning, durable per-peer watermarks, capability-gated repair frames, caller-owned repair sessions, negotiated startup-watermark reconciliation, opt-in CLI put/delete commands, raw-blob preflight, operator-authored membership fences, checkpoint-first compaction, and real-TCP plus three-node Compose convergence coverage; `-lifecycle` is disabled by default and requires authenticated peer identities while preserving raw compatibility. `storage.FileStore` provides durable local blobs for library users and CLI receivers via `-store-dir`; its process-local inventory index rebuilds from durable filenames when needed, without changing the file format. Older `BlobKeyLister` stores retain a compatibility fallback. Raw blob deletion remains local eviction, and lifecycle compaction never deletes raw blobs; the lifecycle contract is documented in [docs/LIFECYCLE_V0_13.md](docs/LIFECYCLE_V0_13.md). Conflict resolution, richer peer authorization policy, and global discovery are not implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE_BUDGETS.md](docs/RESOURCE_BUDGETS.md), and [docs/PEER_DRAIN.md](docs/PEER_DRAIN.md).
 
+Content-addressed integrity is enforced at both public apply and anti-entropy repair-source
+boundaries: mismatched 32-byte keys are rejected before storage mutation, and corrupt source
+bytes are skipped rather than emitted as `blob.put`. Opaque keys retain their replace behavior.
+
 ## Prerequisites
 
 - Go 1.22 or newer
@@ -56,6 +60,10 @@ Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_bl
 The optional health server bounds request headers to 1 MiB, reads and writes to 10 seconds, header
 parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
 process context is canceled; see `make test-health-server` for the race-enabled proof.
+
+`replication_corrupt_blobs_detected` counts damaged content-addressed data found during verified
+receive or repair-source reads. A corrupt source is skipped and never emitted as an unverified
+`blob.put` frame.
 
 The CLI owns one finite shutdown deadline through `-shutdown-grace` (3 seconds by default). On
 application cancellation it stops scheduler and reconnect admission, shuts down health within
@@ -383,7 +391,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-max-inventory-bytes` | Cap encoded `blob.has` bytes per peer exchange (0 = unlimited) |
 | `-max-inventory-keys` | Cap advertised keys per peer exchange (0 = unlimited) |
 
-See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-lifecycle-compaction`, `test-lifecycle-compose`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
+See the [Makefile](Makefile) for `test-race`, `test-fuzz`, `test-budgets`, `test-content-integrity`, `test-lifecycle-compaction`, `test-lifecycle-compose`, `test-tls-auth`, `test-tls-credential-health`, `test-prometheus-format`, `test-health-server`, `vet`, `cover`, `lint`, and demos.
 
 ## Architecture (summary)
 

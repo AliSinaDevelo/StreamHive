@@ -217,6 +217,10 @@ Define error budgets once you expose a workload to users. Baseline probes:
 `replication_inventory_exchanges_dropped` counts canceled or failed inventory scheduler
 work without peer labels.
 
+- **Content integrity**: `replication_corrupt_blobs_detected` also counts mismatched bytes found
+  while reading a generic repair source. Those bytes are skipped and never emitted as an
+  unverified `blob.put`; the counter remains aggregate and label-free.
+
 Continuation counters are also aggregate: `replication_repair_continuations_scheduled`,
 `replication_repair_continuations_completed`, and
 `replication_repair_continuations_dropped` count queued, executed, and discarded
