@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist for StreamHive releases. The current target is `v0.13.0`, the release that adds the opt-in, authenticated lifecycle journal, bounded repair sessions, operator-fenced compaction, and stale-peer snapshot recovery while preserving raw-blob compatibility.
+Use this checklist for StreamHive releases. The current target is `v0.14.0`, the presentation release that packages the post-v0.13 lifecycle observability, inventory fingerprinting, content-addressed repair integrity, and storage integrity status work while preserving raw-blob compatibility.
 
 ## Preflight
 
@@ -11,6 +11,11 @@ go test -race -count=1 ./...
 go vet ./...
 go test -bench=. -benchmem -run '^$' ./...
 make test-fairness
+make test-inventory-status
+make test-inventory-status-metrics
+make test-content-integrity
+make test-storage-integrity
+make test-peer-admission
 make test-peer-drain
 make test-cli-shutdown
 make test-health-server
@@ -21,6 +26,7 @@ make test-mtls-cli
 make test-tls-rotation
 make test-tls-credential-health
 make test-lifecycle-compaction
+make test-lifecycle-membership
 make test-lifecycle-compose
 go test ./replication -run '^TestResearchInventoryEnvelopeSizes$' -count=1 -v
 go test . -run '^TestRun_retriesBlobPutAfterLostAck$' -count=1 -v
@@ -31,7 +37,7 @@ make demo-auth
 make demo-repair
 make demo-failure
 make demo-continuation
-go run . -version  # expected: 0.13.0
+go run . -version  # expected: 0.14.0
 ```
 
 ## Version
@@ -42,15 +48,15 @@ go run . -version  # expected: 0.13.0
 
 ```bash
 git add internal/version/version.go CHANGELOG.md README.md docs/RELEASE.md
-git commit -m "chore(release): cut v0.13.0"
+git commit -m "chore(release): cut v0.14.0"
 ```
 
 ## Tag
 
 ```bash
-git tag -a v0.13.0 -m "v0.13.0"
+git tag -a v0.14.0 -m "v0.14.0"
 git push origin main
-git push origin v0.13.0
+git push origin v0.14.0
 ```
 
 ## Release Notes

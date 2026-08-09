@@ -12,7 +12,7 @@ docker run --rm -p 7070:7070 -p 8080:8080 streamhive:local \
 ```
 
 - **7070** — P2P TCP listener (example).
-- **8080** — HTTP `/livez`, `/readyz`, `/peers` (JSON peer metadata), `/metrics` (JSON counters), `/metrics/prometheus` (Prometheus text), `/inventory/status` (aggregate live key fingerprint), and `/storage/status` (aggregate live blob integrity).
+- **8080** — HTTP `/livez`, `/readyz`, `/peers` (JSON peer metadata), `/metrics` (JSON counters), `/metrics/prometheus` (Prometheus text), `/inventory/status` (aggregate live key fingerprint), `/storage/status` (aggregate live blob integrity), and `/lifecycle/status` (aggregate opt-in lifecycle state).
 
 Use TLS flags (`-tls-cert`, `-tls-key`, `-tls-ca`, `-tls-server-name`) when exposing services beyond a lab network. The verified certificate and application-auth ordering is documented in [TLS_AUTH.md](TLS_AUTH.md) and exercised by `make test-tls-auth`. Reserve `-tls-insecure-skip-verify` for local development. For CLI mTLS, add `-tls-client-ca -tls-require-client-cert` on the listener and `-tls-client-cert -tls-client-key` on outbound peers. Use `-tls-expiry-warning` to set the aggregate short-lived-credential warning window (`720h` by default, `0` disables the warning). For custom trust policy, configure `p2p.TCPTransport.TLSServerConfig` and `TLSClientConfig` in library code.
 

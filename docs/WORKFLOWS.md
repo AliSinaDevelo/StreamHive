@@ -181,6 +181,17 @@ It runs three race-enabled repetitions, builds the complete transport/replicatio
 snapshot, and parses the output to require safe names, one `HELP`/`TYPE` pair per sample,
 deterministic ordering, and explicit counter/gauge classification.
 
+The storage integrity status acceptance target is:
+
+```bash
+make test-storage-integrity
+```
+
+It runs three race-enabled repetitions covering bounded native paging, legacy-lister fallback,
+content-addressed verification, opaque-key accounting, missing and corrupt entries, cancellation,
+raw-only health output, generic failure responses, and JSON/Prometheus metric accounting over a
+real durable store.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
