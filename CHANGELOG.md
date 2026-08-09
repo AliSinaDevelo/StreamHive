@@ -19,8 +19,12 @@ All notable changes to StreamHive are documented here. This project follows [Sem
   scheduler, ACK, inventory, repair, and reconnect ordering explicit.
 - **Health**: `-peer-reconnect` exposes label-free target, active-loop, attempt, failure, and success
   metrics through JSON and Prometheus without changing readiness, shutdown, or wire behavior.
+- **P2P/CLI**: static reconnect retains the exact configured `-peers` target on concrete outbound TCP
+  peers, so hostname targets continue retrying after a resolved connection address disconnects without
+  changing the `p2p.Peer` interface, readiness, or SHV1 wire behavior.
 - **Tests/CI**: `make test-peer-reconnect` proves unavailable-target retries and real-TCP recovery under
-  the race detector in a dedicated Actions job.
+  the race detector in a dedicated Actions job, including hostname reconnect after target shutdown and
+  restart.
 
 ## [0.14.0] — 2026-08-09
 

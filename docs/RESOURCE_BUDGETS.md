@@ -40,7 +40,7 @@ and [memberlist configuration](https://github.com/hashicorp/memberlist/blob/mast
 | Global repair I/O operations | CLI `-max-repair-ops`; default 4, `0` selects the default | `repairIOLimiter` | Each anti-entropy blob read/write waits for a permit; cancellation rejects the waiter. `repair_io_ops_*` metrics show pressure without labels. |
 | Per-peer repair queue | One running continuation and at most `MaxKeys` pending keys per peer | `repairContinuationScheduler` | New unique keys beyond the queue cap are dropped and counted; disconnect or shutdown discards the entry. |
 | Reconnect delay | 500 ms minimum, 30 s maximum by CLI defaults | `peerReconnector` | Failed static targets back off exponentially and stop on context cancellation. |
-| Static reconnect loops | One retry loop per unique `-peers` target; target count is operator-configured | `peerReconnector` | Duplicate schedules coalesce per target; `peer_reconnect_active` exposes live dialing/backoff loops, while attempts, non-shutdown failures, and successes remain aggregate. |
+| Static reconnect loops | One retry loop per unique `-peers` target; target count is operator-configured | `peerReconnector` | Duplicate schedules coalesce per target; concrete TCP peers retain the exact configured target across resolved-address disconnects; `peer_reconnect_active` exposes live dialing/backoff loops, while attempts, non-shutdown failures, and successes remain aggregate. |
 | TLS handshake | `DefaultTLSHandshakeTimeout`: 5 s; library override `TLSHandshakeTimeout` | `p2p.TCPTransport` | Inbound certificate verification completes before peer registration; timeout or certificate failure closes the connection and increments aggregate TLS failure metrics. |
 | Auth handshake | 5 s default timeout, 128-byte identity limit | `p2p` handshake | Invalid or late auth closes the connection before peer registration. |
 
@@ -135,7 +135,8 @@ unchanged, while each native pager call holds only one bounded page at a time.
   shared context between blob operations.
 - **Reconnect:** reconnect retries are bounded by the configured backoff, while the
   next inventory exchange remains the repair fallback after a disconnect. The retry loop is one
-  per unique configured target; `peer_reconnect_targets`, `peer_reconnect_active`,
+  per unique configured target, and concrete TCP peers match disconnects against that configured
+  target rather than only the resolved remote address; `peer_reconnect_targets`, `peer_reconnect_active`,
   `peer_reconnect_attempts`, `peer_reconnect_failures`, and `peer_reconnect_successes` expose
   aggregate pressure and recovery without target labels. Cancellation during shutdown removes
   active loops and is not counted as a failure.

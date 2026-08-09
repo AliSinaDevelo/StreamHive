@@ -278,8 +278,10 @@ go run . -listen 127.0.0.1:7071 -peers 127.0.0.1:7070,127.0.0.1:7072 -peer-recon
 When `-peer-reconnect` is enabled, `/metrics` and `/metrics/prometheus` also expose the aggregate,
 label-free `peer_reconnect_targets`, `peer_reconnect_active`, `peer_reconnect_attempts`,
 `peer_reconnect_failures`, and `peer_reconnect_successes` values. `targets` counts unique configured
-retry addresses; `active` counts retry loops while dialing or backing off; cancellation during shutdown
-does not count as a failure. Disabled reconnect mode keeps these metrics at zero.
+retry targets; `active` counts retry loops while dialing or backing off; cancellation during shutdown
+does not count as a failure. Concrete TCP outbound peers retain the exact configured target, so a
+hostname such as `localhost:7070` continues to reconnect after its resolved numeric connection
+drops. Disabled reconnect mode keeps these metrics at zero.
 
 When both sides run with `-replicate`, peers advertise local keys on connect and send missing blobs to each other. A repair response that hits its byte budget gets one bounded delayed continuation; a large inventory exchange gets per-peer cursor continuations; duplicate requests are merged per peer and periodic inventory remains the fallback. This startup anti-entropy path works with memory storage and durable `-store-dir` receivers.
 

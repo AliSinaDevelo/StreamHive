@@ -84,10 +84,11 @@ The static-peer reconnect health acceptance target is:
 make test-peer-reconnect
 ```
 
-It runs three race-enabled repetitions with an unavailable `-peers` target, observes active retry
-work and failures through the health metrics, starts a real TCP listener at the target address, and
-requires a successful reconnect with no active retry loop left behind. JSON and Prometheus output
-remain aggregate and label-free.
+It runs three race-enabled repetitions with unavailable `-peers` targets, observes active retry
+work and failures through the health metrics, starts real TCP listeners at the target addresses,
+and requires successful reconnects with no active retry loop left behind. One path uses a hostname,
+stops the connected target, and proves the hostname target is retried after the resolved connection
+address disappears. JSON and Prometheus output remain aggregate and label-free.
 
 The TLS and application-auth acceptance target is:
 

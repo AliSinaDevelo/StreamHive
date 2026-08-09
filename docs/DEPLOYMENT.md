@@ -28,7 +28,9 @@ the configured exponential backoff; `-dial` remains a one-shot attempt. The heal
 `peer_reconnect_targets`, `peer_reconnect_active`, `peer_reconnect_attempts`,
 `peer_reconnect_failures`, and `peer_reconnect_successes` show configured retry targets, live retry
 loops, attempts, non-shutdown failures, and successful connections without target or error labels.
-Use the active gauge and failure counter for alerts; reconnect activity does not change `/readyz`.
+Concrete TCP outbound peers retain the exact configured `-peers` target, so hostname targets remain
+reconnectable after a connection reports its resolved numeric address on disconnect. Use the active
+gauge and failure counter for alerts; reconnect activity does not change `/readyz`.
 
 For private clusters where every node shares an operator-managed secret, add
 `-peer-auth-token` to each node. Add a stable `-peer-id` to make the remote application
