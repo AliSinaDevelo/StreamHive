@@ -4,6 +4,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.14.0] — 2026-08-09
+
 - **Ops**: `/storage/status` now performs a bounded live scan of configured blob inventory and
   reports aggregate verified, opaque, corrupt, and missing classifications without exposing keys,
   content, peer identities, or raw storage errors.

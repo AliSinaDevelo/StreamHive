@@ -70,6 +70,7 @@ Highlight:
 - Negotiated startup-watermark reconciliation and stale-peer snapshot recovery after lifecycle metadata loss.
 - Authenticated three-node Compose acceptance coverage for present records, tombstones, source restart, checkpoint restoration, and retained raw bytes.
 - Aggregate lifecycle status and Prometheus gauges for readiness, journal state, repair sessions, membership progress, and compaction safety without peer or logical-key labels.
+- Aggregate lifecycle repair outcomes, inventory fingerprints and scan accounting, content-addressed apply/repair validation, and live storage integrity status with bounded JSON and Prometheus surfaces.
 - Aggregate inventory, repair, continuation, scheduler, and resource-budget metrics exposed through deterministic JSON and Prometheus health endpoints.
 - Finite peer admission and overload behavior, authenticated application identities, exact inbound identity allowlists, and tokenless compatibility.
 - Library and CLI TLS/mTLS admission with bounded handshakes, credential validity/expiry health, and restart-only certificate rotation semantics.
