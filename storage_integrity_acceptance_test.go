@@ -106,3 +106,42 @@ func TestRun_storageIntegrityStatusReportsAggregateHealth(t *testing.T) {
 	cancel()
 	require.NoError(t, <-errCh, "stderr=%q", stderr.String())
 }
+
+func TestRun_storageIntegrityStatusRejectsMalformedRegularFilename(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	storeDir := t.TempDir()
+	_, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, "not-a-hex-key"), []byte("payload"), 0o600))
+
+	var out, stderr safeBuffer
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(ctx, []string{
+			"-listen", "127.0.0.1:0",
+			"-health", "127.0.0.1:0",
+			"-replicate",
+			"-store-dir", storeDir,
+		}, &out, &stderr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), "listening on") && strings.Contains(stderr.String(), "msg=health")
+	}, 3*time.Second, 20*time.Millisecond, "stdout=%q stderr=%q", out.String(), stderr.String())
+	healthMatch := regexp.MustCompile(`msg=health addr=([0-9a-fA-F.:]+)`).FindStringSubmatch(stderr.String())
+	require.Len(t, healthMatch, 2, "stderr=%q", stderr.String())
+	base := "http://" + healthMatch[1]
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	resp, err := client.Get(base + "/storage/status")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	assert.Equal(t, "storage unavailable\n", string(body))
+
+	cancel()
+	require.NoError(t, <-errCh, "stderr=%q", stderr.String())
+}

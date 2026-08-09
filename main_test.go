@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -577,6 +578,44 @@ func TestRun_verifyStorePrintsHealthyAggregateJSON(t *testing.T) {
 	assert.Equal(t, int64(len("opaque value")), status.OpaqueBytes)
 	assert.Zero(t, status.CorruptKeys)
 	assert.Zero(t, status.MissingKeys)
+}
+
+func TestRun_verifyStoreIgnoresNonRegularEntries(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	store, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	require.NoError(t, store.Put(ctx, []byte("opaque"), []byte("opaque value")))
+	require.NoError(t, os.Mkdir(filepath.Join(storeDir, hex.EncodeToString([]byte("directory"))), 0o700))
+	targetDir := t.TempDir()
+	targetPath := filepath.Join(targetDir, "outside")
+	require.NoError(t, os.WriteFile(targetPath, []byte("outside payload"), 0o600))
+	require.NoError(t, os.Symlink(targetPath, filepath.Join(storeDir, hex.EncodeToString([]byte("symlink")))))
+	require.NoError(t, os.Symlink(targetPath, filepath.Join(storeDir, "not-a-hex-link")))
+
+	var out bytes.Buffer
+	err = run(ctx, []string{"-store-dir", storeDir, "-verify-store"}, &out, io.Discard)
+	require.NoError(t, err)
+
+	var status storageIntegrityStatusResponse
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	assert.True(t, status.Enabled)
+	assert.True(t, status.Healthy)
+	assert.Equal(t, 1, status.Keys)
+	assert.Equal(t, 1, status.OpaqueKeys)
+	assert.Equal(t, int64(len("opaque value")), status.OpaqueBytes)
+}
+
+func TestRun_verifyStoreRejectsMalformedRegularFilename(t *testing.T) {
+	storeDir := t.TempDir()
+	_, err := storage.NewFileStore(storeDir)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(storeDir, "not-a-hex-key"), []byte("payload"), 0o600))
+
+	var out bytes.Buffer
+	err = run(context.Background(), []string{"-store-dir", storeDir, "-verify-store"}, &out, io.Discard)
+	require.EqualError(t, err, "storage: integrity scan failed")
+	assert.Empty(t, out.String())
 }
 
 func TestRun_verifyStoreFailsOnCorruptionWithoutMutation(t *testing.T) {
