@@ -86,6 +86,78 @@ func TestRun_peerReconnectHealthMetrics(t *testing.T) {
 	assert.NotContains(t, prometheus, "remote=")
 }
 
+func TestRun_peerReconnectFastDisconnectContinues(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	targetAddr := listener.Addr().String()
+	accepted := make(chan net.Conn, 1)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		for connectionNumber := 1; ; connectionNumber++ {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			if connectionNumber == 1 {
+				if tcpConn, ok := conn.(*net.TCPConn); ok {
+					_ = tcpConn.SetLinger(0)
+				}
+				_ = conn.Close()
+				continue
+			}
+			accepted <- conn
+			return
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case conn := <-accepted:
+			_ = conn.Close()
+		default:
+		}
+		<-serverDone
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	node := &inventoryBudgetNode{
+		cancel: cancel,
+		errCh:  make(chan error, 1),
+	}
+	go func() {
+		node.errCh <- run(ctx, []string{
+			"-listen", "127.0.0.1:0",
+			"-health", "127.0.0.1:0",
+			"-peers", targetAddr,
+			"-peer-reconnect",
+			"-peer-reconnect-min", "10ms",
+			"-peer-reconnect-max", "40ms",
+		}, &node.out, &node.err)
+	}()
+	t.Cleanup(func() { node.stop(t) })
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(node.out.String(), "listening on") && strings.Contains(node.err.String(), "msg=health")
+	}, 3*time.Second, 10*time.Millisecond, "stdout=%q stderr=%q", node.out.String(), node.err.String())
+	node.health = regexp.MustCompile(`msg=health addr=([0-9a-fA-F.:]+)`).FindStringSubmatch(node.err.String())[1]
+
+	var metrics map[string]int64
+	require.Eventually(t, func() bool {
+		var metricsErr error
+		metrics, metricsErr = tryInventoryBudgetMetrics(node)
+		return metricsErr == nil &&
+			metrics["peer_reconnect_successes"] >= 2 &&
+			metrics["peer_reconnect_active"] == 0
+	}, 3*time.Second, 10*time.Millisecond, "metrics=%v stderr=%q", metrics, node.err.String())
+
+	select {
+	case <-accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("target did not accept a retry: metrics=%v stderr=%q", metrics, node.err.String())
+	}
+}
+
 func TestRun_peerReconnectHostnameAfterDisconnect(t *testing.T) {
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

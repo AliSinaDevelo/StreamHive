@@ -1782,6 +1782,7 @@ type peerReconnector struct {
 
 	mu      sync.Mutex
 	dialing map[string]bool
+	pending map[string]bool
 }
 
 func newPeerReconnector(ctx context.Context, tr *p2p.TCPTransport, targets []string, minBackoff, maxBackoff time.Duration, log *slog.Logger, metrics *peerReconnectMetrics) *peerReconnector {
@@ -1801,6 +1802,7 @@ func newPeerReconnector(ctx context.Context, tr *p2p.TCPTransport, targets []str
 		metrics: metrics,
 		target:  targetMap,
 		dialing: make(map[string]bool, len(targets)),
+		pending: make(map[string]bool, len(targets)),
 	}
 }
 
@@ -1821,6 +1823,20 @@ func (r *peerReconnector) OnPeerDisconnected(peer p2p.Peer) {
 	if _, ok := r.target[target]; !ok {
 		return
 	}
+	r.noteDisconnect(target)
+}
+
+func (r *peerReconnector) noteDisconnect(target string) {
+	if r.ctx.Err() != nil {
+		return
+	}
+	r.mu.Lock()
+	if r.dialing[target] {
+		r.pending[target] = true
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
 	r.schedule(target, r.min)
 }
 
@@ -1844,21 +1860,22 @@ func (r *peerReconnector) schedule(target string, initialDelay time.Duration) {
 
 func (r *peerReconnector) loop(target string, initialDelay time.Duration) {
 	defer func() {
-		r.mu.Lock()
-		delete(r.dialing, target)
-		r.mu.Unlock()
+		retry := r.finishLoop(target)
 		if r.metrics != nil {
 			r.metrics.Active.Add(-1)
 		}
+		if retry && r.ctx.Err() == nil {
+			r.schedule(target, r.min)
+		}
 	}()
 
-	delay := r.min
 	if initialDelay > 0 {
 		if !sleepContext(r.ctx, initialDelay) {
 			return
 		}
 	}
 
+	delay := r.min
 	for {
 		if err := r.ctx.Err(); err != nil {
 			return
@@ -1883,6 +1900,15 @@ func (r *peerReconnector) loop(target string, initialDelay time.Duration) {
 		}
 		delay = nextBackoff(delay, r.max)
 	}
+}
+
+func (r *peerReconnector) finishLoop(target string) bool {
+	r.mu.Lock()
+	delete(r.dialing, target)
+	retry := r.pending[target]
+	delete(r.pending, target)
+	r.mu.Unlock()
+	return retry
 }
 
 func sleepContext(ctx context.Context, d time.Duration) bool {
