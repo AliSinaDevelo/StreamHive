@@ -390,7 +390,7 @@ inventory counters make whole-exchange pressure visible before that decision.
 ## Observability
 
 Use `/metrics` for JSON counters, `/metrics/prometheus` for Prometheus text format, `/inventory/status`
-for the aggregate live key fingerprint, and `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
+for the aggregate live key fingerprint, `/storage/status` for configured-store integrity, and `/peers` for connected peer metadata. `/metrics` includes peer auth, transport, and
 replication counters, including `peer_auth_identity_rejections` for inbound identity
 allowlist failures and the aggregate anti-entropy counters described above. `/peers`
 includes remote address, local address, direction,
@@ -403,6 +403,15 @@ expose blob keys, raw content, peer labels, or a new wire message.
 The corresponding `replication_inventory_status_*` counters expose aggregate scan attempts,
 outcomes, observed key/byte totals, and cumulative duration through JSON and Prometheus without
 changing the protocol.
+
+`/storage/status` is a live local read diagnostic. It verifies listed 32-byte keys against their
+current bytes, counts opaque keys without imposing a hash contract, and reports aggregate verified,
+opaque, corrupt, and missing entries plus byte totals. Native stores use bounded inventory pages and
+older listers use the compatibility path. A scan failure returns a generic `503`; no raw storage
+error, key, content, or peer label is exposed. The endpoint does not alter `/readyz`, delete data,
+start repair, claim snapshot consistency, or add a wire message. Its label-free
+`replication_storage_integrity_*` counters are available through both health formats; raw-only
+nodes keep the disabled zero state. See [STORAGE_INTEGRITY.md](STORAGE_INTEGRITY.md).
 
 The Prometheus endpoint emits a sorted, label-free family for every JSON metric. Each family
 has exactly one `# HELP`, one `# TYPE`, and one sample line; metric names and sample values are

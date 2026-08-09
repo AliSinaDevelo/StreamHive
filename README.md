@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml/badge.svg)](https://github.com/AliSinaDevelo/StreamHive/actions/workflows/ci.yml)
 
-StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/lifecycle/status`).
+StreamHive is a **Go library and CLI** for experimenting with distributed, content-addressed storage. It ships a production-minded **TCP transport** (context-aware listen/dial, TLS hooks, optional shared-token peer auth with application identities, framing, metrics, limits), a **length-prefixed wire format** (`SHV1`), a typed **blob replication protocol**, memory and file-backed **blob stores**, and operational endpoints (`/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/storage/status`, `/lifecycle/status`).
 
 **Semver:** public API versions are tracked in [CHANGELOG.md](CHANGELOG.md) and [internal/version/version.go](internal/version/version.go) (currently **v0.13.0**, pre-1.0).
 
@@ -25,7 +25,7 @@ go test ./...
 go run . -version
 make run
 ./bin/fs -listen :7070 -dial 127.0.0.1:8080
-./bin/fs -listen 127.0.0.1:0 -health 127.0.0.1:8080   # HTTP live/ready/peers/metrics/inventory
+./bin/fs -listen 127.0.0.1:0 -health 127.0.0.1:8080   # HTTP live/ready/peers/metrics/inventory/storage
 ```
 
 ### Two-node replication demo
@@ -56,6 +56,14 @@ curl -s http://127.0.0.1:8080/peers
 
 Look for `replication_blobs_stored`, `replication_bytes_stored`, `replication_blob_acks_received`, `replication_blob_acks_matched`, `replication_blob_ack_timeouts`, `replication_blob_retries`, `replication_blob_puts_accepted`, `replication_blob_put_failures`, and `replication_blob_write_errors`, plus duplicate/skipped, anti-entropy (`replication_inventory_advertisements`, `replication_inventory_bytes_sent`, `replication_inventory_keys_sent`, `replication_inventory_keys_probed`, `replication_inventory_exchanges_started`, `replication_inventory_exchanges_completed`, `replication_inventory_exchanges_limited`, `replication_inventory_exchanges_active`, `replication_missing_keys_requested`, `replication_repair_blobs_sent`, `replication_repair_blobs_deferred`), auth, transport frame counters such as `peer_auth_identity_rejections`, and TLS identity health (`tls_certificates_configured`, `tls_certificate_expiry_timestamp_seconds`, `tls_certificates_expired`, `tls_certificates_not_yet_valid`, `tls_certificates_expiring_soon`). The sender derives the blob key from `SHA-256(put-data)` when `-put-content-key` is set; receivers verify SHA-256-shaped keys before storing. One-shot sends wait for a matching `blob.ack` and retry the idempotent `blob.put` within the configured budget. Structured delivery logs include the remote peer, key, outcome, and attempt count; anti-entropy repair deliveries are logged separately with `delivery=anti-entropy`. Use `/metrics` for JSON counters, `/metrics/prometheus` for sorted Prometheus text with `# HELP`/`# TYPE` metadata and no labels, and `/peers` for sorted peer metadata including remote address, local address, direction, connection timestamp, connection age, `auth_method` (`none` or `shared-token`), and optional `auth_identity`.
 `replication_inventory_status_scans_started`, `replication_inventory_status_scans_completed`, and `replication_inventory_status_scans_failed` count endpoint scans; `replication_inventory_status_keys_scanned` and `replication_inventory_status_key_bytes_scanned` count keys and key bytes from successful scans; `replication_inventory_status_scan_duration_ms` accumulates elapsed milliseconds for attempted scans. These counters are aggregate and label-free; raw-only nodes remain at zero because no inventory scan is performed.
+
+For a configured store, `/storage/status` performs a live integrity scan and reports aggregate
+`keys`, `key_bytes`, `content_addressed_keys`, `verified_keys`, `verified_bytes`, `opaque_keys`,
+`opaque_bytes`, `corrupt_keys`, and `missing_keys`. `healthy` is false when a listed blob is corrupt
+or missing. The matching `replication_storage_integrity_*` counters expose scan attempts, observed
+classes, bytes, and duration in JSON and Prometheus without key, peer, content, or error labels.
+Raw-only nodes return `enabled: false`, `healthy: true`, and zero counts. See
+[docs/STORAGE_INTEGRITY.md](docs/STORAGE_INTEGRITY.md) for the live-scan and failure boundaries.
 
 The optional health server bounds request headers to 1 MiB, reads and writes to 10 seconds, header
 parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
@@ -206,6 +214,18 @@ between calls, so the result is a convergence signal rather than a snapshot. Raw
 return `enabled: false` with a ready live-scan status, and a failed store scan returns `503`.
 Run `make test-inventory-status` for the three-race-repeat real-TCP mismatch/equality proof.
 
+To inspect local blob integrity without exposing blob keys or raw content:
+
+```bash
+curl -fsS http://127.0.0.1:8080/storage/status
+```
+
+The scan verifies every 32-byte key against its current bytes, counts opaque keys without a
+content-addressing contract, and reports corrupt or missing inventory entries. It is live rather
+than snapshot-consistent, uses bounded native inventory pages when available, and returns `503`
+with a generic message when storage enumeration or reads fail. It does not change `/readyz`, delete
+blobs, or initiate repair. Run `make test-storage-integrity` for the focused race-enabled proof.
+
 Deletion scope is explicit: `FileStore.Delete` is local eviction or garbage collection. A peer
 may rehydrate that blob through the current add-only anti-entropy path; distributed logical
 deletion is deferred to a separate versioned namespace design. See
@@ -353,7 +373,7 @@ Wire handshake string constant: `p2p.HandshakeVersionV1` (carry inside applicati
 | `-peer-reconnect` | Retry `-peers` with exponential backoff |
 | `-peer-reconnect-min` / `-peer-reconnect-max` | Reconnect backoff bounds |
 | `-sync-interval` | Periodically advertise local blob keys to connected peers (0 = startup only) |
-| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/lifecycle/status` |
+| `-health` | HTTP `host:port` for `/livez`, `/readyz`, `/peers`, `/metrics`, `/metrics/prometheus`, `/inventory/status`, `/storage/status`, `/lifecycle/status` |
 | `-max-peers` | Cap simultaneous peers (0 = unlimited) |
 | `-peer-auth-token` / `-peer-auth-timeout` | Optional shared-token peer auth before peer registration |
 | `-peer-id` | Optional application identity exchanged during shared-token auth (requires `-peer-auth-token`) |

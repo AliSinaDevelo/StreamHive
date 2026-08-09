@@ -12,7 +12,7 @@ flowchart TD
   rep --> st["Storage (storage)<br/>BlobStore"]
   st --> mem["MemoryStore"]
   st --> file["FileStore (durable)"]
-  tr -. exposes .-> health["HTTP /livez /readyz /peers /metrics /inventory/status"]
+  tr -. exposes .-> health["HTTP /livez /readyz /peers /metrics /inventory/status /storage/status"]
 ```
 
 ## Layers
@@ -20,7 +20,7 @@ flowchart TD
 1. **Transport (`p2p`)** — `TCPTransport` with `context.Context` on `ListenAndAccept` / `Dial`, accept-loop shutdown coordinated with `Close`, optional TLS, optional shared-token peer auth with exchanged application identities and exact inbound allowlists, optional framed reads via `FrameHandler`, metrics, peer snapshots with auth-method and identity labels, and peer disconnect hooks.
 2. **Framing (`p2p`)** — `SHV1` length-prefixed payloads (`ReadFrame` / `WriteFrame`) with a configurable maximum size (DoS bound). Application-level handshake string: `HandshakeVersionV1`.
 3. **Replication (`replication`)** — typed JSON messages carried inside frames. `blob.put` writes one key/value blob to a receiving `BlobStore`; `blob.has`, `blob.get`, and `blob.missing` provide the inventory/request vocabulary for anti-entropy sync; `blob.ack` records accepted puts.
-4. **Storage (`storage`)** — `BlobStore` with `BlobKeyLister` and bounded `BlobKeyPager` inventory support, `MemoryStore` for tests/demos, and `FileStore` for durable local blobs; SHA-256 helpers provide stable content-addressed keys. Both stores page through ordered B-tree indexes. FileStore rebuilds its process-local index from durable filenames when first enumerated or when the directory modification stamp changes; no sidecar manifest is required.
+4. **Storage (`storage`)** — `BlobStore` with `BlobKeyLister` and bounded `BlobKeyPager` inventory support, `MemoryStore` for tests/demos, and `FileStore` for durable local blobs; SHA-256 helpers provide stable content-addressed keys. Both stores page through ordered B-tree indexes. `InspectInventory` provides a live verified/opaque/corrupt/missing aggregate for the operator health surface. FileStore rebuilds its process-local index from durable filenames when first enumerated or when the directory modification stamp changes; no sidecar manifest is required.
 
 ## Package map
 
@@ -87,6 +87,7 @@ classDiagram
 - Optional `FrameHandler` runs per frame on each peer session until error, context cancellation, or disconnect. `TCPPeer.WriteFrame` serializes concurrent frame writers so ACK responses, retries, and inventory messages cannot interleave on one TCP stream.
 - CLI replication installs a `FrameHandler` that decodes `blob.put` messages and writes to `MemoryStore` by default, or `FileStore` when `-store-dir` is set. Outbound `-put-key` / `-put-data` sends one manually keyed frame after `-dial` or `-peers` connects; `-put-content-key` derives the key from `SHA-256(-put-data)`. `-list-keys` inspects durable stores by printing known keys as hex.
 - Receivers treat 32-byte keys as SHA-256 content addresses and verify payload integrity before storage. Exact duplicate key/data writes are skipped and counted separately; opaque keys with different data still replace existing values.
+- `/storage/status` re-reads the configured inventory through `InspectInventory`, verifies content-addressed bytes, and reports aggregate health without changing readiness, deletion, repair, or wire semantics. The scan is live and uses bounded pages for native stores.
 - `-peer-reconnect` manages only static `-peers` targets. It retries failed dials with exponential backoff and schedules another retry when an outbound configured peer disconnects. Once the application context is canceled, new reconnect scheduling is rejected and existing loops observe cancellation before dialing.
 - CLI shutdown uses one `-shutdown-grace` deadline for the optional health server and concrete `TCPTransport.Drain(ctx)`. Application cancellation stops scheduler admission first; health shutdown consumes its portion of the deadline, then P2P drain quiesces admissions and joins or force-closes tracked work. The SHV1 wire contract is unchanged.
 - Logical lifecycle state is intentionally separate from raw blob replication. The v0.13 research direction is an operator-fenced single authority per logical namespace with durable `(epoch, sequence)` records, per-peer journal watermarks, bounded lifecycle batches, and snapshot bootstrap when a peer falls behind compaction. Raw `BlobStore.Delete` remains local eviction in v0.12; a raw blob arriving from an older peer never creates a logical record. The complete lifecycle contract, mixed-version refusal, retention/compaction rules, and future implementation split are in [LIFECYCLE_V0_13.md](LIFECYCLE_V0_13.md).

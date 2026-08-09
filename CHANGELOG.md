@@ -4,6 +4,15 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Ops**: `/storage/status` now performs a bounded live scan of configured blob inventory and
+  reports aggregate verified, opaque, corrupt, and missing classifications without exposing keys,
+  content, peer identities, or raw storage errors.
+- **Metrics**: label-free `replication_storage_integrity_*` counters expose storage scan attempts,
+  observed classes, byte totals, and duration; raw-only nodes keep the zero-value surface.
+- **Tests/CI**: `make test-storage-integrity` runs the durable corruption, raw-only, failure-path,
+  pager, legacy-lister, and cancellation coverage under three race-enabled repetitions.
+- **Docs**: [STORAGE_INTEGRITY.md](docs/STORAGE_INTEGRITY.md) records the live diagnostic boundary;
+  `/readyz`, the wire protocol, raw deletion semantics, and repair behavior are unchanged.
 - **Integrity**: `replication.Apply` now rejects mismatched 32-byte SHA-256 content keys before
   mutating storage, and anti-entropy validates data returned by every `BlobStore` before emitting
   `blob.put`; corrupt repair sources are skipped and counted without changing opaque-key behavior.
