@@ -88,7 +88,9 @@ It runs three race-enabled repetitions with unavailable `-peers` targets, observ
 work and failures through the health metrics, starts real TCP listeners at the target addresses,
 and requires successful reconnects with no active retry loop left behind. One path uses a hostname,
 stops the connected target, and proves the hostname target is retried after the resolved connection
-address disappears. JSON and Prometheus output remain aggregate and label-free.
+address disappears. Another drops the first real TCP connection immediately and proves a retry is
+not lost while the original loop is unwinding. JSON and Prometheus output remain aggregate and
+label-free.
 
 The TLS and application-auth acceptance target is:
 
@@ -299,7 +301,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-inventory-status-metrics` to repeat successful and failed inventory-status accounting, including JSON/Prometheus samples, under the race detector
 - `make test-storage-verify` to repeat offline aggregate durable-store verification, including regular-file classification, non-regular entry exclusion, malformed filename failure, and non-zero corruption handling, under the race detector
 - `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
-- `make test-peer-reconnect` to repeat static-peer retry, failure, recovery, and aggregate health accounting under the race detector
+- `make test-peer-reconnect` to repeat static-peer retry, failure, recovery, fast-disconnect recovery, and aggregate health accounting under the race detector
 - `make test-tls-auth` to repeat TLS certificate verification, application identity admission, and pre-registration certificate failures under the race detector
 - `make test-mtls` to repeat library mTLS admission, bounded TLS failure handling, and frame exchange under the race detector
 - `make test-mtls-cli` to repeat CLI mTLS certificate admission, pre-registration rejection, and fail-closed flag validation under the race detector
