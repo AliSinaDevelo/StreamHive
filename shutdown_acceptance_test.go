@@ -82,6 +82,9 @@ func TestRun_exitAfterPutCancellationDrainsTransport(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(server.Peers()) == 1
 	}, 3*time.Second, 10*time.Millisecond, "sender did not connect: stdout=%q stderr=%q", out.String(), stderr.String())
+	require.Eventually(t, func() bool {
+		return strings.Contains(stderr.String(), "replicated blob sent")
+	}, 3*time.Second, 10*time.Millisecond, "sender did not write the pending blob: stdout=%q stderr=%q", out.String(), stderr.String())
 
 	started := time.Now()
 	cancel()
