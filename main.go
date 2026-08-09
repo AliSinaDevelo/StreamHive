@@ -2208,6 +2208,20 @@ func snapshotPeers(peers []p2p.PeerSnapshot, now time.Time) peersResponse {
 	}
 }
 
+type versionStatusResponse struct {
+	Version    string `json:"version"`
+	Handshake  string `json:"handshake"`
+	FrameMagic string `json:"frame_magic"`
+}
+
+func snapshotVersionStatus() versionStatusResponse {
+	return versionStatusResponse{
+		Version:    version.Version,
+		Handshake:  p2p.HandshakeVersionV1,
+		FrameMagic: string(p2p.FrameMagic),
+	}
+}
+
 type inventoryStatusResponse struct {
 	Enabled         bool   `json:"enabled"`
 	Ready           bool   `json:"ready"`
@@ -2333,6 +2347,12 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(snapshotVersionStatus())
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

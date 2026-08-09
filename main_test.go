@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AliSinaDevelo/StreamHive/internal/version"
 	"github.com/AliSinaDevelo/StreamHive/p2p"
 	"github.com/AliSinaDevelo/StreamHive/replication"
 	"github.com/AliSinaDevelo/StreamHive/storage"
@@ -243,6 +244,18 @@ func TestRun_healthEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp2.Body.Close() }()
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	respVersion, err := client.Get(base + "/version")
+	require.NoError(t, err)
+	defer func() { _ = respVersion.Body.Close() }()
+	assert.Equal(t, http.StatusOK, respVersion.StatusCode)
+	assert.Contains(t, respVersion.Header.Get("Content-Type"), "application/json")
+	var rawVersion map[string]string
+	require.NoError(t, json.NewDecoder(respVersion.Body).Decode(&rawVersion))
+	assert.Equal(t, map[string]string{
+		"version":     version.Version,
+		"handshake":   p2p.HandshakeVersionV1,
+		"frame_magic": string(p2p.FrameMagic),
+	}, rawVersion)
 	respLifecycle, err := client.Get(base + "/lifecycle/status")
 	require.NoError(t, err)
 	defer func() { _ = respLifecycle.Body.Close() }()
