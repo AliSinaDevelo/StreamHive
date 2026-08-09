@@ -126,6 +126,56 @@ func TestFileStore_ListKeysRestart(t *testing.T) {
 	assert.Equal(t, [][]byte{[]byte("a"), []byte("b")}, again)
 }
 
+func TestFileStore_ListKeysRejectsMalformedRegularFilename(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "not-a-hex-key"), []byte("payload"), 0o600))
+
+	_, err = store.ListKeys(ctx)
+	assert.ErrorIs(t, err, ErrInvalidKeyFilename)
+
+	_, _, err = store.ListKeyPage(ctx, nil, 1)
+	assert.ErrorIs(t, err, ErrInvalidKeyFilename)
+}
+
+func TestFileStore_SkipsNonRegularEntriesAndRejectsDirectReads(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+
+	regularKey := []byte("regular")
+	directoryKey := []byte("directory")
+	symlinkKey := []byte("symlink")
+	require.NoError(t, store.Put(ctx, regularKey, []byte("payload")))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, hex.EncodeToString(directoryKey)), 0o700))
+	targetDir := t.TempDir()
+	targetPath := filepath.Join(targetDir, "outside")
+	require.NoError(t, os.WriteFile(targetPath, []byte("outside payload"), 0o600))
+	require.NoError(t, os.Symlink(targetPath, filepath.Join(dir, hex.EncodeToString(symlinkKey))))
+	require.NoError(t, os.Symlink(targetPath, filepath.Join(dir, "not-a-hex-link")))
+
+	reopened, err := NewFileStore(dir)
+	require.NoError(t, err)
+	keys, err := reopened.ListKeys(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, [][]byte{regularKey}, keys)
+
+	has, err := reopened.Has(ctx, directoryKey)
+	require.NoError(t, err)
+	assert.False(t, has)
+	_, err = reopened.Get(ctx, directoryKey)
+	assert.ErrorIs(t, err, ErrNonRegularEntry)
+
+	has, err = reopened.Has(ctx, symlinkKey)
+	require.NoError(t, err)
+	assert.False(t, has)
+	_, err = reopened.Get(ctx, symlinkKey)
+	assert.ErrorIs(t, err, ErrNonRegularEntry)
+}
+
 func TestFileStore_EmptyKey(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewFileStore(t.TempDir())

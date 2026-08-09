@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +22,13 @@ type FileStore struct {
 	keys         *btree.BTreeG[string]
 	indexModTime time.Time
 }
+
+var (
+	// ErrInvalidKeyFilename is returned when a regular FileStore entry is not a hex key.
+	ErrInvalidKeyFilename = errors.New("storage: invalid key filename")
+	// ErrNonRegularEntry is returned when a FileStore key resolves to a non-regular entry.
+	ErrNonRegularEntry = errors.New("storage: non-regular blob entry")
+)
 
 // NewFileStore opens or creates a directory-backed BlobStore.
 func NewFileStore(dir string) (*FileStore, error) {
@@ -89,12 +97,16 @@ func (s *FileStore) readKeyIndex(ctx context.Context) (*btree.BTreeG[string], er
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".streamhive-") {
+			regular, err := isRegularBlobEntry(entry)
+			if err != nil {
+				return nil, err
+			}
+			if !regular {
 				continue
 			}
 			key, err := hex.DecodeString(entry.Name())
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: %q", ErrInvalidKeyFilename, entry.Name())
 			}
 			index.ReplaceOrInsert(string(key))
 		}
@@ -109,6 +121,34 @@ func (s *FileStore) readKeyIndex(ctx context.Context) (*btree.BTreeG[string], er
 		return nil, err
 	}
 	return index, nil
+}
+
+func isRegularBlobEntry(entry os.DirEntry) (bool, error) {
+	if entry.IsDir() || strings.HasPrefix(entry.Name(), ".streamhive-") {
+		return false, nil
+	}
+	info, err := entry.Info()
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.Mode().IsRegular(), nil
+}
+
+func requireRegularBlobFile(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return ErrNonRegularEntry
+	}
+	return nil
 }
 
 // Put stores data under key, replacing any existing value atomically.
@@ -167,8 +207,11 @@ func (s *FileStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := requireRegularBlobFile(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -189,22 +232,21 @@ func (s *FileStore) Has(ctx context.Context, key []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if err := requireRegularBlobFile(path); err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNonRegularEntry) {
+			return false, nil
+		}
+		return false, err
+	}
 	if len(key) == SHA256KeyBytes {
 		data, readErr := os.ReadFile(path)
-		if os.IsNotExist(readErr) {
+		if errors.Is(readErr, os.ErrNotExist) {
 			return false, nil
 		}
 		if readErr != nil {
 			return false, readErr
 		}
 		return VerifySHA256Key(key, data) == nil, nil
-	}
-	_, err = os.Stat(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
 	}
 	return true, nil
 }
