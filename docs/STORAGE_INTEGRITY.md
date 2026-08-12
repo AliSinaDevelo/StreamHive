@@ -36,6 +36,11 @@ to the regular entry observed by `Lstat` and consume that descriptor only when t
 match; an entry replacement that resolves to a different file is rejected as
 `storage.ErrNonRegularEntry` rather than read through.
 
+`FileStore.Delete` uses the same entry boundary for local eviction: a regular keyed file may be
+removed, a missing key remains a successful no-op, and a directory, symlink, or other non-regular
+keyed path returns `storage.ErrNonRegularEntry` without being removed. This is local filesystem
+classification, not a distributed logical-delete or tombstone operation.
+
 ## Offline Verification
 
 The CLI can run the same aggregate scan without opening a TCP or health listener:

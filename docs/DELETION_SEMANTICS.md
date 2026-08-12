@@ -9,6 +9,8 @@ StreamHive keeps blob replication add-only for the current contract.
 
 - A content-addressed blob is immutable: its SHA-256 key names its bytes.
 - BlobStore.Delete is local eviction or garbage collection, not a replicated logical delete.
+- FileStore.Delete removes only regular blob files; missing keys remain a no-op, while non-regular
+  keyed paths are rejected with `storage.ErrNonRegularEntry`.
 - A local delete may be repaired from a connected peer during startup or periodic anti-entropy.
 - The current blob.has, blob.missing, blob.get, and blob.put messages do not carry tombstones,
   versions, or causal context.

@@ -4,6 +4,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Storage**: `FileStore.Delete` now rejects directories, symlinks, and other non-regular keyed
+  paths with `storage.ErrNonRegularEntry` while preserving regular-file eviction and missing-key
+  no-op behavior.
 - **Storage**: direct `FileStore` reads now consume an opened descriptor only after its regular-file
   identity matches the validated directory entry, rejecting symlink or entry replacement races
   without changing the durable file format or BlobStore API.

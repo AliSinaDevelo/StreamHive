@@ -230,10 +230,11 @@ accepts only regular files with hex-encoded names; temporary files, directories,
 other non-regular entries are ignored. A malformed regular filename fails the scan with
 `storage.ErrInvalidKeyFilename`; `/storage/status` returns `503` with the generic message when
 enumeration or reads fail. Direct `Get` calls reject non-regular paths with
-`storage.ErrNonRegularEntry`, while `Has` reports them as absent. The scan is live rather than
-snapshot-consistent, uses bounded native inventory pages when available, and does not change
-`/readyz`, delete blobs, or initiate repair. Run `make test-storage-integrity` for the focused
-race-enabled proof.
+`storage.ErrNonRegularEntry`, while `Has` reports them as absent. `FileStore.Delete` evicts only
+regular files; it returns `storage.ErrNonRegularEntry` and preserves directories, symlinks, and
+other non-regular keyed paths. The scan is live rather than snapshot-consistent, uses bounded
+native inventory pages when available, and does not change `/readyz`, delete blobs, or initiate
+repair. Run `make test-storage-integrity` for the focused race-enabled proof.
 
 For an offline maintenance preflight against a durable store, run:
 
