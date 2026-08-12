@@ -149,8 +149,9 @@ make test-health-server
 ```
 
 It runs three race-enabled repetitions, rejects an oversized request header within the configured
-limit, serves normal liveness traffic, and verifies context cancellation closes the health listener
-across repeated starts.
+limit, serves normal liveness traffic, verifies every operational route accepts `GET` and `HEAD`,
+rejects other methods with `405 Method Not Allowed` before handler work, and verifies context
+cancellation closes the health listener across repeated starts.
 
 The main health endpoint acceptance test also checks that `/version` returns the exact aggregate
 runtime identity contract: the semver, `streamhive/1` handshake version, and `SHV1` framing magic,

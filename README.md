@@ -66,8 +66,10 @@ Raw-only nodes return `enabled: false`, `healthy: true`, and zero counts. See
 [docs/STORAGE_INTEGRITY.md](docs/STORAGE_INTEGRITY.md) for the live-scan and failure boundaries.
 
 The optional health server bounds request headers to 1 MiB, reads and writes to 10 seconds, header
-parsing to 5 seconds, and idle connections to 60 seconds. It shuts down gracefully when the
-process context is canceled; see `make test-health-server` for the race-enabled proof.
+parsing to 5 seconds, and idle connections to 60 seconds. All operational health endpoints accept
+only `GET` and `HEAD`; other methods return `405 Method Not Allowed` with `Allow: GET, HEAD` before
+endpoint work begins. It shuts down gracefully when the process context is canceled; see
+`make test-health-server` for the race-enabled proof.
 
 `/version` returns a fixed-shape aggregate JSON response with the running semver, the application
 handshake version (`streamhive/1`), and the wire framing identifier (`SHV1`). It intentionally omits

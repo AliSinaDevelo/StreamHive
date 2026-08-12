@@ -90,9 +90,10 @@ validating a monitoring integration or exporter change.
 
 The optional health HTTP server uses a bounded resource envelope: 5 seconds for request headers,
 10 seconds for request reads and response writes, 60 seconds for idle keep-alive connections, and
-1 MiB maximum request headers. Health handlers return small finite JSON/text responses and the
-server performs graceful shutdown when the process context is canceled; slow or oversized clients
-must not hold the health listener indefinitely.
+1 MiB maximum request headers. Health handlers return small finite JSON/text responses, accept only
+`GET` and `HEAD`, and reject other methods with `405 Method Not Allowed` plus `Allow: GET, HEAD`
+before endpoint work begins. The server performs graceful shutdown when the process context is
+canceled; slow or oversized clients must not hold the health listener indefinitely.
 
 The CLI `-shutdown-grace` flag defaults to 3 seconds and is the single deadline owner for
 normal application shutdown. Cancellation stops new scheduler and reconnect work, health

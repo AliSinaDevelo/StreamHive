@@ -4,6 +4,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Health**: operational endpoints now accept only `GET` and `HEAD`; other methods return `405
+  Method Not Allowed` with `Allow: GET, HEAD` before endpoint work begins.
 - **Storage**: `FileStore.Delete` now rejects directories, symlinks, and other non-regular keyed
   paths with `storage.ErrNonRegularEntry` while preserving regular-file eviction and missing-key
   no-op behavior.
