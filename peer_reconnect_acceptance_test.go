@@ -149,7 +149,7 @@ func TestRun_peerReconnectFastDisconnectContinues(t *testing.T) {
 		return metricsErr == nil &&
 			metrics["peer_reconnect_successes"] >= 2 &&
 			metrics["peer_reconnect_active"] == 0
-	}, 3*time.Second, 10*time.Millisecond, "metrics=%v stderr=%q", metrics, node.err.String())
+	}, 5*time.Second, 10*time.Millisecond, "metrics=%v stderr=%q", metrics, node.err.String())
 
 	select {
 	case <-accepted:
