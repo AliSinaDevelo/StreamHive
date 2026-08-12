@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -976,6 +977,81 @@ func TestRun_retriesBlobPutAfterLostAck(t *testing.T) {
 	got, err := store.Get(ctx, []byte("retry-key"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("retry-value"), got)
+}
+
+func TestRun_blobGetOverRealTCP(t *testing.T) {
+	ctx := context.Background()
+	data := []byte("direct-request-content")
+	key := storage.SHA256Key(data)
+
+	sourceStore := storage.NewMemoryStore()
+	require.NoError(t, sourceStore.Put(ctx, key, data))
+	sourceMetrics := &replicationMetrics{}
+	source := p2p.NewTCPTransport("127.0.0.1:0")
+	source.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	source.FrameHandler = func(frameCtx context.Context, peer p2p.Peer, payload []byte) error {
+		msg, err := replication.Decode(payload, replication.Limits{})
+		if err != nil {
+			return err
+		}
+		return handleReplicationMessage(
+			frameCtx,
+			peer,
+			sourceStore,
+			sourceStore,
+			msg,
+			replication.Limits{},
+			0,
+			sourceMetrics,
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			sourceStore,
+		)
+	}
+	require.NoError(t, source.ListenAndAccept(ctx))
+	defer func() { _ = source.Close() }()
+
+	received := make(chan replication.Message, 1)
+	requesterPeer := make(chan p2p.Peer, 1)
+	requester := p2p.NewTCPTransport("127.0.0.1:0")
+	requester.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	requester.OnPeer = func(peer p2p.Peer) {
+		requesterPeer <- peer
+	}
+	requester.FrameHandler = func(_ context.Context, _ p2p.Peer, payload []byte) error {
+		msg, err := replication.Decode(payload, replication.Limits{})
+		if err != nil {
+			return err
+		}
+		if msg.Type != replication.MessageTypeBlobPut {
+			return fmt.Errorf("blob.get acceptance: unexpected message %q", msg.Type)
+		}
+		received <- msg
+		return nil
+	}
+	require.NoError(t, requester.ListenAndAccept(ctx))
+	defer func() { _ = requester.Close() }()
+	require.NoError(t, requester.Dial(ctx, source.Addr().String()))
+
+	var peer p2p.Peer
+	select {
+	case peer = <-requesterPeer:
+	case <-time.After(3 * time.Second):
+		t.Fatal("requester did not register the source peer")
+	}
+	payload, err := replication.EncodeBlobGet(key, replication.Limits{})
+	require.NoError(t, err)
+	require.NoError(t, writePeerFrame(peer, payload, 0))
+
+	select {
+	case msg := <-received:
+		assert.Equal(t, replication.MessageTypeBlobPut, msg.Type)
+		assert.Equal(t, key, msg.Key)
+		assert.Equal(t, data, msg.Data)
+		require.NoError(t, storage.VerifySHA256Key(msg.Key, msg.Data))
+	case <-time.After(3 * time.Second):
+		t.Fatal("source did not answer the direct blob.get request")
+	}
+	assert.Equal(t, uint64(1), sourceMetrics.BlobsSent.Load())
 }
 
 func TestRun_replicatesBlobPutToFileStore(t *testing.T) {

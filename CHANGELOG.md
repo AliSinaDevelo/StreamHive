@@ -4,6 +4,8 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Tests/CI**: a dedicated race-enabled real-TCP acceptance target proves a peer can request one
+  content-addressed blob with `blob.get` and receive the verified `blob.put` response.
 - **Storage**: `MemoryStore` and `FileStore` now re-check canceled contexts after mutation
   serialization and before data, durable-file, or index commit; mutations that have crossed that
   boundary are not rolled back.
