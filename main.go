@@ -2411,27 +2411,38 @@ func observeStorageIntegrityStatus(ctx context.Context, store storage.BlobStore,
 	return status, nil
 }
 
+func readOnlyHealthHandler(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		handler(w, req)
+	}
+}
+
 func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, blobStore storage.BlobStore, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, reconnectMetrics *peerReconnectMetrics, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/livez", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/readyz", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		if !tr.Ready() || !tlsHealth.Ready(time.Now().UTC()) || !lifecycleState.Ready() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
-	})
-	mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/version", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(snapshotVersionStatus())
-	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/metrics", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		snapshot := tr.Metrics().Snapshot()
 		for key, value := range replMetrics.Snapshot() {
@@ -2449,14 +2460,14 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(snapshot)
-	})
-	mux.HandleFunc("/lifecycle/status", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/lifecycle/status", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(lifecycleState.Status())
-	})
-	mux.HandleFunc("/inventory/status", func(w http.ResponseWriter, req *http.Request) {
+	}))
+	mux.HandleFunc("/inventory/status", readOnlyHealthHandler(func(w http.ResponseWriter, req *http.Request) {
 		status, err := observeInventoryStatus(req.Context(), keyLister, replMetrics)
 		if err != nil {
 			http.Error(w, "inventory unavailable", http.StatusServiceUnavailable)
@@ -2466,8 +2477,8 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(status)
-	})
-	mux.HandleFunc("/storage/status", func(w http.ResponseWriter, req *http.Request) {
+	}))
+	mux.HandleFunc("/storage/status", readOnlyHealthHandler(func(w http.ResponseWriter, req *http.Request) {
 		status, err := observeStorageIntegrityStatus(req.Context(), blobStore, keyLister, replMetrics)
 		if err != nil {
 			http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
@@ -2477,14 +2488,14 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(status)
-	})
-	mux.HandleFunc("/peers", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/peers", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(snapshotPeers(tr.PeerSnapshots(), time.Now()))
-	})
-	mux.HandleFunc("/metrics/prometheus", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/metrics/prometheus", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		snapshot := tr.Metrics().Snapshot()
 		for key, value := range replMetrics.Snapshot() {
@@ -2500,7 +2511,7 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 			snapshot[key] = value
 		}
 		writePrometheusMetrics(w, snapshot)
-	})
+	}))
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {

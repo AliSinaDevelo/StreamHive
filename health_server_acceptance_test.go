@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,6 +42,62 @@ func startHealthAcceptanceNode(t *testing.T) *inventoryBudgetNode {
 	node.listen = listenMatch[1]
 	node.health = healthMatch[1]
 	return node
+}
+
+func TestRun_healthServerReadOnlyHandlerRejectsBeforeWork(t *testing.T) {
+	called := false
+	handler := readOnlyHealthHandler(func(http.ResponseWriter, *http.Request) {
+		called = true
+	})
+	req := httptest.NewRequest(http.MethodPost, "/inventory/status", nil)
+	resp := httptest.NewRecorder()
+
+	handler(resp, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.Code)
+	assert.Equal(t, "GET, HEAD", resp.Header().Get("Allow"))
+	assert.Contains(t, resp.Body.String(), http.StatusText(http.StatusMethodNotAllowed))
+	assert.False(t, called)
+}
+
+func TestRun_healthServerReadOnlyEndpoints(t *testing.T) {
+	node := startHealthAcceptanceNode(t)
+	t.Cleanup(func() { node.stop(t) })
+
+	routes := []string{
+		"/livez",
+		"/readyz",
+		"/version",
+		"/metrics",
+		"/metrics/prometheus",
+		"/peers",
+		"/inventory/status",
+		"/storage/status",
+		"/lifecycle/status",
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, route := range routes {
+			req, err := http.NewRequest(method, "http://"+node.health+route, nil)
+			require.NoError(t, err)
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, method+" "+route)
+			require.NoError(t, resp.Body.Close())
+		}
+	}
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+		for _, route := range routes {
+			req, err := http.NewRequest(method, "http://"+node.health+route, nil)
+			require.NoError(t, err)
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode, method+" "+route)
+			assert.Equal(t, "GET, HEAD", resp.Header.Get("Allow"), method+" "+route)
+			require.NoError(t, resp.Body.Close())
+		}
+	}
 }
 
 func TestRun_healthServerRejectsOversizedHeader(t *testing.T) {
