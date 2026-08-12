@@ -217,12 +217,15 @@ func (s *FileStore) Put(ctx context.Context, key []byte, data []byte) error {
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	renameErr := os.Rename(tmpName, path)
 	if renameErr == nil && s.keys != nil {
 		s.keys.ReplaceOrInsert(string(key))
 		s.refreshIndexModTimeLocked()
 	}
-	s.mu.Unlock()
 	if renameErr != nil {
 		return renameErr
 	}
@@ -301,15 +304,27 @@ func (s *FileStore) Delete(ctx context.Context, key []byte) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, infoErr := regularBlobFileInfo(path); infoErr != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if errors.Is(infoErr, ErrNotFound) {
 			if s.keys != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				s.keys.Delete(string(key))
 				s.refreshIndexModTimeLocked()
 			}
 			return nil
 		}
 		return infoErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	removeErr := os.Remove(path)
 	if (removeErr == nil || os.IsNotExist(removeErr)) && s.keys != nil {

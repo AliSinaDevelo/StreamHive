@@ -63,6 +63,9 @@ func (m *MemoryStore) Put(ctx context.Context, key []byte, data []byte) error {
 	cp := append([]byte(nil), data...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.ensureKeyIndexLocked()
 	if _, exists := m.data[ks]; !exists {
 		m.keys.ReplaceOrInsert(ks)
@@ -115,6 +118,9 @@ func (m *MemoryStore) Delete(ctx context.Context, key []byte) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := m.data[ks]; ok {
 		delete(m.data, ks)
 		if m.keys != nil {
