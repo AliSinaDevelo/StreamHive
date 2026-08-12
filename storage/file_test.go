@@ -186,7 +186,7 @@ func TestValidateRegularBlobFileRejectsIdentityMismatch(t *testing.T) {
 	require.NoError(t, err)
 	otherFile, err := os.Open(other)
 	require.NoError(t, err)
-	defer otherFile.Close()
+	defer func() { _ = otherFile.Close() }()
 	otherInfo, err := otherFile.Stat()
 	require.NoError(t, err)
 
