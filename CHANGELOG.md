@@ -4,6 +4,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Storage**: `MemoryStore` and `FileStore` now re-check canceled contexts after mutation
+  serialization and before data, durable-file, or index commit; mutations that have crossed that
+  boundary are not rolled back.
 - **Health**: operational endpoints now accept only `GET` and `HEAD`; other methods return `405
   Method Not Allowed` with `Allow: GET, HEAD` before endpoint work begins.
 - **Storage**: `FileStore.Delete` now rejects directories, symlinks, and other non-regular keyed

@@ -236,7 +236,10 @@ enumeration or reads fail. Direct `Get` calls reject non-regular paths with
 regular files; it returns `storage.ErrNonRegularEntry` and preserves directories, symlinks, and
 other non-regular keyed paths. The scan is live rather than snapshot-consistent, uses bounded
 native inventory pages when available, and does not change `/readyz`, delete blobs, or initiate
-repair. Run `make test-storage-integrity` for the focused race-enabled proof.
+repair. Store mutations honor context cancellation while waiting for mutation serialization and
+again before the file rename/remove or in-memory commit begins; cancellation after that boundary
+does not roll back a committed mutation. Run `make test-storage-integrity` for the focused
+race-enabled proof.
 
 For an offline maintenance preflight against a durable store, run:
 

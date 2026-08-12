@@ -209,7 +209,8 @@ make test-storage-integrity
 It runs three race-enabled repetitions covering bounded native paging, legacy-lister fallback,
 content-addressed verification, opaque-key accounting, missing and corrupt entries, malformed
 regular filenames, non-regular entry exclusion, cancellation, raw-only health output, generic
-failure responses, and JSON/Prometheus metric accounting over a real durable store.
+failure responses, mutation cancellation before the serialized commit boundary, and JSON/Prometheus
+metric accounting over a real durable store.
 
 The offline durable-store verification acceptance target is:
 
