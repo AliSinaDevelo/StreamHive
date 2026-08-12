@@ -4,6 +4,9 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Storage**: direct `FileStore` reads now consume an opened descriptor only after its regular-file
+  identity matches the validated directory entry, rejecting symlink or entry replacement races
+  without changing the durable file format or BlobStore API.
 - **CLI**: `-verify-store -store-dir DIR` runs an offline aggregate durable-store integrity scan,
   prints the `/storage/status`-compatible JSON result, and exits non-zero for corrupt or missing
   entries without mutating the store.

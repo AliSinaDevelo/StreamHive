@@ -31,7 +31,10 @@ FileStore inventory treats only regular files with hex-encoded names as blob ent
 files, directories, symlinks, and other non-regular entries are ignored. A malformed regular name
 fails enumeration with `storage.ErrInvalidKeyFilename`; the HTTP endpoint keeps the generic `503`
 boundary. Direct `FileStore.Get` calls return `storage.ErrNonRegularEntry` for a non-regular path,
-and `Has` reports that path as absent without reading through it.
+and `Has` reports that path as absent without reading through it. Direct reads bind the opened file
+to the regular entry observed by `Lstat` and consume that descriptor only when the file identities
+match; an entry replacement that resolves to a different file is rejected as
+`storage.ErrNonRegularEntry` rather than read through.
 
 ## Offline Verification
 
