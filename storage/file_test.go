@@ -176,6 +176,35 @@ func TestFileStore_SkipsNonRegularEntriesAndRejectsDirectReads(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNonRegularEntry)
 }
 
+func TestValidateRegularBlobFileRejectsIdentityMismatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "path")
+	other := filepath.Join(dir, "other")
+	require.NoError(t, os.WriteFile(path, []byte("path"), 0o600))
+	require.NoError(t, os.WriteFile(other, []byte("other"), 0o600))
+	pathInfo, err := os.Lstat(path)
+	require.NoError(t, err)
+	otherFile, err := os.Open(other)
+	require.NoError(t, err)
+	defer otherFile.Close()
+	otherInfo, err := otherFile.Stat()
+	require.NoError(t, err)
+
+	assert.ErrorIs(t, validateRegularBlobFile(pathInfo, otherInfo), ErrNonRegularEntry)
+}
+
+func TestOpenRegularBlobFileRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.WriteFile(target, []byte("outside"), 0o600))
+	path := filepath.Join(dir, "blob")
+	require.NoError(t, os.Symlink(target, path))
+
+	file, err := openRegularBlobFile(path)
+	assert.Nil(t, file)
+	assert.ErrorIs(t, err, ErrNonRegularEntry)
+}
+
 func TestFileStore_EmptyKey(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewFileStore(t.TempDir())

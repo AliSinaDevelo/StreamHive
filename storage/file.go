@@ -137,18 +137,42 @@ func isRegularBlobEntry(entry os.DirEntry) (bool, error) {
 	return info.Mode().IsRegular(), nil
 }
 
-func requireRegularBlobFile(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
+func validateRegularBlobFile(pathInfo, fileInfo os.FileInfo) error {
+	if !pathInfo.Mode().IsRegular() || !fileInfo.Mode().IsRegular() || !os.SameFile(pathInfo, fileInfo) {
 		return ErrNonRegularEntry
 	}
 	return nil
+}
+
+func openRegularBlobFile(path string) (*os.File, error) {
+	pathInfo, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, ErrNonRegularEntry
+	}
+
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	fileInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := validateRegularBlobFile(pathInfo, fileInfo); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 // Put stores data under key, replacing any existing value atomically.
@@ -207,15 +231,17 @@ func (s *FileStore) Get(ctx context.Context, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := requireRegularBlobFile(path); err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, ErrNotFound
-	}
+	file, err := openRegularBlobFile(path)
 	if err != nil {
 		return nil, err
+	}
+	data, readErr := io.ReadAll(file)
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	if err := VerifySHA256Key(key, data); err != nil && !errors.Is(err, ErrInvalidSHA256Key) {
 		return nil, err
@@ -232,21 +258,26 @@ func (s *FileStore) Has(ctx context.Context, key []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := requireRegularBlobFile(path); err != nil {
+	file, err := openRegularBlobFile(path)
+	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNonRegularEntry) {
 			return false, nil
 		}
 		return false, err
 	}
 	if len(key) == SHA256KeyBytes {
-		data, readErr := os.ReadFile(path)
-		if errors.Is(readErr, os.ErrNotExist) {
-			return false, nil
-		}
+		data, readErr := io.ReadAll(file)
+		closeErr := file.Close()
 		if readErr != nil {
 			return false, readErr
 		}
+		if closeErr != nil {
+			return false, closeErr
+		}
 		return VerifySHA256Key(key, data) == nil, nil
+	}
+	if err := file.Close(); err != nil {
+		return false, err
 	}
 	return true, nil
 }
