@@ -144,16 +144,24 @@ func validateRegularBlobFile(pathInfo, fileInfo os.FileInfo) error {
 	return nil
 }
 
-func openRegularBlobFile(path string) (*os.File, error) {
-	pathInfo, err := os.Lstat(path)
+func regularBlobFileInfo(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !pathInfo.Mode().IsRegular() {
+	if !info.Mode().IsRegular() {
 		return nil, ErrNonRegularEntry
+	}
+	return info, nil
+}
+
+func openRegularBlobFile(path string) (*os.File, error) {
+	pathInfo, err := regularBlobFileInfo(path)
+	if err != nil {
+		return nil, err
 	}
 
 	file, err := os.Open(path)
@@ -292,12 +300,22 @@ func (s *FileStore) Delete(ctx context.Context, key []byte) error {
 		return err
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, infoErr := regularBlobFileInfo(path); infoErr != nil {
+		if errors.Is(infoErr, ErrNotFound) {
+			if s.keys != nil {
+				s.keys.Delete(string(key))
+				s.refreshIndexModTimeLocked()
+			}
+			return nil
+		}
+		return infoErr
+	}
 	removeErr := os.Remove(path)
 	if (removeErr == nil || os.IsNotExist(removeErr)) && s.keys != nil {
 		s.keys.Delete(string(key))
 		s.refreshIndexModTimeLocked()
 	}
-	s.mu.Unlock()
 	if removeErr != nil && !os.IsNotExist(removeErr) {
 		return removeErr
 	}

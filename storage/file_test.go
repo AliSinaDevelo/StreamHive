@@ -96,12 +96,17 @@ func TestFileStore_Delete(t *testing.T) {
 
 	key := []byte("k")
 	require.NoError(t, store.Put(ctx, key, []byte("value")))
+	_, _, err = store.ListKeyPage(ctx, nil, 1)
+	require.NoError(t, err)
 	require.NoError(t, store.Delete(ctx, key))
 	require.NoError(t, store.Delete(ctx, key))
 
 	has, err := store.Has(ctx, key)
 	require.NoError(t, err)
 	assert.False(t, has)
+	keys, err := store.ListKeys(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, keys)
 }
 
 func TestFileStore_ListKeysRestart(t *testing.T) {
@@ -174,6 +179,17 @@ func TestFileStore_SkipsNonRegularEntriesAndRejectsDirectReads(t *testing.T) {
 	assert.False(t, has)
 	_, err = reopened.Get(ctx, symlinkKey)
 	assert.ErrorIs(t, err, ErrNonRegularEntry)
+
+	err = reopened.Delete(ctx, directoryKey)
+	assert.ErrorIs(t, err, ErrNonRegularEntry)
+	assert.DirExists(t, filepath.Join(dir, hex.EncodeToString(directoryKey)))
+
+	err = reopened.Delete(ctx, symlinkKey)
+	assert.ErrorIs(t, err, ErrNonRegularEntry)
+	assert.FileExists(t, targetPath)
+	targetData, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("outside payload"), targetData)
 }
 
 func TestValidateRegularBlobFileRejectsIdentityMismatch(t *testing.T) {
