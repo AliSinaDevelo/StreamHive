@@ -41,6 +41,21 @@ removed, a missing key remains a successful no-op, and a directory, symlink, or 
 keyed path returns `storage.ErrNonRegularEntry` without being removed. This is local filesystem
 classification, not a distributed logical-delete or tombstone operation.
 
+## Mutation Durability
+
+`FileStore.Put` writes the blob to a private temporary file, calls `Sync` on that file before the
+atomic replacement, and calls `Sync` on the store directory after the replacement. `FileStore.Delete`
+syncs the store directory after removing an existing blob. A successful mutation therefore includes
+the filesystem's requested file and directory durability boundary, covering recovery after an
+ordinary process restart and reducing the crash/power-loss window on filesystems that honor these
+operations. This is still local storage durability, not a replicated acknowledgement or a hardware
+durability guarantee.
+
+If the rename or directory sync fails after a filesystem mutation has begun, the method returns the
+error without claiming rollback; callers should treat the result as uncertain and use the existing
+integrity scan or an idempotent retry. Context cancellation is checked before the mutation commit,
+but does not undo a rename, remove, or sync that has already started.
+
 ## Offline Verification
 
 The CLI can run the same aggregate scan without opening a TCP or health listener:
@@ -93,4 +108,5 @@ Run the focused proof with:
 ```bash
 make test-storage-integrity
 make test-storage-verify
+make test-storage-durability
 ```

@@ -224,6 +224,15 @@ inventory classification, non-regular entry exclusion, malformed filename failur
 failed verification does not mutate the durable bytes. The command is offline and does not open a
 listener.
 
+The FileStore mutation durability acceptance target is:
+
+```bash
+make test-storage-durability
+```
+
+It runs three race-enabled repetitions covering durable put/reopen behavior, directory sync
+support, and durable local deletion without changing the blob format or replication protocol.
+
 ## Benchmarks
 
 Run local microbenchmarks for framing and the in-memory blob store:
@@ -302,6 +311,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on pushes and pull requests to 
 - `make test-inventory-status` to repeat live inventory fingerprint mismatch/equality after bounded real-TCP repair under the race detector
 - `make test-inventory-status-metrics` to repeat successful and failed inventory-status accounting, including JSON/Prometheus samples, under the race detector
 - `make test-storage-verify` to repeat offline aggregate durable-store verification, including regular-file classification, non-regular entry exclusion, malformed filename failure, and non-zero corruption handling, under the race detector
+- `make test-storage-durability` to repeat FileStore file and directory sync boundaries around puts and local deletes under the race detector
 - `make test-peer-admission` to repeat real-TCP peer-cap rejection and active-peer observability under the race detector
 - `make test-peer-reconnect` to repeat static-peer retry, failure, recovery, fast-disconnect recovery, and aggregate health accounting under the race detector
 - `make test-tls-auth` to repeat TLS certificate verification, application identity admission, and pre-registration certificate failures under the race detector
