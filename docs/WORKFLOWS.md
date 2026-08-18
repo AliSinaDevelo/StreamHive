@@ -190,6 +190,17 @@ removes only the target lifecycle metadata, and checks checkpoint recovery plus 
 retention. The Compose script bounds health polling and cleans up its project on success, failure,
 or interruption.
 
+The durable lifecycle raw-blob recovery acceptance target is:
+
+```bash
+make test-lifecycle-durable-recovery
+```
+
+It runs three race-enabled repetitions through a real FileStore. Each repetition journals a
+content-addressed lifecycle record, then deletes or tampers with its raw blob before reopening;
+startup must refuse the missing or corrupt state rather than restoring it as usable lifecycle
+data.
+
 The Prometheus exposition acceptance target is:
 
 ```bash
