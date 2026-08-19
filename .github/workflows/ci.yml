@@ -158,8 +158,8 @@ jobs:
       # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          # Go 1.25.13 contains the fixes for the current standard-library advisories.
-          go-version: "1.25.13"
+          # Keep vulnerability analysis on the latest stable standard library.
+          go-version: "stable"
           cache: true
 
       - name: govulncheck
