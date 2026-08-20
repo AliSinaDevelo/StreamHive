@@ -158,7 +158,8 @@ jobs:
       # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.x"
+          # Keep vulnerability analysis on the latest stable standard library.
+          go-version: "stable"
           cache: true
 
       - name: govulncheck
@@ -406,6 +407,23 @@ jobs:
 
       - name: Offline durable-store integrity preflight
         run: make test-storage-verify
+
+  storage-durability:
+    name: storage mutation durability
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: FileStore mutation durability
+        run: make test-storage-durability
 
   peer-admission:
     name: peer admission overload

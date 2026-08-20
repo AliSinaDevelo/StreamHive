@@ -28,6 +28,19 @@ func TestFileStore_PutGetRestart(t *testing.T) {
 	assert.Equal(t, []byte("hello"), got)
 }
 
+func TestFileStore_SyncDirectoryDurabilityBoundary(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	key := []byte("durability")
+	require.NoError(t, store.Put(ctx, key, []byte("value")))
+	require.NoError(t, syncDirectory(dir))
+	require.NoError(t, store.Delete(ctx, key))
+	require.NoError(t, syncDirectory(dir))
+}
+
 func TestFileStore_HexEncodesKeys(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

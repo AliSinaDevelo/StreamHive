@@ -15,7 +15,8 @@ import (
 	"github.com/google/btree"
 )
 
-// FileStore stores blobs as files named by hex-encoded keys.
+// FileStore stores blobs as files named by hex-encoded keys. Successful
+// mutations flush file contents and the containing directory before returning.
 type FileStore struct {
 	mu           sync.RWMutex
 	dir          string
@@ -183,7 +184,8 @@ func openRegularBlobFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-// Put stores data under key, replacing any existing value atomically.
+// Put stores data under key, replacing any existing value atomically and
+// flushing the replacement before returning.
 func (s *FileStore) Put(ctx context.Context, key []byte, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -209,6 +211,10 @@ func (s *FileStore) Put(ctx context.Context, key []byte, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -222,14 +228,17 @@ func (s *FileStore) Put(ctx context.Context, key []byte, data []byte) error {
 		return err
 	}
 	renameErr := os.Rename(tmpName, path)
-	if renameErr == nil && s.keys != nil {
-		s.keys.ReplaceOrInsert(string(key))
-		s.refreshIndexModTimeLocked()
-	}
 	if renameErr != nil {
 		return renameErr
 	}
 	removeTmp = false
+	if s.keys != nil {
+		s.keys.ReplaceOrInsert(string(key))
+		s.refreshIndexModTimeLocked()
+	}
+	if err := syncDirectory(s.dir); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -293,7 +302,8 @@ func (s *FileStore) Has(ctx context.Context, key []byte) (bool, error) {
 	return true, nil
 }
 
-// Delete removes key. Missing keys are not an error.
+// Delete removes key and flushes the directory entry. Missing keys are not an
+// error.
 func (s *FileStore) Delete(ctx context.Context, key []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -334,7 +344,21 @@ func (s *FileStore) Delete(ctx context.Context, key []byte) error {
 	if removeErr != nil && !os.IsNotExist(removeErr) {
 		return removeErr
 	}
+	if removeErr == nil {
+		if err := syncDirectory(s.dir); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = directory.Close() }()
+	return directory.Sync()
 }
 
 func (s *FileStore) refreshIndexModTimeLocked() {

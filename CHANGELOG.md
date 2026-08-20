@@ -4,6 +4,10 @@ All notable changes to StreamHive are documented here. This project follows [Sem
 
 ## [Unreleased]
 
+- **Storage**: `FileStore` now syncs temporary blob contents before atomic replacement and the
+  containing directory after successful puts and deletes, tightening the local crash-recovery
+  boundary without changing the blob format or replication protocol. A dedicated race-enabled
+  `test-storage-durability` CI gate covers the mutation boundary.
 - **Tests/CI**: a dedicated race-enabled real-TCP acceptance target proves a peer can request one
   content-addressed blob with `blob.get` and receive the verified `blob.put` response.
 - **Storage**: `MemoryStore` and `FileStore` now re-check canceled contexts after mutation
