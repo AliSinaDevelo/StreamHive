@@ -20,6 +20,7 @@ import (
 type FileStore struct {
 	mu           sync.RWMutex
 	dir          string
+	syncDir      func(string) error
 	keys         *btree.BTreeG[string]
 	indexModTime time.Time
 }
@@ -39,7 +40,7 @@ func NewFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &FileStore{dir: dir}, nil
+	return &FileStore{dir: dir, syncDir: syncDirectory}, nil
 }
 
 func (s *FileStore) pathFor(key []byte) (string, error) {
@@ -236,7 +237,7 @@ func (s *FileStore) Put(ctx context.Context, key []byte, data []byte) error {
 		s.keys.ReplaceOrInsert(string(key))
 		s.refreshIndexModTimeLocked()
 	}
-	if err := syncDirectory(s.dir); err != nil {
+	if err := s.syncDir(s.dir); err != nil {
 		return err
 	}
 	return nil
@@ -345,7 +346,7 @@ func (s *FileStore) Delete(ctx context.Context, key []byte) error {
 		return removeErr
 	}
 	if removeErr == nil {
-		if err := syncDirectory(s.dir); err != nil {
+		if err := s.syncDir(s.dir); err != nil {
 			return err
 		}
 	}

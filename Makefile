@@ -41,7 +41,7 @@ test-storage-verify:
 	@go test -race -count=3 -run '^TestRun_verifyStore' ./...
 
 test-storage-durability:
-	@go test -race -count=3 -run '^TestFileStore_(PutGetRestart|SyncDirectoryDurabilityBoundary)$$' ./storage
+	@go test -race -count=3 -run '^TestFileStore_(PutGetRestart|SyncDirectoryDurabilityBoundary|PutReportsPostRenameSyncFailureWithoutRollback|DeleteReportsPostRemoveSyncFailureWithoutRollback)$$' ./storage
 
 test-blob-get:
 	@go test -race -count=3 -run '^TestRun_blobGetOverRealTCP$$' ./...
