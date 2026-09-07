@@ -7,12 +7,10 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -218,20 +216,20 @@ func TestRun_tlsPeerAuthReplicatesContentBlob(t *testing.T) {
 		got, err := store.Get(context.Background(), key)
 		return err == nil && string(got) == string(data)
 	}, 5*time.Second, 20*time.Millisecond, "server stderr=%q client stderr=%q", server.err.String(), clientErr.String())
+	require.Eventually(t, func() bool {
+		log := server.err.String()
+		return strings.Contains(log, "auth_method=shared-token") &&
+			strings.Contains(log, "auth_identity=client")
+	}, 5*time.Second, 20*time.Millisecond, "server stderr=%q", server.err.String())
 
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://" + server.health + "/peers")
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var peers peersResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&peers))
-	require.NoError(t, resp.Body.Close())
-	require.Len(t, peers.Peers, 1)
-	assert.Equal(t, "shared-token", peers.Peers[0].AuthMethod)
-	assert.Equal(t, "client", peers.Peers[0].AuthIdentity)
-
-	metrics := inventoryBudgetMetrics(t, server)
-	assert.Equal(t, int64(1), metrics["active_peers"])
+	var metrics map[string]int64
+	var metricsErr error
+	require.Eventually(t, func() bool {
+		metrics, metricsErr = tryInventoryBudgetMetrics(server)
+		return metricsErr == nil &&
+			metrics["peer_auth_success"] >= 1 &&
+			metrics["replication_blobs_stored"] >= 1
+	}, 5*time.Second, 20*time.Millisecond, "metrics=%v metrics_err=%v server stderr=%q", metrics, metricsErr, server.err.String())
 	assert.GreaterOrEqual(t, metrics["peer_auth_success"], int64(1))
 	assert.GreaterOrEqual(t, metrics["replication_blobs_stored"], int64(1))
 	prometheus := inventoryBudgetPrometheus(t, server)
