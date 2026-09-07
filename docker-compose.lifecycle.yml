@@ -7,6 +7,8 @@ services:
       - 0.0.0.0:7070
       - -health
       - 0.0.0.0:8080
+      - -health-auth-token
+      - "${STREAMHIVE_LIFECYCLE_HEALTH_TOKEN:-streamhive-lifecycle-health-demo-token}"
       - -replicate
       - -store-dir
       - /data
@@ -43,6 +45,8 @@ services:
       - 0.0.0.0:7070
       - -health
       - 0.0.0.0:8080
+      - -health-auth-token
+      - "${STREAMHIVE_LIFECYCLE_HEALTH_TOKEN:-streamhive-lifecycle-health-demo-token}"
       - -replicate
       - -store-dir
       - /data
@@ -79,6 +83,8 @@ services:
       - 0.0.0.0:7070
       - -health
       - 0.0.0.0:8080
+      - -health-auth-token
+      - "${STREAMHIVE_LIFECYCLE_HEALTH_TOKEN:-streamhive-lifecycle-health-demo-token}"
       - -replicate
       - -store-dir
       - /data

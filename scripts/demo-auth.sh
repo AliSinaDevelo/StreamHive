@@ -6,12 +6,14 @@ DATA_DIR="${STREAMHIVE_DATA_DIR:-$ROOT_DIR/.streamhive-auth}"
 COMPOSE="docker compose"
 EXPECTED_KEY="cd13ac0817f0f8ba2f29fba23617ef0191a6193ed0311298163834199398ee05"
 TOKEN="${STREAMHIVE_PEER_TOKEN:-streamhive-compose-demo-token}"
+HEALTH_TOKEN="${STREAMHIVE_HEALTH_TOKEN:-streamhive-health-demo-token}"
 WRONG_TOKEN="${STREAMHIVE_WRONG_PEER_TOKEN:-streamhive-invalid-token}"
 if [ "$TOKEN" = "$WRONG_TOKEN" ]; then
 	WRONG_TOKEN="${TOKEN}!"
 fi
 export STREAMHIVE_DATA_DIR="$DATA_DIR"
 export STREAMHIVE_PEER_TOKEN="$TOKEN"
+export STREAMHIVE_HEALTH_TOKEN="$HEALTH_TOKEN"
 export STREAMHIVE_NODE1_ID=node1
 export STREAMHIVE_NODE1_ALLOW_IDS=node2,node3,seed
 export STREAMHIVE_NODE2_ID=node2
@@ -19,6 +21,10 @@ export STREAMHIVE_NODE2_ALLOW_IDS=node1,node3
 export STREAMHIVE_NODE3_ID=node3
 export STREAMHIVE_NODE3_ALLOW_IDS=node1,node2
 export STREAMHIVE_SEED_ID=seed
+
+curl_health() {
+	curl -fsS -H "Authorization: Bearer $HEALTH_TOKEN" "$@"
+}
 
 cleanup() {
 	$COMPOSE -f "$ROOT_DIR/docker-compose.yml" down --remove-orphans >/dev/null 2>&1 || true
@@ -29,7 +35,7 @@ wait_ready() {
 	name="$1"
 	url="$2"
 	i=0
-	until curl -fsS "$url/readyz" >/dev/null 2>&1; do
+	until curl_health "$url/readyz" >/dev/null 2>&1; do
 		i=$((i + 1))
 		if [ "$i" -gt 80 ]; then
 			echo "$name did not become ready" >&2
@@ -45,11 +51,11 @@ wait_metric() {
 	url="$2"
 	metric="$3"
 	i=0
-	until curl -fsS "$url/metrics" | grep "\"$metric\": [1-9]" >/dev/null; do
+	until curl_health "$url/metrics" | grep "\"$metric\": [1-9]" >/dev/null; do
 		i=$((i + 1))
 		if [ "$i" -gt 80 ]; then
 			echo "$name did not report a positive $metric counter" >&2
-			curl -fsS "$url/metrics" >&2 || true
+			curl_health "$url/metrics" >&2 || true
 			$COMPOSE -f "$ROOT_DIR/docker-compose.yml" logs "$name" >&2 || true
 			exit 1
 		fi
@@ -80,7 +86,7 @@ wait_key_present() {
 metric_value() {
 	url="$1"
 	metric="$2"
-	curl -fsS "$url/metrics" | awk -F': ' -v metric="\"$metric\"" 'index($1, metric) > 0 {gsub(/,/, "", $2); print $2; exit}'
+	curl_health "$url/metrics" | awk -F': ' -v metric="\"$metric\"" 'index($1, metric) > 0 {gsub(/,/, "", $2); print $2; exit}'
 }
 
 wait_identity() {
@@ -88,11 +94,11 @@ wait_identity() {
 	url="$2"
 	identity="$3"
 	i=0
-	until curl -fsS "$url/peers" | grep "\"auth_identity\": \"$identity\"" >/dev/null; do
+	until curl_health "$url/peers" | grep "\"auth_identity\": \"$identity\"" >/dev/null; do
 		i=$((i + 1))
 		if [ "$i" -gt 80 ]; then
 			echo "$name did not expose authenticated peer identity $identity" >&2
-			curl -fsS "$url/peers" >&2 || true
+			curl_health "$url/peers" >&2 || true
 			$COMPOSE -f "$ROOT_DIR/docker-compose.yml" logs "$name" >&2 || true
 			exit 1
 		fi

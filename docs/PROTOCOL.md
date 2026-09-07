@@ -426,7 +426,11 @@ exemplars, peer addresses, blob keys, or certificate metadata.
 The optional HTTP health server also uses fixed bounds rather than unbounded request handling:
 5-second header reads, 10-second request reads, 10-second response writes, 60-second idle
 connections, and 1 MiB maximum headers. Process cancellation gracefully shuts down the server;
-the P2P wire protocol and endpoint paths are unchanged.
+the P2P wire protocol and endpoint paths are unchanged. Health binds are loopback-first; a
+non-loopback address requires the explicit `-health-auth-token` bearer boundary. `/livez` and
+`/readyz` remain probe-safe, while diagnostic routes reject requests without the configured token.
+The P2P TLS flags do not apply to this HTTP listener, so deployments beyond a trusted lab must use
+a TLS-terminating proxy or an equivalent private network boundary.
 
 ## Shutdown and Drain
 

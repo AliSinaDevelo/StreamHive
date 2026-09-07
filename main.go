@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -80,6 +81,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	peerReconnectMax := fs.Duration("peer-reconnect-max", 30*time.Second, "maximum reconnect backoff for -peer-reconnect")
 	syncInterval := fs.Duration("sync-interval", 0, "periodically advertise local blob keys to connected peers (0 = startup only)")
 	health := fs.String("health", "", "optional HTTP listen addr for /livez /readyz /peers /metrics (e.g. :8080)")
+	healthAuthToken := fs.String("health-auth-token", "", "bearer token required when -health binds a non-loopback address")
 	shutdownGrace := fs.Duration("shutdown-grace", defaultShutdownGrace, "bounded graceful shutdown deadline for health and P2P drain")
 	maxPeers := fs.Int("max-peers", 0, "max simultaneous peers (0 = unlimited)")
 	peerAuthToken := fs.String("peer-auth-token", "", "optional shared token required before peer registration")
@@ -135,6 +137,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *health != "" && !healthAddrIsLoopback(*health) && strings.TrimSpace(*healthAuthToken) == "" {
+		return fmt.Errorf("health: non-loopback address %q requires -health-auth-token", *health)
 	}
 
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -700,7 +705,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	if *health != "" {
 		var err error
-		hsrv, err = startHealth(*health, tr, replMetrics, blobStore, keyLister, tlsHealth, lifecycleState, reconnectMetrics, log)
+		hsrv, err = startHealth(*health, *healthAuthToken, tr, replMetrics, blobStore, keyLister, tlsHealth, lifecycleState, reconnectMetrics, log)
 		if err != nil {
 			return fmt.Errorf("health: %w", err)
 		}
@@ -2422,7 +2427,39 @@ func readOnlyHealthHandler(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, blobStore storage.BlobStore, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, reconnectMetrics *peerReconnectMetrics, log *slog.Logger) (*http.Server, error) {
+func healthAddrIsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func healthAuthHandler(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+	expected := "Bearer " + token
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/livez" || req.URL.Path == "/readyz" {
+			next.ServeHTTP(w, req)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(req.Header.Get("Authorization")), []byte(expected)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="streamhive-health"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+func startHealth(addr, authToken string, tr *p2p.TCPTransport, replMetrics *replicationMetrics, blobStore storage.BlobStore, keyLister storage.BlobKeyLister, tlsHealth *tlsCredentialHealth, lifecycleState *lifecycleRuntime, reconnectMetrics *peerReconnectMetrics, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", readOnlyHealthHandler(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -2512,6 +2549,7 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 		}
 		writePrometheusMetrics(w, snapshot)
 	}))
+	protected := healthAuthHandler(authToken, mux)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -2519,7 +2557,7 @@ func startHealth(addr string, tr *p2p.TCPTransport, replMetrics *replicationMetr
 	}
 
 	srv := &http.Server{
-		Handler:           mux,
+		Handler:           protected,
 		ReadHeaderTimeout: defaultHealthReadHeaderTimeout,
 		ReadTimeout:       defaultHealthReadTimeout,
 		WriteTimeout:      defaultHealthWriteTimeout,
