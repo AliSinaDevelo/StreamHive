@@ -60,6 +60,69 @@ func TestRun_healthServerReadOnlyHandlerRejectsBeforeWork(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestRun_healthServerRequiresAuthForNonLoopbackAddress(t *testing.T) {
+	var out, stderr safeBuffer
+	err := run(context.Background(), []string{
+		"-listen", "127.0.0.1:0",
+		"-health", "0.0.0.0:0",
+	}, &out, &stderr)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires -health-auth-token")
+	assert.Empty(t, out.String())
+}
+
+func TestRun_healthServerBearerAuth(t *testing.T) {
+	called := false
+	next := healthAuthHandler("test-token", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for _, test := range []struct {
+		name       string
+		path       string
+		authority  string
+		statusCode int
+		wantCalled bool
+	}{
+		{name: "missing", path: "/metrics", statusCode: http.StatusUnauthorized},
+		{name: "wrong", path: "/metrics", authority: "Bearer wrong-token", statusCode: http.StatusUnauthorized},
+		{name: "valid", path: "/metrics", authority: "Bearer test-token", statusCode: http.StatusNoContent, wantCalled: true},
+		{name: "liveness probe", path: "/livez", statusCode: http.StatusNoContent, wantCalled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called = false
+			req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+test.path, nil)
+			if test.authority != "" {
+				req.Header.Set("Authorization", test.authority)
+			}
+			resp := httptest.NewRecorder()
+			next.ServeHTTP(resp, req)
+			assert.Equal(t, test.statusCode, resp.Code)
+			assert.Equal(t, test.wantCalled, called)
+		})
+	}
+}
+
+func TestRun_healthAddrIsLoopback(t *testing.T) {
+	for _, test := range []struct {
+		addr     string
+		loopback bool
+	}{
+		{addr: "127.0.0.1:8080", loopback: true},
+		{addr: "[::1]:8080", loopback: true},
+		{addr: "localhost:8080", loopback: true},
+		{addr: ":8080"},
+		{addr: "0.0.0.0:8080"},
+		{addr: "[::]:8080"},
+		{addr: "health.internal:8080"},
+	} {
+		t.Run(test.addr, func(t *testing.T) {
+			assert.Equal(t, test.loopback, healthAddrIsLoopback(test.addr))
+		})
+	}
+}
+
 func TestRun_healthServerReadOnlyEndpoints(t *testing.T) {
 	node := startHealthAcceptanceNode(t)
 	t.Cleanup(func() { node.stop(t) })

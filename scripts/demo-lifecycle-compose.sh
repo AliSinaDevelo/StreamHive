@@ -5,9 +5,15 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.lifecycle.yml"
 DATA_DIR="${STREAMHIVE_LIFECYCLE_DATA_DIR:-$ROOT_DIR/.streamhive-lifecycle}"
 TOKEN="${STREAMHIVE_LIFECYCLE_TOKEN:-streamhive-lifecycle-demo-token}"
+HEALTH_TOKEN="${STREAMHIVE_LIFECYCLE_HEALTH_TOKEN:-streamhive-lifecycle-health-demo-token}"
 EXPECTED_KEY="2ec046e61b07981f2e389edfeafbfd5d08ffde38faf4512fc7dd725d507b94f2"
 export STREAMHIVE_LIFECYCLE_DATA_DIR="$DATA_DIR"
 export STREAMHIVE_LIFECYCLE_TOKEN="$TOKEN"
+export STREAMHIVE_LIFECYCLE_HEALTH_TOKEN="$HEALTH_TOKEN"
+
+curl_health() {
+	curl -fsS -H "Authorization: Bearer $HEALTH_TOKEN" "$@"
+}
 
 compose() {
 	docker compose -f "$COMPOSE_FILE" "$@"
@@ -22,7 +28,7 @@ wait_ready() {
 	name="$1"
 	url="$2"
 	i=0
-	until curl -fsS "$url/readyz" >/dev/null 2>&1; do
+	until curl_health "$url/readyz" >/dev/null 2>&1; do
 		i=$((i + 1))
 		if [ "$i" -gt 120 ]; then
 			echo "$name did not become ready" >&2
@@ -39,7 +45,7 @@ wait_status() {
 	pattern="$3"
 	i=0
 	while :; do
-		payload="$(curl -fsS "$url/lifecycle/status" 2>/dev/null || true)"
+		payload="$(curl_health "$url/lifecycle/status" 2>/dev/null || true)"
 		if printf '%s\n' "$payload" | grep -F "$pattern" >/dev/null 2>&1; then
 			return 0
 		fi
@@ -56,7 +62,7 @@ wait_status() {
 
 floor_version() {
 	url="$1"
-	curl -fsS "$url/lifecycle/status" | awk -F: '
+	curl_health "$url/lifecycle/status" | awk -F: '
 		/"journal_floor": \{/ { in_floor = 1; next }
 		in_floor && /"epoch":/ { gsub(/[^0-9]/, "", $2); epoch = $2; next }
 		in_floor && /"sequence":/ { gsub(/[^0-9]/, "", $2); print epoch "/" $2; exit }
@@ -214,4 +220,4 @@ fi
 echo "3-node lifecycle compose demo passed: stale target restored compacted snapshot after source restart"
 echo "checkpoint floor: $source_floor"
 echo "retained raw key: $EXPECTED_KEY"
-curl -fsS http://127.0.0.1:18183/lifecycle/status
+curl_health http://127.0.0.1:18183/lifecycle/status

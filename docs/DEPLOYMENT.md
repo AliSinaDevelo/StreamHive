@@ -6,15 +6,23 @@ Build and run (example flags):
 
 ```bash
 docker build -t streamhive:local .
-docker run --rm -p 7070:7070 -p 8080:8080 streamhive:local \
+docker run --rm -e STREAMHIVE_HEALTH_TOKEN=change-me -p 7070:7070 -p 8080:8080 streamhive:local \
   -listen 0.0.0.0:7070 \
-  -health 0.0.0.0:8080
+  -health 0.0.0.0:8080 \
+  -health-auth-token change-me
 ```
 
 - **7070** — P2P TCP listener (example).
 - **8080** — HTTP `/livez`, `/readyz`, `/version` (aggregate runtime identity), `/peers` (JSON peer metadata), `/metrics` (JSON counters), `/metrics/prometheus` (Prometheus text), `/inventory/status` (aggregate live key fingerprint), `/storage/status` (aggregate live blob integrity), and `/lifecycle/status` (aggregate opt-in lifecycle state).
 
-Use TLS flags (`-tls-cert`, `-tls-key`, `-tls-ca`, `-tls-server-name`) when exposing services beyond a lab network. The verified certificate and application-auth ordering is documented in [TLS_AUTH.md](TLS_AUTH.md) and exercised by `make test-tls-auth`. Reserve `-tls-insecure-skip-verify` for local development. For CLI mTLS, add `-tls-client-ca -tls-require-client-cert` on the listener and `-tls-client-cert -tls-client-key` on outbound peers. Use `-tls-expiry-warning` to set the aggregate short-lived-credential warning window (`720h` by default, `0` disables the warning). For custom trust policy, configure `p2p.TCPTransport.TLSServerConfig` and `TLSClientConfig` in library code.
+The health listener is plain HTTP and loopback-first. `/livez` and `/readyz` remain unauthenticated for local and orchestrator probes; diagnostic routes require `Authorization: Bearer <token>` whenever `-health-auth-token` is configured. A non-loopback `-health` address requires `-health-auth-token` and fails closed without one. For example, an explicitly network-scoped lab listener is:
+
+```bash
+go run . -listen 0.0.0.0:7070 -health 0.0.0.0:8080 \
+  -health-auth-token "$STREAMHIVE_HEALTH_TOKEN"
+```
+
+Use a TLS-terminating reverse proxy or a private, access-controlled network before exposing health beyond a trusted lab; the P2P TLS flags protect the P2P listener, not this HTTP listener. The verified certificate and application-auth ordering is documented in [TLS_AUTH.md](TLS_AUTH.md) and exercised by `make test-tls-auth`. Reserve `-tls-insecure-skip-verify` for local development. For CLI mTLS, add `-tls-client-ca -tls-require-client-cert` on the listener and `-tls-client-cert -tls-client-key` on outbound peers. Use `-tls-expiry-warning` to set the aggregate short-lived-credential warning window (`720h` by default, `0` disables the warning). For custom trust policy, configure `p2p.TCPTransport.TLSServerConfig` and `TLSClientConfig` in library code.
 
 Certificate files are loaded at process startup. Use the [TLS rotation runbook](TLS_ROTATION.md)
 for replacement material, trust overlap, restart ordering, rollback, and reconnect checks.
@@ -187,7 +195,13 @@ spec:
       containers:
         - name: streamhive
           image: streamhive:local
-          args: ["-listen", "0.0.0.0:7070", "-health", "0.0.0.0:8080"]
+          args: ["-listen", "0.0.0.0:7070", "-health", "0.0.0.0:8080", "-health-auth-token", "$(STREAMHIVE_HEALTH_TOKEN)"]
+          env:
+            - name: STREAMHIVE_HEALTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: streamhive-health
+                  key: token
           ports:
             - containerPort: 7070
               name: p2p
@@ -207,7 +221,7 @@ spec:
             periodSeconds: 10
 ```
 
-Add a `Service` for the health port and (separately) headless or load-balanced service for P2P depending on your topology. Tune resource requests/limits and pod anti-affinity for HA; this manifest is illustrative only.
+The health token is intentionally supplied from a Secret. `/livez` and `/readyz` do not require the token, so the illustrative probes remain usable; diagnostic clients must send the bearer header. Add a `Service` for the health port and (separately) headless or load-balanced service for P2P depending on your topology. Tune resource requests/limits and pod anti-affinity for HA; this manifest is illustrative only.
 
 ## SLOs
 

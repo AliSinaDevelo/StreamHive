@@ -4,7 +4,12 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 DATA_DIR="${STREAMHIVE_DATA_DIR:-$ROOT_DIR/.streamhive-compose}"
 COMPOSE="docker compose"
+HEALTH_TOKEN="${STREAMHIVE_HEALTH_TOKEN:-streamhive-health-demo-token}"
 export STREAMHIVE_DATA_DIR="$DATA_DIR"
+
+curl_health() {
+	curl -fsS -H "Authorization: Bearer $HEALTH_TOKEN" "$@"
+}
 
 print_node() {
 	name="$1"
@@ -12,10 +17,10 @@ print_node() {
 
 	echo "== $name =="
 	echo "-- peers --"
-	curl -fsS "$url/peers"
+	curl_health "$url/peers"
 	echo
 	echo "-- metrics --"
-	curl -fsS "$url/metrics"
+	curl_health "$url/metrics"
 	echo
 	echo "-- durable keys --"
 	keys="$($COMPOSE -f "$ROOT_DIR/docker-compose.yml" --profile tools run --rm --no-deps -v "$DATA_DIR/$name:/data" seed -store-dir /data -list-keys)"

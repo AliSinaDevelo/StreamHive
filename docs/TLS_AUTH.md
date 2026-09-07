@@ -35,12 +35,18 @@ The listener loads its certificate and private key:
 ```bash
 go run . \
   -listen 0.0.0.0:7070 \
-  -health 0.0.0.0:8080 \
+  -health 127.0.0.1:8080 \
   -replicate -store-dir ./streamhive-data \
   -tls-cert ./server-cert.pem -tls-key ./server-key.pem \
   -peer-auth-token "$STREAMHIVE_PEER_TOKEN" \
   -peer-id server -peer-allow-ids client
 ```
+
+The P2P TLS flags above do not encrypt or authenticate the separate HTTP health listener. Keep
+health on loopback, or provide `-health-auth-token` for a deliberately network-scoped lab bind and
+place a TLS-terminating reverse proxy or private access-controlled network in front of it. Diagnostic
+health requests then send `Authorization: Bearer <token>`; `/livez` and `/readyz` remain available to
+orchestrator probes without the token.
 
 The outbound peer supplies the trusted CA and the DNS name present in the certificate:
 
