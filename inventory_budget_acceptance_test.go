@@ -385,7 +385,10 @@ func TestRun_periodicInventoryRepairsKeyAddedBehindLiveCursor(t *testing.T) {
 		lateKey = storage.SHA256Key(lateData)
 	}
 
-	source := startInventoryBudgetNodeWithInterval(t, sourceDir, "", "2s")
+	// Keep the first periodic fallback outside the initial exchange assertions.
+	// The live-cursor exchange is expected to finish before this interval; using
+	// a short interval lets the fallback race the assertion below on slower CI.
+	source := startInventoryBudgetNodeWithInterval(t, sourceDir, "", "10s")
 	t.Cleanup(func() { source.stop(t) })
 	target := startInventoryBudgetNode(t, targetDir, source.listen)
 	t.Cleanup(func() { target.stop(t) })
@@ -423,7 +426,7 @@ func TestRun_periodicInventoryRepairsKeyAddedBehindLiveCursor(t *testing.T) {
 		metrics := inventoryBudgetMetrics(t, source)
 		return metrics["replication_inventory_exchanges_started"] > firstExchange["replication_inventory_exchanges_started"] &&
 			metrics["replication_inventory_exchanges_active"] == 0
-	}, 6*time.Second, 20*time.Millisecond, "periodic inventory did not repair behind-cursor key: source metrics=%v source stderr=%q target stderr=%q", inventoryBudgetMetrics(t, source), source.err.String(), target.err.String())
+	}, 15*time.Second, 20*time.Millisecond, "periodic inventory did not repair behind-cursor key: source metrics=%v source stderr=%q target stderr=%q", inventoryBudgetMetrics(t, source), source.err.String(), target.err.String())
 
 	repaired, err := storage.NewFileStore(targetDir)
 	require.NoError(t, err)
