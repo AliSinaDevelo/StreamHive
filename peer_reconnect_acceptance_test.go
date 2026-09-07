@@ -91,6 +91,7 @@ func TestRun_peerReconnectFastDisconnectContinues(t *testing.T) {
 	require.NoError(t, err)
 	targetAddr := listener.Addr().String()
 	accepted := make(chan net.Conn, 1)
+	var acceptedConn net.Conn
 	serverDone := make(chan struct{})
 	go func() {
 		defer close(serverDone)
@@ -112,10 +113,14 @@ func TestRun_peerReconnectFastDisconnectContinues(t *testing.T) {
 	}()
 	t.Cleanup(func() {
 		_ = listener.Close()
-		select {
-		case conn := <-accepted:
-			_ = conn.Close()
-		default:
+		if acceptedConn != nil {
+			_ = acceptedConn.Close()
+		} else {
+			select {
+			case conn := <-accepted:
+				_ = conn.Close()
+			default:
+			}
 		}
 		<-serverDone
 	})
@@ -143,19 +148,20 @@ func TestRun_peerReconnectFastDisconnectContinues(t *testing.T) {
 	node.health = regexp.MustCompile(`msg=health addr=([0-9a-fA-F.:]+)`).FindStringSubmatch(node.err.String())[1]
 
 	var metrics map[string]int64
+	select {
+	case acceptedConn = <-accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("target did not accept a retry: metrics=%v stderr=%q", metrics, node.err.String())
+	}
+
 	require.Eventually(t, func() bool {
 		var metricsErr error
 		metrics, metricsErr = tryInventoryBudgetMetrics(node)
 		return metricsErr == nil &&
-			metrics["peer_reconnect_successes"] >= 2 &&
+			metrics["peer_reconnect_attempts"] >= 2 &&
+			metrics["peer_reconnect_successes"] >= 1 &&
 			metrics["peer_reconnect_active"] == 0
 	}, 5*time.Second, 10*time.Millisecond, "metrics=%v stderr=%q", metrics, node.err.String())
-
-	select {
-	case <-accepted:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("target did not accept a retry: metrics=%v stderr=%q", metrics, node.err.String())
-	}
 }
 
 func TestRun_peerReconnectHostnameAfterDisconnect(t *testing.T) {

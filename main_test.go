@@ -1051,7 +1051,12 @@ func TestRun_blobGetOverRealTCP(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("source did not answer the direct blob.get request")
 	}
-	assert.Equal(t, uint64(1), sourceMetrics.BlobsSent.Load())
+	// The requester can observe the frame before the source handler resumes
+	// after the successful write and records the send metric. Wait for that
+	// asynchronous bookkeeping instead of making the assertion timing-sensitive.
+	require.Eventually(t, func() bool {
+		return sourceMetrics.BlobsSent.Load() == 1
+	}, time.Second, time.Millisecond)
 }
 
 func TestRun_replicatesBlobPutToFileStore(t *testing.T) {
